@@ -189,6 +189,12 @@ void main() {
       // must cancel its active subscription on overflow.
       expect(cancelled, !declared);
       expect(client.closed, isFalse);
+      if (declared) {
+        // A deliberately unconsumed, single-subscription controller has no
+        // listener; attach and cancel one before awaiting close.
+        final unused = controller.stream.listen((_) {});
+        await unused.cancel();
+      }
       await controller.close();
     }
   });
