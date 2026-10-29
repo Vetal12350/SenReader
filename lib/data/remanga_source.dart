@@ -127,8 +127,10 @@ class ReMangaSource implements MangaSource {
           if (!_readable(item)) continue;
           final number = item['chapter'] is num ? '${item['chapter']}' : _text(item['chapter']);
           final subtitle = _text(item['name']);
+          final tome = item['tome'];
+          final volumeSuffix = tome == null || '$tome' == '0' ? '' : ' (т. $tome)';
           chapters.add(Chapter(id: id,
-              name: 'Глава ${number.isEmpty ? '?' : number}${subtitle.isEmpty ? '' : ': $subtitle'}'));
+              name: 'Глава ${number.isEmpty ? '?' : number}${subtitle.isEmpty ? '' : ': $subtitle'}$volumeSuffix'));
         }
         if (!added || items.isEmpty || data['next'] == null || data['next'] == false || data['next'] == '') break;
       }

@@ -2,8 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'core/models.dart';
 import 'data/catalog_repository.dart';
+import 'data/chapter_checker.dart';
 import 'data/library_store.dart';
 import 'ui/detail_page.dart';
+import 'ui/reader_page.dart';
 import 'ui/widgets.dart';
 
 Future<void> main() async {
@@ -46,6 +48,9 @@ class _MainShellState extends State<MainShell> {
   int tab = 0;
   CatalogResult? result;
   bool loading = false;
+  bool checkingChapters = false;
+  ChapterScanReport? chapterReport;
+  String? checkError;
   String query = '';
   Timer? debounce;
   final TextEditingController searchController = TextEditingController();
@@ -81,6 +86,32 @@ class _MainShellState extends State<MainShell> {
     )));
   }
 
+  Future<void> _checkChapters() async {
+    if (checkingChapters || widget.library.items.isEmpty) return;
+    setState(() { checkingChapters = true; checkError = null; chapterReport = null; });
+    try {
+      final result = await ChapterChecker(
+        repository: widget.repository, library: widget.library,
+      ).check();
+      if (!mounted) return;
+      setState(() { checkingChapters = false; chapterReport = result; });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        checkingChapters = false;
+        checkError = 'Не удалось завершить проверку глав. Попробуй позже.';
+      });
+    }
+  }
+
+  void _openChapter(ChapterDiscovery discovery) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
+      book: discovery.book, chapter: discovery.chapter,
+      sourceKey: discovery.sourceKey,
+      repository: widget.repository, library: widget.library,
+    )));
+  }
+
   @override Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
@@ -91,7 +122,9 @@ class _MainShellState extends State<MainShell> {
             style: const TextStyle(fontWeight: FontWeight.w800)),
         ]),
         actions: [
-          IconButton(tooltip: 'Обновить', icon: const Icon(Icons.refresh), onPressed: _fetch),
+          IconButton(tooltip: tab == 2 ? 'Проверить новые главы' : 'Обновить',
+            icon: const Icon(Icons.refresh),
+            onPressed: tab == 2 ? (checkingChapters ? null : _checkChapters) : _fetch),
         ],
       ),
       body: tab == 2 ? AnimatedBuilder(
@@ -102,6 +135,37 @@ class _MainShellState extends State<MainShell> {
             ? const EmptyView(icon: Icons.bookmark_border, text: 'Здесь появятся сохранённые тайтлы')
             : ListView(padding: const EdgeInsets.all(16), children: [
                 SectionTitle('Продолжить чтение', subtitle: '${saved.length} в библиотеке'),
+                const SizedBox(height: 8),
+                FilledButton.icon(
+                  onPressed: checkingChapters ? null : _checkChapters,
+                  icon: checkingChapters
+                      ? const SizedBox(width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.notifications_active_outlined),
+                  label: Text(checkingChapters ? 'Проверяем источники…' : 'Проверить новые главы'),
+                ),
+                const SizedBox(height: 8),
+                if (checkError != null)
+                  Text(checkError!, style: const TextStyle(color: Color(0xFFFFBE80))),
+                if (chapterReport != null) ...[
+                  Text(chapterReport!.discoveries.isEmpty
+                      ? 'Новых доступных глав нет. Первая проверка сохраняет исходное состояние.'
+                      : 'Найдено новых глав: ${chapterReport!.discoveries.length}',
+                    style: const TextStyle(color: Colors.white70)),
+                  for (final discovery in chapterReport!.discoveries)
+                    ListTile(
+                      leading: const Icon(Icons.auto_stories),
+                      title: Text(discovery.book.title),
+                      subtitle: Text('${discovery.chapter.name} · ${discovery.sourceKey}'),
+                      trailing: const Icon(Icons.open_in_new),
+                      onTap: () => _openChapter(discovery),
+                    ),
+                  for (final warning in chapterReport!.warnings.take(8))
+                    Padding(padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Text(warning,
+                        style: const TextStyle(color: Color(0xFFFFBE80), fontSize: 12))),
+                  const Divider(),
+                ],
                 ...saved.map((item) => ListTile(
                   contentPadding: const EdgeInsets.symmetric(vertical: 6),
                   leading: ClipRRect(borderRadius: BorderRadius.circular(6),

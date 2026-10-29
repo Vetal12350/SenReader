@@ -167,7 +167,9 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
           if (id.isEmpty) continue;
           final number = n['number'] ?? '?';
           final subtitle = (n['name'] is String && (n['name'] as String).isNotEmpty) ? ': ${n['name']}' : '';
-          chapters.add(Chapter(id: id, name: 'Глава $number$subtitle'));
+          final volume = n['volume'];
+          final suffix = volume == null || '$volume' == '0' ? '' : ' (т. $volume)';
+          chapters.add(Chapter(id: id, name: 'Глава $number$subtitle$suffix'));
         }
         final pageInfo = conn['pageInfo'];
         if (pageInfo is! Map || pageInfo['hasNextPage'] != true) break;

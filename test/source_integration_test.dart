@@ -136,6 +136,8 @@ void main() {
     expect(restored.items.single.lastSource, 'readmanga');
     final prefs = await SharedPreferences.getInstance();
     final raw = jsonDecode(prefs.getString('senreader.library.v1')!) as List;
-    expect((raw.single as Map).keys.toSet(), {'title', 'entries', 'lastChapter', 'lastSource'});
+    expect((raw.single as Map).keys.toSet(), containsAll(
+      {'title', 'entries', 'lastChapter', 'lastSource',
+       'seenChapterKeys', 'initializedSources'}));
   });
 }
