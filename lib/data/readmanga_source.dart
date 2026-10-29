@@ -202,10 +202,16 @@ class ReadMangaSource implements MangaSource {
       final host = match.group(2) ?? '';
       final extra = match.group(4) ?? '';
       final path = match.group(6) ?? '';
-      var url = host.isNotEmpty ? (extra.startsWith('/manga/') ? '$host$path' : '$host$extra$path') : path;
-      if (url.startsWith('//')) url = 'https:$url';
-      else if (url.startsWith('/')) url = '$baseUrl$url';
-      if (!url.startsWith('https://')) continue;
+      // GroupLe's second tuple component may be a URL prefix.
+      var url = extra.isEmpty && path.startsWith('/static/')
+          ? '$baseUrl$path'
+          : (extra.endsWith('/manga/') ? '$host$path' : '$extra$host$path');
+      if (!url.contains('://')) url = 'https:$url';
+      url = url.replaceFirst('//resh', '//h');
+      if (url.contains('one-way.work')) url = url.split('?').first;
+      final uri = Uri.tryParse(url);
+      if (uri == null || uri.scheme != 'https' || uri.host.isEmpty ||
+          uri.userInfo.isNotEmpty || uri.hasFragment) continue;
       // Do not include removal placeholders in the actual reader.
       if (_isPlaceholderUrl(url)) continue;
       images.add(PageImage(url, headers: imageHeaders));
