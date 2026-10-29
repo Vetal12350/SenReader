@@ -1,17 +1,28 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'core/models.dart';
+import 'core/chapter_identity.dart';
 import 'data/catalog_repository.dart';
 import 'data/chapter_checker.dart';
 import 'data/library_store.dart';
+import 'data/chapter_notification_service.dart';
+import 'data/chapter_background_scheduler.dart';
 import 'ui/detail_page.dart';
 import 'ui/reader_page.dart';
 import 'ui/widgets.dart';
+import 'ui/chapter_notifications_panel.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final library = LibraryStore();
   await library.load();
+  try {
+    await ChapterNotificationService.instance.initialize();
+    await ChapterBackgroundScheduler.initialize();
+  } catch (_) {
+    // Keep the library usable even if this Android version cannot schedule
+    // background checks; manual checking remains available.
+  }
   runApp(SenReaderApp(library: library));
 }
 
@@ -58,10 +69,13 @@ class _MainShellState extends State<MainShell> {
   @override void initState() {
     super.initState();
     _fetch();
+    ChapterNotificationService.instance.openedPayload.addListener(_onNotificationTap);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _onNotificationTap());
   }
 
   @override void dispose() {
     debounce?.cancel();
+    ChapterNotificationService.instance.openedPayload.removeListener(_onNotificationTap);
     searchController.dispose();
     super.dispose();
   }
@@ -104,6 +118,49 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
+  Future<void> _onNotificationTap() async {
+    final state = ChapterNotificationService.instance.openedPayload;
+    final payload = state.value;
+    if (payload == null || !mounted) return;
+    state.value = null; // Never re-open on UI rebuild.
+    final info = ChapterNotificationService.decodePayload(payload);
+    if (info == null) return;
+    SavedBook? saved;
+    for (final book in widget.library.items) {
+      if (book.key == info['book']) { saved = book; break; }
+    }
+    if (saved == null) return;
+    final sourceKey = info['source']!;
+    final entry = saved.entries[sourceKey];
+    final source = widget.repository.sources[sourceKey];
+    if (entry == null || source == null) return;
+    try {
+      final detail = await source.detail(entry);
+      Chapter? matched;
+      for (final chapter in detail.chapters) {
+        if (chapter.id == info['chapter'] &&
+            canonicalChapterKey(chapter) == info['canonical']) {
+          matched = chapter;
+          break;
+        }
+      }
+      if (!mounted) return;
+      if (matched == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Глава больше недоступна. Попробуй другой источник.')));
+        return;
+      }
+      Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
+        book: saved!.toUnified(), chapter: matched!,
+        sourceKey: sourceKey, repository: widget.repository, library: widget.library,
+      )));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Не удалось открыть главу. Проверь соединение или доступ.')));
+    }
+  }
+
   void _openChapter(ChapterDiscovery discovery) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
       book: discovery.book, chapter: discovery.chapter,
@@ -135,6 +192,7 @@ class _MainShellState extends State<MainShell> {
             ? const EmptyView(icon: Icons.bookmark_border, text: 'Здесь появятся сохранённые тайтлы')
             : ListView(padding: const EdgeInsets.all(16), children: [
                 SectionTitle('Продолжить чтение', subtitle: '${saved.length} в библиотеке'),
+                const ChapterNotificationsPanel(),
                 const SizedBox(height: 8),
                 FilledButton.icon(
                   onPressed: checkingChapters ? null : _checkChapters,
