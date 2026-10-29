@@ -34,7 +34,7 @@ jobs:
           set -euo pipefail
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A README.md pubspec.yaml analysis_options.yaml .gitignore lib test scripts .github/workflows/android-apk.yml
+          git add -A README.md pubspec.yaml analysis_options.yaml .gitignore lib test scripts
           if ! git diff --cached --quiet; then
             git commit -m 'Import SenReader v0.1 application source'
             git push origin HEAD:main
@@ -56,6 +56,7 @@ jobs:
         run: |
           flutter create --project-name senreader --org app.senreader --platforms android .
           python3 scripts/prepare_android.py
+          rm -f test/widget_test.dart
 
       - name: Install dependencies
         run: flutter pub get
