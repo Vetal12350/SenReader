@@ -5,11 +5,19 @@ import '../core/models.dart';
 import '../core/title_matching.dart';
 
 class SavedBook {
-  SavedBook({required this.title, required this.entries, this.lastChapter = '', this.lastSource = ''});
+  SavedBook({
+    required this.title, required this.entries, this.lastChapter = '',
+    this.lastSource = '', Set<String>? seenChapterKeys,
+    Set<String>? initializedSources,
+  })  : seenChapterKeys = seenChapterKeys ?? <String>{},
+        initializedSources = initializedSources ?? <String>{};
+
   final String title;
   final Map<String, MangaEntry> entries;
   String lastChapter;
   String lastSource;
+  final Set<String> seenChapterKeys;
+  final Set<String> initializedSources;
   String get key => normalizedTitle(title);
   UnifiedManga toUnified() => UnifiedManga(title: title, entries: {...entries});
 
@@ -17,6 +25,8 @@ class SavedBook {
     'title': title,
     'entries': entries.map((k, v) => MapEntry(k, v.toJson())),
     'lastChapter': lastChapter, 'lastSource': lastSource,
+    'seenChapterKeys': seenChapterKeys.toList()..sort(),
+    'initializedSources': initializedSources.toList()..sort(),
   };
   factory SavedBook.fromJson(Map<String, dynamic> json) {
     final raw = json['entries'] as Map? ?? {};
@@ -25,6 +35,12 @@ class SavedBook {
       entries: raw.map((k, v) => MapEntry(k.toString(), MangaEntry.fromJson(Map<String, dynamic>.from(v as Map)))),
       lastChapter: json['lastChapter'] as String? ?? '',
       lastSource: json['lastSource'] as String? ?? '',
+      seenChapterKeys: (json['seenChapterKeys'] is List
+              ? (json['seenChapterKeys'] as List).whereType<String>() : <String>[])
+          .where((value) => value.length <= 128).toSet(),
+      initializedSources: (json['initializedSources'] is List
+              ? (json['initializedSources'] as List).whereType<String>() : <String>[])
+          .where((value) => value.length <= 32).toSet(),
     );
   }
 }
@@ -76,6 +92,17 @@ class LibraryStore extends ChangeNotifier {
     _books.remove(normalizedTitle(book.title));
     await _save();
   }
+  /// Commit a successful scan before surfacing its discoveries. A failing
+  /// source never marks its baseline or clears previously seen chapters.
+  Future<void> recordChapterScan(String bookKey, String source,
+      Iterable<String> seenKeys) async {
+    final item = _books[bookKey];
+    if (item == null || !item.entries.containsKey(source)) return;
+    item.seenChapterKeys.addAll(seenKeys);
+    item.initializedSources.add(source);
+    await _save();
+  }
+
   Future<void> markRead(UnifiedManga book, Chapter chapter, String source) async {
     await add(book);
     final item = _books[normalizedTitle(book.title)]!;
