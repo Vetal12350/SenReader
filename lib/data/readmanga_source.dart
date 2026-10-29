@@ -11,7 +11,10 @@ class ReadMangaSource implements MangaSource {
   ReadMangaSource({http.Client? client}) : _client = client;
   final http.Client? _client;
 
-  static const baseUrl = 'https://3.readmanga.ru';
+  // ReadManga currently links to the ZazaZa host from the GroupLe hub.
+  // Keep only this public source as the canonical HTML origin.
+  static const baseUrl = 'https://a.zazaza.me';
+  static const legacyHost = '3.readmanga.ru';
   @override String get key => 'readmanga';
   @override String get name => 'ReadManga';
   // Grouple's current public ReadManga image endpoint expects a general
@@ -21,7 +24,33 @@ class ReadMangaSource implements MangaSource {
     'Referer': 'https://www.google.com/',
     'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
   };
-  Uri _absolute(String path) => Uri.parse(baseUrl).resolve(path);
+  /// Stored v1 favorites can contain the previous site's absolute URLs.
+  /// Migrate only the known old source host, never arbitrary domains.
+  Uri _absolute(String path) {
+    final input = Uri.tryParse(path.trim());
+    if (input == null || input.userInfo.isNotEmpty || input.hasFragment ||
+        (input.hasScheme && input.scheme != 'https')) {
+      throw SourceException('ReadManga: некорректная ссылка на главу.');
+    }
+    final base = Uri.parse(baseUrl);
+    if (input.hasAuthority) {
+      if (input.host != base.host && input.host != legacyHost) {
+        throw SourceException('ReadManga: неизвестный адрес источника.');
+      }
+      if (input.port != 443) {
+        throw SourceException('ReadManga: некорректный порт источника.');
+      }
+      if (input.host == legacyHost) {
+        return base.replace(path: input.path, query: input.hasQuery ? input.query : null);
+      }
+    }
+    final uri = base.resolveUri(input);
+    if (uri.scheme != 'https' || uri.host != base.host ||
+        uri.userInfo.isNotEmpty || uri.port != 443) {
+      throw SourceException('ReadManga: некорректный адрес источника.');
+    }
+    return uri;
+  }
 
   Future<String> _html(Uri uri) async {
     if (uri.scheme != 'https' || uri.host != Uri.parse(baseUrl).host) {
@@ -32,7 +61,7 @@ class ReadMangaSource implements MangaSource {
       final headers = {
         'Accept': 'text/html,application/xhtml+xml',
         'Accept-Language': 'ru-RU,ru;q=0.9',
-        'Referer': 'https://www.google.com/',
+        'Referer': '$baseUrl/',
       };
       response = await (_client == null
           ? http.get(uri, headers: headers)
@@ -58,8 +87,15 @@ class ReadMangaSource implements MangaSource {
 
   String _image(String path) {
     if (path.isEmpty) return '';
-    final uri = _absolute(path);
-    return uri.scheme == 'https' ? uri.toString() : '';
+    try {
+      // Public cover CDN images may be hosted separately from HTML.
+      final uri = Uri.parse(baseUrl).resolve(path);
+      return uri.scheme == 'https' && uri.host.isNotEmpty &&
+          uri.userInfo.isEmpty && !uri.hasFragment
+          ? uri.toString() : '';
+    } on FormatException {
+      return '';
+    }
   }
 
   List<MangaEntry> parseTiles(String html) {
