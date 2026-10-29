@@ -5,6 +5,13 @@ import 'package:http/http.dart' as http;
 import '../core/models.dart';
 import '../core/source.dart';
 
+/// Distinguishes a CDN HTTP status from missing or unusable image bytes.
+class _ImageHttpFailure extends SourceException {
+  _ImageHttpFailure(this.statusCode)
+      : super('ReadManga: изображение недоступно (HTTP $statusCode).');
+  final int statusCode;
+}
+
 /// Reads public ReadManga pages. HTML selectors may break when the site changes.
 /// No login tokens are gathered or bundled into the app.
 class ReadMangaSource implements MangaSource {
@@ -238,7 +245,7 @@ class ReadMangaSource implements MangaSource {
       final response = await client.send(request)
           .timeout(const Duration(seconds: 15));
       if (response.statusCode != 200 && response.statusCode != 206) {
-        throw SourceException('ReadManga: изображение недоступно (HTTP ${response.statusCode}).');
+        throw _ImageHttpFailure(response.statusCode);
       }
       final type = response.headers['content-type']?.toLowerCase() ?? '';
       if (type.isNotEmpty && !type.startsWith('image/')) {
@@ -272,7 +279,19 @@ class ReadMangaSource implements MangaSource {
     return true;
   }
 
-  Future<void> _checkImages(List<PageImage> images) async {
+  Future<void> _checkSampledImages(
+      http.Client client, List<PageImage> images) async {
+    final sampled = await Future.wait(
+        images.take(3).map((image) => _sampleImage(client, image)));
+    if (sampled.length >= 2 &&
+        sampled.every((bytes) => _samePrefix(sampled.first, bytes))) {
+      throw SourceException(
+          'ReadManga: вместо страниц возвращается одинаковая картинка — '
+          'возможно, манга удалена на этом зеркале.');
+    }
+  }
+
+  Future<List<PageImage>> _checkImages(List<PageImage> images) async {
     if (images.isEmpty) {
       throw SourceException('ReadManga: главы нет в публичном доступе (удалена или закрыта).');
     }
@@ -282,13 +301,20 @@ class ReadMangaSource implements MangaSource {
     }
     final client = _client ?? http.Client();
     try {
-      final sampled = await Future.wait(
-          images.take(3).map((image) => _sampleImage(client, image)));
-      if (sampled.length >= 2 && sampled.every(
-          (bytes) => _samePrefix(sampled.first, bytes))) {
-        throw SourceException(
-            'ReadManga: вместо страниц возвращается одинаковая картинка — '
-            'возможно, манга удалена на этом зеркале.');
+      try {
+        await _checkSampledImages(client, images);
+        return images;
+      } on _ImageHttpFailure catch (e) {
+        if (e.statusCode != 300) rethrow;
+        // Some public image endpoints distinguish requests by Referer.
+        // Retry only nonstandard HTTP 300 with the source's own Referer.
+        // The selected headers must also reach Image.network in the reader.
+        final alternate = images.map((image) => PageImage(
+          image.url,
+          headers: {...image.headers, 'Referer': '$baseUrl/'},
+        )).toList();
+        await _checkSampledImages(client, alternate);
+        return alternate;
       }
     } finally {
       if (_client == null) client.close();
@@ -297,7 +323,6 @@ class ReadMangaSource implements MangaSource {
 
   @override Future<List<PageImage>> pages(Chapter chapter) async {
     final images = parseReaderPages(await _html(_absolute(chapter.id)));
-    await _checkImages(images);
-    return images;
+    return _checkImages(images);
   }
 }
