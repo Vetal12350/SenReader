@@ -29,4 +29,21 @@ if 'isCoreLibraryDesugaringEnabled = true' not in build:
 if 'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:' not in build:
     build += '\n\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n'
 gradle.write_text(build, encoding='utf-8')
-print('Android manifest and Gradle prepared for networking and notifications')
+# Isolated QA install to protect existing SenReader and SenReader QA data.
+qa_id = 'app.senreader.senreader.zazazaqa'
+build = gradle.read_text(encoding='utf-8')
+old_id = 'applicationId = "app.senreader.senreader"'
+if old_id not in build:
+    raise SystemExit('Generated application ID changed; refusing unsafe QA build')
+gradle.write_text(build.replace(old_id, f'applicationId = "{qa_id}"', 1),
+                  encoding='utf-8')
+body = manifest.read_text(encoding='utf-8')
+old_activity = 'android:name=".MainActivity"'
+if old_activity not in body:
+    raise SystemExit('Generated MainActivity mapping changed')
+body = body.replace(old_activity,
+                    'android:name="app.senreader.senreader.MainActivity"', 1)
+body = body.replace('android:label="senreader"', 'android:label="SenReader ZazaZa QA"')
+manifest.write_text(body, encoding='utf-8')
+
+print('Isolated ZazaZa test app configured')
