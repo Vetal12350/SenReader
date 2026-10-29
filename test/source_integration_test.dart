@@ -47,7 +47,10 @@ Future<void> revealInScrollable(WidgetTester tester, Finder finder,
 
 Future<void> selectSource(WidgetTester tester, String source) async {
   await tester.tap(find.byTooltip('Сменить источник'));
-  await tester.pumpAndSettle();
+  // Avoid pumpAndSettle here: a previous source can still have an unresolved
+  // request and a live loading spinner while the popup itself is animating.
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 350));
   // Tap the actual popup item, not the possibly offset label in its overlay.
   final menuItem = find.byWidgetPredicate((widget) =>
       widget is CheckedPopupMenuItem<String> && widget.value == source);
