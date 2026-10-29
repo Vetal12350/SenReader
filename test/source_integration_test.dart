@@ -35,6 +35,16 @@ class FixtureSource implements MangaSource {
   @override Future<List<PageImage>> pages(Chapter chapter) async => [];
 }
 
+
+Future<void> revealInScrollable(WidgetTester tester, Finder finder,
+    {bool towardsTop = false}) async {
+  await tester.scrollUntilVisible(
+    finder, towardsTop ? -250 : 250,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
@@ -69,12 +79,15 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: DetailPage(book: book, repository: repo, library: LibraryStore())));
     await tester.pumpAndSettle();
     expect(sources.map((s) => s.detailCalls), [1, 1, 1]);
-    expect(find.text('Readable chapter'), findsOneWidget);
     expect(find.byType(ChoiceChip), findsNWidgets(3));
-    expect(find.textContaining('offline'), findsOneWidget);
+    await revealInScrollable(tester, find.text('Readable chapter'));
+    expect(find.text('Readable chapter'), findsOneWidget);
+    await revealInScrollable(tester, find.widgetWithText(ChoiceChip, 'readmanga'),
+      towardsTop: true);
     await tester.tap(find.widgetWithText(ChoiceChip, 'readmanga'));
     await tester.pumpAndSettle();
     expect(sources[1].detailCalls, 2);
+    await revealInScrollable(tester, find.text('Readable chapter'));
     expect(find.text('Readable chapter'), findsOneWidget);
   });
 
@@ -85,6 +98,7 @@ void main() {
       repository: CatalogRepository(sources: {for (final s in sources) s.key: s}), library: LibraryStore())));
     await tester.pumpAndSettle();
     expect(sources.map((s) => s.detailCalls), [1, 1, 1]);
+    await revealInScrollable(tester, find.text('Повторить'));
     expect(find.text('Повторить'), findsOneWidget);
   });
 
@@ -97,6 +111,7 @@ void main() {
       repository: CatalogRepository(sources: {'senkuro': senkuro, 'readmanga': unrelated, 'remanga': remanga}),
       library: LibraryStore())));
     await tester.pumpAndSettle();
+    await revealInScrollable(tester, find.text('Readable chapter'));
     expect(find.text('Readable chapter'), findsOneWidget);
     expect(unrelated.detailCalls, 0);
     expect(senkuro.detailCalls, 1);
@@ -114,6 +129,7 @@ void main() {
     await tester.pumpAndSettle();
     senkuro.pending!.complete(MangaDetail(entry: senkuro.entry, chapters: []));
     await tester.pumpAndSettle();
+    await revealInScrollable(tester, find.text('Readable chapter'));
     expect(find.text('Readable chapter'), findsOneWidget);
     expect(remanga.detailCalls, 1);
   });
