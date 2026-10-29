@@ -34,13 +34,16 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Future<void> _discoverOther() async {
-    final next = await widget.repository.findOtherSources(book);
-    if (!mounted) return;
-    setState(() => book = next);
-    if (widget.library.has(next)) await widget.library.add(next);
-    // Discovery may finish after the initial detail request.
-    if (mounted && !loading && (detail?.chapters.isEmpty == true || error != null)) {
-      _fallback();
+    try {
+      final next = await widget.repository.findOtherSources(book);
+      if (!mounted) return;
+      setState(() => book = next);
+      if (widget.library.has(next)) await widget.library.add(next);
+      if (mounted && !loading && (detail?.chapters.isEmpty == true || error != null)) {
+        _fallback();
+      }
+    } catch (_) {
+      // Optional source discovery must not break the detail screen.
     }
   }
 
@@ -56,7 +59,7 @@ class _DetailPageState extends State<DetailPage> {
       if (!mounted || request != _request) return;
       setState(() { loading = false; detail = next; });
       if (next.chapters.isEmpty) {
-        setState(() => _warnings.add('${source.name}: публичные главы недоступны.'));
+        _warnings.add('${source.name}: публичные главы недоступны.');
         _fallback();
       }
     } catch (e) {
@@ -159,20 +162,20 @@ class _DetailPageState extends State<DetailPage> {
             Positioned.fill(child: ImageFiltered(
               imageFilter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
               child: CoverImage(detail?.entry.coverUrl ?? book.coverUrl,
-                width: double.infinity, height: 430))),
+                width: double.infinity, height: 360))),
             Container(width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(14, 24, 14, 22),
+              padding: const EdgeInsets.fromLTRB(14, 20, 14, 20),
               decoration: const BoxDecoration(gradient: LinearGradient(
                 begin: Alignment.topCenter, end: Alignment.bottomCenter,
                 colors: [Color(0x9917131B), Color(0xE519131E)])),
               child: Column(children: [
                 ClipRRect(borderRadius: BorderRadius.circular(12),
                   child: CoverImage(detail?.entry.coverUrl ?? book.coverUrl,
-                    width: 190, height: 263)),
+                    width: 148, height: 204)),
                 const SizedBox(height: 16),
                 Text(detail?.entry.title ?? book.title,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 26,
+                  style: const TextStyle(fontSize: 24,
                     fontWeight: FontWeight.w800)),
                 if (detail?.alternativeNames.isNotEmpty == true) ...[
                   const SizedBox(height: 8),
@@ -210,10 +213,44 @@ class _DetailPageState extends State<DetailPage> {
               onSelected: (_) => _select(source),
             ),
         ]),
+        const SizedBox(height: 12),
+        AnimatedBuilder(
+          animation: widget.library,
+          builder: (context, _) {
+            final saved = widget.library.get(book);
+            final status = saved?.status ?? 'planned';
+            final label = status == 'reading' ? 'Читаю' :
+                status == 'completed' ? 'Прочитано' : 'В планах';
+            return Row(children: [
+              PopupMenuButton<String>(
+                tooltip: 'Статус произведения',
+                onSelected: (value) => widget.library.setStatus(book, value),
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'reading', child: Text('Читаю')),
+                  PopupMenuItem(value: 'planned', child: Text('В планах')),
+                  PopupMenuItem(value: 'completed', child: Text('Прочитано')),
+                ],
+                child: Chip(
+                  avatar: const Icon(Icons.bookmark_added_outlined, size: 18),
+                  label: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Text(label),
+                    const SizedBox(width: 5),
+                    const Icon(Icons.keyboard_arrow_down_rounded, size: 18),
+                  ]),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(saved == null ? 'Нажми, чтобы добавить в библиотеку' : 'В библиотеке',
+                style: const TextStyle(color: Colors.white54, fontSize: 11)),
+            ]);
+          },
+        ),
         _continueAction(),
         const SizedBox(height: 18),
-        for (final warning in _warnings)
-          Text(warning, style: const TextStyle(color: Color(0xFFFFBE80))),
+        // A failed alternative source is not an error when another source works.
+        if (!loading && detail == null)
+          for (final warning in _warnings.take(2))
+            Text(warning, style: const TextStyle(color: Color(0xFFFFBE80))),
         if (loading) const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator())),
         if (error != null) ...[
           Text('Не удалось получить главы: $error', style: const TextStyle(color: Color(0xFFFFBE80))),
@@ -265,14 +302,40 @@ class _DetailPageState extends State<DetailPage> {
                   detail!.chapters[newestFirst ? index : detail!.chapters.length - 1 - index]),
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               )),
-            ListTile(
-            contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.menu_book_outlined),
-            title: Text(detail!.chapters[newestFirst ? index : detail!.chapters.length - 1 - index].name),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => _openChapter(detail!.chapters[
-              newestFirst ? index : detail!.chapters.length - 1 - index]),
-          ),
+            Builder(builder: (context) {
+              final chapter = detail!.chapters[
+                newestFirst ? index : detail!.chapters.length - 1 - index];
+              return AnimatedBuilder(
+                animation: widget.library,
+                builder: (context, _) {
+                  final read = widget.library.isChapterRead(book, chapter, selected);
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(read ? Icons.check_circle_rounded :
+                        Icons.menu_book_outlined,
+                      color: read ? Theme.of(context).colorScheme.primary : null),
+                    title: Text(chapter.name,
+                      style: TextStyle(color: read ? Colors.white60 : null)),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      IconButton(
+                        tooltip: read ? 'Снять отметку о прочтении' : 'Отметить прочитанной',
+                        icon: Icon(read ? Icons.bookmark_added_rounded :
+                            Icons.bookmark_add_outlined),
+                        onPressed: () async {
+                          if (read) {
+                            await widget.library.unmarkRead(book, chapter, selected);
+                          } else {
+                            await widget.library.markRead(book, chapter, selected);
+                          }
+                        },
+                      ),
+                      const Icon(Icons.chevron_right),
+                    ]),
+                    onTap: () => _openChapter(chapter),
+                  );
+                },
+              );
+            }),
           ],
           ],
         ],

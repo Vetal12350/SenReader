@@ -23,6 +23,32 @@ void main() {
     expect(images.last.url, 'https://cdn.example/b.jpg');
   });
 
+  test('Grouple prefix, manga, and one-way CDN URLs are assembled', () {
+    final pages = ReadMangaSource().parseReaderPages("""
+      <script>rm_h.readerInit({}, [
+        ['//resh.cdn.example/manga/','https:','p001.jpg',1,2],
+        ['https://cdn.example/manga/','/manga/','p002.jpg',1,2],
+        ['//resrm.one-way.work/','https:','p003.jpg?token=temporary',1,2]
+      ]);</script>
+    """);
+    expect(pages.map((p) => p.url).toList(), [
+      'https://h.cdn.example/manga/p001.jpg',
+      'https://cdn.example/manga/p002.jpg',
+      'https://resrm.one-way.work/p003.jpg',
+    ]);
+  });
+
+  test('static placeholder is excluded even with split CDN host', () {
+    final pages = ReadMangaSource().parseReaderPages("""
+      <script>rm_h.readerInit({}, [
+        ['//resrm.one-way.work/','','/static/deleted1-24d87e88e6e47dc5.png',1,2],
+        ['//resrm.one-way.work/','https:','p001.jpg',1,2]
+      ]);</script>
+    """);
+    expect(pages, hasLength(1));
+    expect(pages.single.url, 'https://resrm.one-way.work/p001.jpg');
+  });
+
   test('known placeholder links are not considered manga pages', () {
     final images = ReadMangaSource().parseReaderPages("""
       <script>readerInit({}, [

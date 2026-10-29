@@ -53,9 +53,12 @@ class UnifiedManga {
 }
 
 class CatalogResult {
-  const CatalogResult({required this.books, required this.warnings});
+  const CatalogResult({required this.books, required this.warnings,
+    this.senkuroPopular = const []});
   final List<UnifiedManga> books;
   final List<String> warnings;
+  /// Senkuro's public POPULARITY_SCORE order, not a verified daily chart.
+  final List<MangaEntry> senkuroPopular;
 }
 
 

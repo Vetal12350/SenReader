@@ -32,16 +32,20 @@ class SenReaderApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const accent = Color(0xFFC6A8FF);
+    const accent = Color(0xFFFF893F);
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'SenReader',
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: accent, brightness: Brightness.dark),
-        scaffoldBackgroundColor: const Color(0xFF101015),
-        cardColor: const Color(0xFF1C1C23),
-        appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF101015)),
+        scaffoldBackgroundColor: const Color(0xFF100F14),
+        cardColor: const Color(0xFF20191D),
+        appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF100F14)),
+        navigationBarTheme: const NavigationBarThemeData(
+          backgroundColor: Color(0xFF171419),
+          indicatorColor: Color(0xFF41281F),
+        ),
       ),
       home: MainShell(repository: CatalogRepository(), library: library),
     );
@@ -57,6 +61,7 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int tab = 0;
+  String libraryFilter = 'all';
   CatalogResult? result;
   bool loading = false;
   bool checkingChapters = false;
@@ -99,6 +104,101 @@ class _MainShellState extends State<MainShell> {
       book: book, repository: widget.repository, library: widget.library,
     )));
   }
+
+  Future<void> _resume(SavedBook saved) async {
+    final book = saved.toUnified();
+    final entry = saved.entries[saved.lastSource];
+    final source = widget.repository.sources[saved.lastSource];
+    if (entry == null || source == null || saved.lastChapter.isEmpty) {
+      _open(book);
+      return;
+    }
+    try {
+      final detail = await source.detail(entry);
+      Chapter? target;
+      for (final chapter in detail.chapters) {
+        if ((saved.lastChapterId.isNotEmpty && chapter.id == saved.lastChapterId) ||
+            (saved.lastChapterId.isEmpty && chapter.name == saved.lastChapter)) {
+          target = chapter;
+          break;
+        }
+      }
+      if (!mounted) return;
+      if (target == null) {
+        _open(book);
+      } else {
+        Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
+          book: book, chapter: target!, sourceKey: saved.lastSource,
+          repository: widget.repository, library: widget.library,
+        )));
+      }
+    } catch (_) {
+      if (!mounted) return;
+      _open(book);
+    }
+  }
+
+  Widget _continueReading() => AnimatedBuilder(
+    animation: widget.library,
+    builder: (context, _) {
+      final saved = widget.library.items
+          .where((item) => item.lastChapter.isNotEmpty).toList()
+        ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
+      if (saved.isEmpty) return const SizedBox.shrink();
+      return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        const SizedBox(height: 28),
+        SectionTitle('Продолжить чтение',
+          subtitle: 'Твоя сохранённая глава и страница'),
+        SizedBox(height: 155, child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          itemCount: saved.take(12).length,
+          separatorBuilder: (context, index) => const SizedBox(width: 10),
+          itemBuilder: (context, index) {
+            final item = saved[index];
+            return SizedBox(width: 225, child: InkWell(
+              onTap: () => _resume(item),
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF211B20),
+                  borderRadius: BorderRadius.circular(14)),
+                child: Row(children: [
+                  ClipRRect(borderRadius: BorderRadius.circular(9),
+                    child: CoverImage(item.toUnified().coverUrl,
+                      width: 86, height: 130)),
+                  const SizedBox(width: 9),
+                  Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Text(item.title, maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 8),
+                      Text(item.lastChapter,
+                        maxLines: 2, overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white70,
+                          fontSize: 11)),
+                      if (item.lastPageCount > 0) ...[
+                        const SizedBox(height: 8),
+                        LinearProgressIndicator(
+                          value: (item.lastPageIndex + 1) / item.lastPageCount,
+                          backgroundColor: Colors.white12),
+                        const SizedBox(height: 4),
+                        Text('Стр. ${item.lastPageIndex + 1}/${item.lastPageCount}',
+                          style: const TextStyle(fontSize: 10,
+                            color: Colors.white60)),
+                      ],
+                    ],
+                  )),
+                ]),
+              ),
+            ));
+          },
+        )),
+      ]);
+    },
+  );
 
   Future<void> _checkChapters() async {
     if (checkingChapters || widget.library.items.isEmpty) return;
@@ -173,9 +273,9 @@ class _MainShellState extends State<MainShell> {
     return Scaffold(
       appBar: AppBar(
         title: Row(children: [
-          const Icon(Icons.auto_stories_rounded, size: 25, color: Color(0xFFC6A8FF)),
+          const Icon(Icons.auto_stories_rounded, size: 25, color: Color(0xFFFF893F)),
           const SizedBox(width: 10),
-          Text(tab == 0 ? 'SenReader' : tab == 1 ? 'Каталог' : 'Моя библиотека',
+          Text(tab == 0 ? 'SenReader' : tab == 1 ? 'Каталог' : 'Мои закладки',
             style: const TextStyle(fontWeight: FontWeight.w800)),
         ]),
         actions: [
@@ -188,10 +288,31 @@ class _MainShellState extends State<MainShell> {
         animation: widget.library,
         builder: (context, _) {
           final saved = widget.library.items;
+          final filtered = saved.where((item) =>
+            libraryFilter == 'all' || item.status == libraryFilter).toList();
           return saved.isEmpty
             ? const EmptyView(icon: Icons.bookmark_border, text: 'Здесь появятся сохранённые тайтлы')
             : ListView(padding: const EdgeInsets.all(16), children: [
-                SectionTitle('Продолжить чтение', subtitle: '${saved.length} в библиотеке'),
+                SectionTitle('Мои закладки', subtitle: '${saved.length} произведений'),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: [
+                    for (final option in const [
+                      ('all', 'Все'), ('reading', 'Читаю'),
+                      ('planned', 'В планах'), ('completed', 'Прочитано')
+                    ]) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text('${option.$2} ${option.$1 == 'all' ? saved.length : saved.where((b) => b.status == option.$1).length}'),
+                          selected: libraryFilter == option.$1,
+                          onSelected: (_) => setState(() => libraryFilter = option.$1),
+                        ),
+                      ),
+                    ],
+                  ]),
+                ),
+                const SizedBox(height: 16),
                 const ChapterNotificationsPanel(),
                 const SizedBox(height: 8),
                 FilledButton.icon(
@@ -224,14 +345,19 @@ class _MainShellState extends State<MainShell> {
                         style: const TextStyle(color: Color(0xFFFFBE80), fontSize: 12))),
                   const Divider(),
                 ],
-                ...saved.map((item) => ListTile(
-                  contentPadding: const EdgeInsets.symmetric(vertical: 6),
-                  leading: ClipRRect(borderRadius: BorderRadius.circular(6),
-                    child: CoverImage(item.toUnified().coverUrl, width: 54, height: 76)),
-                  title: Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(item.lastChapter.isEmpty ? 'Ещё не читали' : 'Последняя: ${item.lastChapter}'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _open(item.toUnified()),
+                if (filtered.isEmpty)
+                  const EmptyView(icon: Icons.bookmark_border,
+                    text: 'В этой категории пока нет произведений'),
+                LayoutBuilder(builder: (context, constraints) => Wrap(
+                  spacing: 10, runSpacing: 18,
+                  children: filtered.map((item) => SizedBox(
+                    width: (constraints.maxWidth - 20) / 3,
+                    child: MangaTile(
+                      book: item.toUnified(),
+                      statusLabel: item.status == 'reading' ? 'Читаю' :
+                        item.status == 'completed' ? 'Прочитано' : 'В планах',
+                      onTap: () => _open(item.toUnified())),
+                  )).toList(),
                 )),
               ]);
         },
@@ -241,14 +367,40 @@ class _MainShellState extends State<MainShell> {
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
           children: [
             if (tab == 0) ...[
-              const Text('Твои истории — в одном месте', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 6),
-              const Text('Senkuro + ReadManga + ReManga. Один каталог, одна библиотека.',
-                style: TextStyle(color: Colors.white60)),
-              const SizedBox(height: 24),
-              FilledButton.icon(onPressed: () => setState(() => tab = 1),
-                icon: const Icon(Icons.search), label: const Text('Найти мангу или манхву')),
-              const SizedBox(height: 24),
+              TextField(
+                readOnly: true,
+                onTap: () => setState(() => tab = 1),
+                decoration: InputDecoration(
+                  hintText: 'Поиск манги, манхвы или маньхуа',
+                  prefixIcon: const Icon(Icons.search),
+                  filled: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(15),
+                    borderSide: BorderSide.none),
+                ),
+              ),
+              const SizedBox(height: 22),
+              const SectionTitle('Самое популярное',
+                subtitle: 'Senkuro · сортировка по популярности'),
+              if (loading)
+                const SizedBox(height: 195,
+                  child: Center(child: CircularProgressIndicator())),
+              if (!loading && result != null &&
+                  result!.senkuroPopular.isNotEmpty)
+                SizedBox(height: 197, child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: result!.senkuroPopular.take(15).length,
+                  separatorBuilder: (context, index) => const SizedBox(width: 10),
+                  itemBuilder: (context, index) {
+                    final item = result!.senkuroPopular[index];
+                    final book = UnifiedManga(title: item.title,
+                        entries: {'senkuro': item});
+                    return SizedBox(width: 116,
+                      child: MangaTile(book: book, onTap: () => _open(book)));
+                  },
+                )),
+              _continueReading(),
+              const SizedBox(height: 30),
             ] else ...[
               TextField(
                 controller: searchController,
@@ -262,9 +414,12 @@ class _MainShellState extends State<MainShell> {
               ),
               const SizedBox(height: 18),
             ],
-            SectionTitle(tab == 0 ? 'Популярное' : query.isEmpty ? 'Каталог' : 'Результаты поиска',
-              subtitle: 'Приоритет Senkuro · ReadManga · ReManga'),
-            if (loading) const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator())),
+            SectionTitle(tab == 0 ? 'Общий каталог' :
+                  query.isEmpty ? 'Каталог' : 'Результаты поиска',
+              subtitle: 'Senkuro · ReadManga · ReManga'),
+            if (loading && tab != 0)
+              const Padding(padding: EdgeInsets.all(32),
+                child: Center(child: CircularProgressIndicator())),
             if (result != null && result!.warnings.isNotEmpty)
               ...result!.warnings.map((w) => Padding(
                 padding: const EdgeInsets.only(bottom: 8),

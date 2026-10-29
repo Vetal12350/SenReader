@@ -15,7 +15,8 @@ class CatalogRepository {
 
   Future<CatalogResult> getCatalog({String query = ''}) async {
     final warnings = <String>[];
-    final futures = sources.values.map((source) async {
+    final orderedSources = sources.values.toList();
+    final futures = orderedSources.map((source) async {
       try {
         return query.trim().isEmpty
           ? await source.popular()
@@ -26,7 +27,13 @@ class CatalogRepository {
       }
     });
     final lists = await Future.wait(futures);
-    return CatalogResult(books: mergeEntries(lists.expand((e) => e)), warnings: warnings);
+    final senkuroIndex = orderedSources.indexWhere((source) => source.key == 'senkuro');
+    return CatalogResult(
+      books: mergeEntries(lists.expand((e) => e)),
+      warnings: warnings,
+      senkuroPopular: query.trim().isEmpty && senkuroIndex >= 0
+          ? lists[senkuroIndex] : const [],
+    );
   }
 
   // A matching title can come from multiple sites, but never assume localization
