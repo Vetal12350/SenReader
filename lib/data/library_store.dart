@@ -48,9 +48,9 @@ class SavedBook {
       lastChapter: json['lastChapter'] as String? ?? '',
       lastSource: json['lastSource'] as String? ?? '',
       lastChapterId: json['lastChapterId'] as String? ?? '',
-      lastPageIndex: ((json['lastPageIndex'] as num?)?.toInt() ?? 0).clamp(0, 100000),
+      lastPageIndex: ((json['lastPageIndex'] as num?)?.toInt() ?? 0).clamp(0, 100000).toInt(),
       lastPageCount: ((json['lastPageCount'] as num?)?.toInt() ?? 0).clamp(0, 100000),
-      lastUpdatedAt: ((json['lastUpdatedAt'] as num?)?.toInt() ?? 0).clamp(0, 9999999999999),
+      lastUpdatedAt: ((json['lastUpdatedAt'] as num?)?.toInt() ?? 0).clamp(0, 9999999999999).toInt(),
       readChapterKeys: (json['readChapterKeys'] is List
               ? (json['readChapterKeys'] as List).whereType<String>() : <String>[])
           .where((value) => value.length <= 256).toSet(),
