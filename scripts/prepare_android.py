@@ -29,4 +29,22 @@ if 'isCoreLibraryDesugaringEnabled = true' not in build:
 if 'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:' not in build:
     build += '\n\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n'
 gradle.write_text(build, encoding='utf-8')
-print('Android manifest and Gradle prepared for networking and notifications')
+# This branch is for a disposable side-by-side QA app only.
+# Keep production/main applicationId unchanged, so existing local bookmarks
+# are never uninstalled or overwritten during the ReadManga smoke test.
+qa_id = 'app.senreader.senreader.readmangaqa'
+build = gradle.read_text(encoding='utf-8')
+original_id = 'applicationId = "app.senreader.senreader"'
+if original_id not in build:
+    raise SystemExit('Expected generated applicationId not found; QA build blocked')
+gradle.write_text(build.replace(original_id, f'applicationId = "{qa_id}"', 1),
+                  encoding='utf-8')
+body = manifest.read_text(encoding='utf-8')
+if 'android:name=".MainActivity"' not in body:
+    raise SystemExit('Expected generated MainActivity not found; QA build blocked')
+body = body.replace('android:name=".MainActivity"',
+                    'android:name="app.senreader.senreader.MainActivity"', 1)
+body = body.replace('android:label="senreader"', 'android:label="SenReader QA"')
+manifest.write_text(body, encoding='utf-8')
+
+print('Android QA: side-by-side ReadManga test package generated')
