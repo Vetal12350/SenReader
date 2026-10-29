@@ -31,7 +31,7 @@ if 'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:' not in build:
 gradle.write_text(build, encoding='utf-8')
 
 # Disposable QA package has a unique Android ID, so older app data stays intact.
-qa_id = 'app.senreader.senreader.zazazaqa2'
+qa_id = 'app.senreader.senreader.readmangaqa3'
 build = gradle.read_text(encoding='utf-8')
 old_id = 'applicationId = "app.senreader.senreader"'
 if old_id not in build:
@@ -44,7 +44,7 @@ if 'android:name=".MainActivity"' not in body:
 body = body.replace('android:name=".MainActivity"',
                     'android:name="app.senreader.senreader.MainActivity"', 1)
 body = body.replace('android:label="senreader"',
-                    'android:label="SenReader ZazaZa QA"')
+                    'android:label="SenReader ReadManga QA3"')
 manifest.write_text(body, encoding='utf-8')
 
 print('Android manifest and Gradle prepared for networking and notifications')
