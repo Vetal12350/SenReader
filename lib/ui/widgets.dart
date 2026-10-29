@@ -20,9 +20,11 @@ class CoverImage extends StatelessWidget {
 }
 
 class MangaTile extends StatelessWidget {
-  const MangaTile({super.key, required this.book, required this.onTap});
+  const MangaTile({super.key, required this.book, required this.onTap,
+    this.statusLabel});
   final UnifiedManga book;
   final VoidCallback onTap;
+  final String? statusLabel;
   @override Widget build(BuildContext context) {
     return InkWell(
       borderRadius: BorderRadius.circular(12), onTap: onTap,
@@ -31,6 +33,18 @@ class MangaTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           child: Stack(fit: StackFit.expand, children: [
             CoverImage(book.coverUrl),
+            if (statusLabel != null)
+              Positioned(left: 6, top: 6,
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFF893F),
+                    borderRadius: BorderRadius.circular(7)),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6, vertical: 4),
+                  child: Text(statusLabel!,
+                    style: const TextStyle(color: Colors.black,
+                      fontSize: 10, fontWeight: FontWeight.w700)),
+                )),
             Positioned(left: 6, bottom: 6, child: Container(
               decoration: BoxDecoration(color: const Color(0xD916161D), borderRadius: BorderRadius.circular(7)),
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
