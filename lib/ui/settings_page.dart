@@ -69,23 +69,19 @@ class _SettingsPageState extends State<SettingsPage> {
         final controller = widget.themes;
         if (controller == null) return const SizedBox.shrink();
         return AnimatedBuilder(animation: controller, builder: (context, _) =>
-          SegmentedButton<ThemeMode>(
-            key: const Key('theme-mode-selector'),
-            showSelectedIcon: false,
-            segments: const [
-              ButtonSegment(value: ThemeMode.dark,
-                icon: Icon(Icons.dark_mode_outlined),
-                label: Text('Тёмная')),
-              ButtonSegment(value: ThemeMode.light,
-                icon: Icon(Icons.light_mode_outlined),
-                label: Text('Светлая')),
-              ButtonSegment(value: ThemeMode.system,
-                icon: Icon(Icons.settings_brightness),
-                label: Text('Системная')),
-            ],
-            selected: {controller.mode},
-            onSelectionChanged: (mode) => controller.setMode(mode.first),
-          ),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final option in const [
+              (ThemeMode.dark, 'Тёмная'),
+              (ThemeMode.light, 'Светлая'),
+              (ThemeMode.system, 'Системная'),
+            ])
+              ChoiceChip(
+                key: ValueKey('theme-${option.$1.name}'),
+                label: Text(option.$2),
+                selected: controller.mode == option.$1,
+                onSelected: (_) => controller.setMode(option.$1),
+              ),
+          ]),
         );
       }),
       const SizedBox(height: 24),
