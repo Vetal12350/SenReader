@@ -54,7 +54,12 @@ void main() {
       ..['completedChapterKeys'] = ['v0:c1', 'v0:c12']
       ..['resume'] = {'chapter': '12', 'page': 8}
       ..['status'] = 'completed';
-    ((book['entries'] as Map)['senkuro'] as Map<String, dynamic>)['futureEntry'] = {'value': true};
+    // The legacy fixture infers Map<String, String> for source entries.
+    // Clone both levels before adding a future non-string metadata value.
+    final entries = Map<String, dynamic>.from(book['entries'] as Map);
+    entries['senkuro'] = Map<String, dynamic>.from(entries['senkuro'] as Map);
+    (entries['senkuro'] as Map<String, dynamic>)['futureEntry'] = {'value': true};
+    book['entries'] = entries;
     final envelope = jsonDecode(backup([book])) as Map<String, dynamic>;
     envelope['futureEnvelope'] = {'revision': 7};
     final parsed = transfer.parse(jsonEncode(envelope));
@@ -67,6 +72,9 @@ void main() {
 
   test('valid multi-source entries and exact trusted cover hosts', () {
     final book = row();
+    // Build a dynamic JSON object rather than mutating the legacy fixture's
+    // strongly typed Map<String, Map<String, String>> in place.
+    book['entries'] = Map<String, dynamic>.from(book['entries'] as Map);
     (book['entries'] as Map<String, dynamic>).addAll({
       'readmanga': {
         'source': 'readmanga', 'id': 'https://a.zazaza.me/example',
