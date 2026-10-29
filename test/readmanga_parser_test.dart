@@ -112,9 +112,9 @@ void main() {
         <meta itemprop="ratingValue" content="4.4" />
         <meta itemprop="bestRating" content="5" />
       </div>
-      <table><tr class="item-row">
+      <table><tbody><tr class="item-row"><td>
         <a class="chapter-link" href="/chapter/1">1 - 7</a>
-      </tr></table>
+      </td></tr></tbody></table>
     ''', 200));
     final source = ReadMangaSource(client: client);
     final item = const MangaEntry(source: 'readmanga', id: '/sample', title: 'Example');
