@@ -202,10 +202,20 @@ class ReadMangaSource implements MangaSource {
       final host = match.group(2) ?? '';
       final extra = match.group(4) ?? '';
       final path = match.group(6) ?? '';
-      var url = host.isNotEmpty ? (extra.startsWith('/manga/') ? '$host$path' : '$host$extra$path') : path;
-      if (url.startsWith('//')) url = 'https:$url';
-      else if (url.startsWith('/')) url = '$baseUrl$url';
-      if (!url.startsWith('https://')) continue;
+      // Grouple stores the URL as three pieces. The second piece is
+      // sometimes the URL prefix (e.g. "https:") rather than a suffix.
+      // Keep the ordering consistent with the maintained Grouple parser.
+      var url = extra.isEmpty && path.startsWith('/static/')
+          ? '$baseUrl$path'
+          : (extra.endsWith('/manga/') ? '$host$path' : '$extra$host$path');
+      if (!url.contains('://')) url = 'https:$url';
+      // The legacy "resh" host is mapped to the public image CDN host.
+      url = url.replaceFirst('//resh', '//h');
+      // This public CDN does not require the transient query token.
+      if (url.contains('one-way.work')) url = url.split('?').first;
+      final uri = Uri.tryParse(url);
+      if (uri == null || uri.scheme != 'https' || uri.host.isEmpty ||
+          uri.userInfo.isNotEmpty || uri.hasFragment) continue;
       // Do not include removal placeholders in the actual reader.
       if (_isPlaceholderUrl(url)) continue;
       images.add(PageImage(url, headers: imageHeaders));
