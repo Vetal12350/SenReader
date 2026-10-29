@@ -121,7 +121,7 @@ class _MainShellState extends State<MainShell> {
             if (tab == 0) ...[
               const Text('Твои истории — в одном месте', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
               const SizedBox(height: 6),
-              const Text('Senkuro + ReadManga. Один каталог, одна библиотека.',
+              const Text('Senkuro + ReadManga + ReManga. Один каталог, одна библиотека.',
                 style: TextStyle(color: Colors.white60)),
               const SizedBox(height: 24),
               FilledButton.icon(onPressed: () => setState(() => tab = 1),
@@ -141,7 +141,7 @@ class _MainShellState extends State<MainShell> {
               const SizedBox(height: 18),
             ],
             SectionTitle(tab == 0 ? 'Популярное' : query.isEmpty ? 'Каталог' : 'Результаты поиска',
-              subtitle: 'Приоритет Senkuro · резерв ReadManga'),
+              subtitle: 'Приоритет Senkuro · ReadManga · ReManga'),
             if (loading) const Padding(padding: EdgeInsets.all(32), child: Center(child: CircularProgressIndicator())),
             if (result != null && result!.warnings.isNotEmpty)
               ...result!.warnings.map((w) => Padding(
@@ -149,7 +149,7 @@ class _MainShellState extends State<MainShell> {
                 child: Text(w, style: const TextStyle(color: Color(0xFFFFBE80), fontSize: 12)),
               )),
             if (!loading && result != null && result!.books.isEmpty)
-              const EmptyView(icon: Icons.search_off, text: 'Ничего не найдено или оба источника недоступны.'),
+              const EmptyView(icon: Icons.search_off, text: 'Ничего не найдено или источники недоступны.'),
             if (!loading && result != null && result!.books.isNotEmpty)
               LayoutBuilder(builder: (context, box) => Wrap(
                 spacing: 10, runSpacing: 18,
