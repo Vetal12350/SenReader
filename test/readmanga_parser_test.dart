@@ -13,7 +13,7 @@ void main() {
     ''');
     expect(list.length, 1);
     expect(list.first.title, 'Пример манхвы');
-    expect(list.first.coverUrl, 'https://3.readmanga.ru/covers/a.jpg');
+    expect(list.first.coverUrl, 'https://a.zazaza.me/covers/a.jpg');
   });
   test('readerInit mixed quote format parses', () {
     final images = ReadMangaSource().parseReaderPages('''
@@ -36,7 +36,7 @@ void main() {
 
   test('duplicate CDN placeholder bytes fail with readable error', () async {
     final client = MockClient((request) async {
-      if (request.url.host == '3.readmanga.ru') {
+      if (request.url.host == 'a.zazaza.me') {
         expect(request.headers['referer'], 'https://www.google.com/');
         return http.Response('''
           <script>readerInit({}, [
@@ -60,7 +60,7 @@ void main() {
 
   test('distinct valid images still open in correct order', () async {
     final client = MockClient((request) async {
-      if (request.url.host == '3.readmanga.ru') {
+      if (request.url.host == 'a.zazaza.me') {
         return http.Response('''
           <script>readerInit({}, [
             ['https://cdn.example/','','one.jpg',1,2],
@@ -86,7 +86,7 @@ void main() {
 
   test('CDN HTTP 403 fails as unavailable instead of a readable chapter', () async {
     final client = MockClient((request) async {
-      if (request.url.host == '3.readmanga.ru') {
+      if (request.url.host == 'a.zazaza.me') {
         return http.Response("""
           <script>readerInit({}, [
             ['https://cdn.example/','','one.jpg',1,2],
