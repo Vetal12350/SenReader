@@ -13,7 +13,7 @@ void main() {
     ''');
     expect(list.length, 1);
     expect(list.first.title, 'Пример манхвы');
-    expect(list.first.coverUrl, 'https://3.readmanga.ru/covers/a.jpg');
+    expect(list.first.coverUrl, 'https://a.zazaza.me/covers/a.jpg');
   });
   test('readerInit mixed quote format parses', () {
     final images = ReadMangaSource().parseReaderPages('''
@@ -36,8 +36,8 @@ void main() {
 
   test('duplicate CDN placeholder bytes fail with readable error', () async {
     final client = MockClient((request) async {
-      if (request.url.host == '3.readmanga.ru') {
-        expect(request.headers['referer'], 'https://www.google.com/');
+      if (request.url.host == 'a.zazaza.me') {
+        expect(request.headers['referer'], 'https://a.zazaza.me/');
         return http.Response('''
           <script>readerInit({}, [
             ['https://cdn.example/','','one.jpg',1,2],
@@ -60,7 +60,7 @@ void main() {
 
   test('distinct valid images still open in correct order', () async {
     final client = MockClient((request) async {
-      if (request.url.host == '3.readmanga.ru') {
+      if (request.url.host == 'a.zazaza.me') {
         return http.Response('''
           <script>readerInit({}, [
             ['https://cdn.example/','','one.jpg',1,2],
@@ -86,7 +86,7 @@ void main() {
 
   test('CDN HTTP 403 fails as unavailable instead of a readable chapter', () async {
     final client = MockClient((request) async {
-      if (request.url.host == '3.readmanga.ru') {
+      if (request.url.host == 'a.zazaza.me') {
         return http.Response("""
           <script>readerInit({}, [
             ['https://cdn.example/','','one.jpg',1,2],
@@ -104,6 +104,72 @@ void main() {
     );
   });
 
+
+  test('public chapter 127 uses canonical ZazaZa domain', () async {
+    final client = MockClient((request) async {
+      expect(request.url.scheme, 'https');
+      expect(request.url.host, 'a.zazaza.me');
+      expect(request.url.path, '/kak_vyjit_v_akademii/vol2/127');
+      return http.Response('''
+        <script>readerInit({}, [
+          ['https://resrm.one-way.work/','','p001.jpg',1,2],
+          ['https://resrm.one-way.work/','','p002.jpg',1,2]
+        ])</script>''', 200);
+    });
+    // Stored legacy absolute chapter links must be migrated transparently.
+    // First test parsing without preflight image retrieval.
+    final source = ReadMangaSource(client: client);
+    final uri = source.canonicalChapterUri(
+        'https://3.readmanga.ru/kak_vyjit_v_akademii/vol2/127?mtr=true');
+    expect(uri.toString(), 'https://a.zazaza.me/kak_vyjit_v_akademii/vol2/127?mtr=true');
+    final newUri = source.canonicalChapterUri('/kak_vyjit_v_akademii/vol2/127');
+    expect(newUri.host, 'a.zazaza.me');
+  });
+
+  test('legacy favorites preserve source path, external host is rejected', () {
+    final source = ReadMangaSource();
+    expect(source.canonicalChapterUri('/kak_vyjit_v_akademii').toString(),
+        'https://a.zazaza.me/kak_vyjit_v_akademii');
+    expect(source.canonicalChapterUri(
+        'https://3.readmanga.ru/kak_vyjit_v_akademii').toString(),
+        'https://a.zazaza.me/kak_vyjit_v_akademii');
+    for (final url in [
+      'https://evil.example.org/path',
+      'http://3.readmanga.ru/path',
+      'https://a.zazaza.me.evil.org/path',
+      'https://username:password@a.zazaza.me/path',
+    ]) {
+      expect(() => source.canonicalChapterUri(url), throwsA(isA<SourceException>()));
+    }
+  });
+
+
+  test('live hashed removed image is rejected even if it is a single URL', () async {
+    final image = 'https://resrm.one-way.work/static/deleted1-'
+        '24d87e88e6e47dc5c7b60c03c0a3e589.png';
+    final source = ReadMangaSource(client: MockClient((request) async {
+      expect(request.url.host, 'a.zazaza.me');
+      expect(request.url.path, '/kak_vyjit_v_akademii/vol2/127');
+      return http.Response("""
+        <script>readerInit({}, [
+          ['https://resrm.one-way.work/','','static/deleted1-24d87e88e6e47dc5c7b60c03c0a3e589.png',1,2]
+        ])</script>
+      """, 200);
+    }));
+    final parsed = source.parseReaderPages("""
+      <script>readerInit({}, [
+        ['https://resrm.one-way.work/','','static/deleted1-24d87e88e6e47dc5c7b60c03c0a3e589.png',1,2]
+      ])</script>
+    """);
+    expect(parsed, isEmpty);
+    expect(image, contains('deleted1-'));
+    await expectLater(
+      source.pages(const Chapter(
+          id: '/kak_vyjit_v_akademii/vol2/127', name: 'Глава 127 (т. 2)')),
+      throwsA(isA<SourceException>().having(
+        (e) => e.message, 'message', contains('публичном доступе'))),
+    );
+  });
 
   test('public source rating is normalized only with an explicit bestRating', () async {
     final client = MockClient((request) async => http.Response('''
