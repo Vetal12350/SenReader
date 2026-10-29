@@ -25,10 +25,6 @@ abstract final class SenReaderTheme {
       navigationBarTheme: NavigationBarThemeData(
         backgroundColor: nav, indicatorColor: indicator,
       ),
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: card,
-      ),
     );
   }
 }
