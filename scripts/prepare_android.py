@@ -18,6 +18,9 @@ manifest.write_text(body, encoding='utf-8')
 # immediate notifications. This applies only to the generated debug/release
 # Android wrapper and does not require committing SDK-generated files.
 build = gradle.read_text(encoding='utf-8')
+# Current Android notification plugin requires API 36 to compile, API 24 minimum.
+build = build.replace('compileSdk = flutter.compileSdkVersion', 'compileSdk = 36', 1)
+build = build.replace('minSdk = flutter.minSdkVersion', 'minSdk = 24', 1)
 if 'isCoreLibraryDesugaringEnabled = true' not in build:
     if 'compileOptions {' not in build:
         raise SystemExit('Generated Android Gradle format changed; review desugaring setup')
