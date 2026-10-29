@@ -200,6 +200,14 @@ class LibraryTransfer {
     if (lastSource != null && lastSource != '' && !entries.containsKey(lastSource)) {
       _fail('Unknown last source');
     }
+    if (book.containsKey('preferredSource')) {
+      final preferred = _string(book['preferredSource']);
+      if (!entries.containsKey(preferred)) _fail('Unknown preferred source');
+    }
+    if (book.containsKey('readHistoryVersion') && book['readHistoryVersion'] != 2) {
+      _fail('Unsupported read history version');
+    }
+    _stringSet(book, 'readChapterKeys', 256);
     _stringSet(book, 'seenChapterKeys', 128);
     _stringSet(book, 'initializedSources', 32,
         allowed: entries.keys.toSet());

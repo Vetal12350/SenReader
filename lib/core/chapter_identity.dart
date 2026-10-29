@@ -23,3 +23,28 @@ String? canonicalChapterKey(Chapter chapter) {
     return null;
   }
 }
+
+/// Compare decimal identities without lexical ordering or floating point loss.
+/// Unknown labels have no ordering: only that exact selected chapter is marked.
+int? compareChapterChronology(Chapter a, Chapter b) {
+  final first = canonicalChapterKey(a);
+  final second = canonicalChapterKey(b);
+  if (first == null || second == null) return null;
+  int decimal(String x, String y) {
+    final xp = x.split('.');
+    final yp = y.split('.');
+    final whole = BigInt.parse(xp.first).compareTo(BigInt.parse(yp.first));
+    if (whole != 0) return whole;
+    final xf = xp.length == 2 ? xp.last : '';
+    final yf = yp.length == 2 ? yp.last : '';
+    final length = xf.length > yf.length ? xf.length : yf.length;
+    return xf.padRight(length, '0').compareTo(yf.padRight(length, '0'));
+  }
+  final ap = first.substring(1).split(':c');
+  final bp = second.substring(1).split(':c');
+  final volume = decimal(ap.first, bp.first);
+  return volume != 0 ? volume : decimal(ap.last, bp.last);
+}
+
+String sourceChapterKey(Chapter chapter, String source) =>
+    '$source|${canonicalChapterKey(chapter) ?? 'id:${chapter.id}'}';

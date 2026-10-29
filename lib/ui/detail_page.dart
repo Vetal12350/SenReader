@@ -3,11 +3,14 @@ import 'package:flutter/material.dart';
 import '../core/models.dart';
 import '../data/catalog_repository.dart';
 import '../data/library_store.dart';
+import '../data/chapter_alert_controller.dart';
+import 'chapter_alert_offer.dart';
 import 'reader_page.dart';
 import 'widgets.dart';
 
 class DetailPage extends StatefulWidget {
-  const DetailPage({super.key, required this.book, required this.repository, required this.library});
+  const DetailPage({super.key, required this.book, required this.repository, required this.library, this.alerts});
+  final ChapterAlertController? alerts;
   final UnifiedManga book;
   final CatalogRepository repository;
   final LibraryStore library;
@@ -25,10 +28,14 @@ class _DetailPageState extends State<DetailPage> {
   final Set<String> _attempted = {};
   final List<String> _warnings = [];
   int _request = 0;
+  bool _explicitSelection = false;
+  late final ChapterAlertController alerts = widget.alerts ?? ChapterAlertController();
   @override void initState() {
     super.initState();
-    book = widget.book;
-    selected = book.primary.source;
+    final saved = widget.library.get(widget.book);
+    book = UnifiedManga(title: saved?.title ?? widget.book.title,
+      entries: {...widget.book.entries, ...?saved?.entries});
+    selected = saved?.preferredSource ?? SavedBook.chooseSource(book.entries);
     _load();
     _discoverOther();
   }
@@ -74,6 +81,7 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   void _fallback() {
+    if (widget.library.has(book) || _explicitSelection) return;
     for (final source in book.entries.keys) {
       if (!_attempted.contains(source) && widget.repository.sources.containsKey(source)) {
         setState(() => selected = source);
@@ -83,14 +91,17 @@ class _DetailPageState extends State<DetailPage> {
     }
   }
 
-  void _select(String value) {
+  Future<void> _select(String value) async {
     if (selected == value) return;
     setState(() {
       selected = value;
+      _explicitSelection = true;
       _attempted.clear();
       _warnings.clear();
     });
-    _load();
+    final pending = _load();
+    await widget.library.setPreferredSource(book, value);
+    await pending;
   }
 
   void _retry() {
@@ -110,6 +121,7 @@ class _DetailPageState extends State<DetailPage> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
       book: book, chapter: chapter, sourceKey: selected,
       repository: widget.repository, library: widget.library,
+      chapters: detail!.chapters,
     )));
   }
 
@@ -123,7 +135,9 @@ class _DetailPageState extends State<DetailPage> {
       }
       Chapter? match;
       for (final chapter in detail!.chapters) {
-        if (chapter.name == previous.lastChapter) {
+        if (previous.lastChapterId.isNotEmpty
+            ? chapter.id == previous.lastChapterId
+            : chapter.name == previous.lastChapter) {
           match = chapter;
           break;
         }
@@ -146,13 +160,24 @@ class _DetailPageState extends State<DetailPage> {
 
   @override Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Произведение'), actions: [
+      appBar: AppBar(title: const Text('Произведение', maxLines: 1,
+        overflow: TextOverflow.ellipsis), actions: [
+        PopupMenuButton<String>(
+          tooltip: 'Сменить источник', icon: const Icon(Icons.source_outlined),
+          initialValue: selected, onSelected: _select,
+          itemBuilder: (context) => [for (final source in book.entries.keys)
+            CheckedPopupMenuItem(value: source, checked: selected == source,
+              child: Text(widget.repository.sources[source]?.name ?? source))],
+        ),
         AnimatedBuilder(animation: widget.library, builder: (context, _) => IconButton(
           tooltip: widget.library.has(book) ? 'Убрать из библиотеки' : 'Добавить в библиотеку',
           icon: Icon(widget.library.has(book) ? Icons.bookmark : Icons.bookmark_outline),
           onPressed: () async {
             if (widget.library.has(book)) { await widget.library.remove(book); }
-            else { await widget.library.add(book); }
+            else {
+              await widget.library.add(book, preferredSource: selected);
+              if (context.mounted) await offerChapterAlerts(context, alerts);
+            }
           },
         )),
       ]),
@@ -186,7 +211,8 @@ class _DetailPageState extends State<DetailPage> {
                 ],
                 if (detail?.rating != null) ...[
                   const SizedBox(height: 11),
-                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Wrap(alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center, children: [
                     const Icon(Icons.star_rounded,
                       color: Color(0xFFFFD37E), size: 21),
                     const SizedBox(width: 4),
@@ -201,19 +227,6 @@ class _DetailPageState extends State<DetailPage> {
             ),
           ])),
         const SizedBox(height: 14),
-        const Text('Источник глав',
-          style: TextStyle(color: Colors.white70, fontSize: 12)),
-        const SizedBox(height: 6),
-        Wrap(spacing: 6, children: [
-          for (final source in book.entries.keys)
-            ChoiceChip(
-              label: Text(widget.repository.sources[source]?.name ?? source,
-                style: const TextStyle(fontSize: 12)),
-              selected: selected == source,
-              onSelected: (_) => _select(source),
-            ),
-        ]),
-        const SizedBox(height: 12),
         AnimatedBuilder(
           animation: widget.library,
           builder: (context, _) {
@@ -221,10 +234,14 @@ class _DetailPageState extends State<DetailPage> {
             final status = saved?.status ?? 'planned';
             final label = status == 'reading' ? 'Читаю' :
                 status == 'completed' ? 'Прочитано' : 'В планах';
-            return Row(children: [
+            return Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
               PopupMenuButton<String>(
                 tooltip: 'Статус произведения',
-                onSelected: (value) => widget.library.setStatus(book, value),
+                onSelected: (value) async {
+                  final wasSaved = widget.library.has(book);
+                  await widget.library.setStatus(book, value, preferredSource: selected);
+                  if (!wasSaved && context.mounted) await offerChapterAlerts(context, alerts);
+                },
                 itemBuilder: (context) => const [
                   PopupMenuItem(value: 'reading', child: Text('Читаю')),
                   PopupMenuItem(value: 'planned', child: Text('В планах')),
@@ -311,26 +328,24 @@ class _DetailPageState extends State<DetailPage> {
                   final read = widget.library.isChapterRead(book, chapter, selected);
                   return ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: Icon(read ? Icons.check_circle_rounded :
-                        Icons.menu_book_outlined,
-                      color: read ? Theme.of(context).colorScheme.primary : null),
+                    leading: IconButton(
+                      tooltip: read ? 'Прочитано: отметить непрочитанной' :
+                          'Не прочитано: прочитать эту и все предыдущие главы',
+                      icon: Icon(read ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                        color: read ? Theme.of(context).colorScheme.primary :
+                            Theme.of(context).colorScheme.onSurfaceVariant),
+                      onPressed: () async {
+                        if (read) {
+                          await widget.library.unmarkRead(book, chapter, selected);
+                        } else {
+                          await widget.library.markRead(book, chapter, selected,
+                            availableChapters: detail!.chapters);
+                        }
+                      },
+                    ),
                     title: Text(chapter.name,
                       style: TextStyle(color: read ? Colors.white60 : null)),
-                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                      IconButton(
-                        tooltip: read ? 'Снять отметку о прочтении' : 'Отметить прочитанной',
-                        icon: Icon(read ? Icons.bookmark_added_rounded :
-                            Icons.bookmark_add_outlined),
-                        onPressed: () async {
-                          if (read) {
-                            await widget.library.unmarkRead(book, chapter, selected);
-                          } else {
-                            await widget.library.markRead(book, chapter, selected);
-                          }
-                        },
-                      ),
-                      const Icon(Icons.chevron_right),
-                    ]),
+                    trailing: const Icon(Icons.chevron_right),
                     onTap: () => _openChapter(chapter),
                   );
                 },

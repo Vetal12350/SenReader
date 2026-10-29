@@ -12,14 +12,48 @@ class SavedBook {
     this.lastPageIndex = 0, this.lastPageCount = 0, this.lastUpdatedAt = 0,
     Set<String>? readChapterKeys, Set<String>? seenChapterKeys,
     Set<String>? initializedSources,
+    String preferredSource = '',
+    int readHistoryVersion = 2,
   })  : readChapterKeys = readChapterKeys ?? <String>{},
         seenChapterKeys = seenChapterKeys ?? <String>{},
-        initializedSources = initializedSources ?? <String>{};
+        initializedSources = initializedSources ?? <String>{},
+        preferredSource = chooseSource(entries, preferredSource, lastSource) {
+    // Preserve legacy keys, but attribute unscoped read history only to its
+    // original source. Never project completion onto another translation.
+    final historySource = entries.containsKey(lastSource) ? lastSource : '';
+    for (final key in readHistoryVersion < 2 ? this.readChapterKeys.toList() : <String>[]) {
+      if (key.startsWith('v') && historySource.isNotEmpty) {
+        this.readChapterKeys.add('$historySource|$key');
+      }
+      for (final source in entries.keys) {
+        if (key.startsWith('$source:')) {
+          this.readChapterKeys.add('$source|id:${key.substring(source.length + 1)}');
+        }
+      }
+    }
+    if (readHistoryVersion < 2 && this.readChapterKeys.isEmpty && lastChapterId.isEmpty &&
+        lastChapter.isNotEmpty && entries.containsKey(lastSource)) {
+      this.readChapterKeys.add(sourceChapterKey(
+          Chapter(id: 'name:$lastChapter', name: lastChapter), lastSource));
+    }
+  }
+
+  static String chooseSource(Map<String, MangaEntry> entries,
+      [String preferred = '', String last = '']) {
+    if (entries.containsKey(preferred)) return preferred;
+    if (entries.containsKey(last)) return last;
+    for (final source in const ['senkuro', 'readmanga', 'remanga']) {
+      if (entries.containsKey(source)) return source;
+    }
+    final keys = entries.keys.toList()..sort();
+    return keys.isEmpty ? '' : keys.first;
+  }
 
   final String title;
   final Map<String, MangaEntry> entries;
   String lastChapter;
   String lastSource;
+  String preferredSource;
   String status; // planned, reading, completed
   String lastChapterId;
   int lastPageIndex;
@@ -35,6 +69,8 @@ class SavedBook {
     'title': title,
     'entries': entries.map((k, v) => MapEntry(k, v.toJson())),
     'lastChapter': lastChapter, 'lastSource': lastSource, 'status': status,
+    'preferredSource': preferredSource,
+    'readHistoryVersion': 2,
     'lastChapterId': lastChapterId, 'lastPageIndex': lastPageIndex,
     'lastPageCount': lastPageCount, 'lastUpdatedAt': lastUpdatedAt,
     'readChapterKeys': readChapterKeys.toList()..sort(),
@@ -48,6 +84,8 @@ class SavedBook {
       entries: raw.map((k, v) => MapEntry(k.toString(), MangaEntry.fromJson(Map<String, dynamic>.from(v as Map)))),
       lastChapter: json['lastChapter'] as String? ?? '',
       lastSource: json['lastSource'] as String? ?? '',
+      preferredSource: json['preferredSource'] as String? ?? '',
+      readHistoryVersion: (json['readHistoryVersion'] as num?)?.toInt() ?? 1,
       status: ['planned', 'reading', 'completed'].contains(json['status'])
           ? json['status'] as String
           : ((json['lastChapter'] as String? ?? '').isEmpty ? 'planned' : 'reading'),
@@ -74,22 +112,30 @@ class LibraryStore extends ChangeNotifier {
   List<SavedBook> get items => _books.values.toList();
 
   Future<void> load() async {
+    await _reload();
+    notifyListeners();
+  }
+
+  Future<void> _reload() async {
     final prefs = await SharedPreferences.getInstance();
+    // Background WorkManager and the foreground have separate plugin caches.
+    await prefs.reload();
     final raw = prefs.getString(storageKey);
     if (raw != null) {
       try {
         final decoded = jsonDecode(raw);
         if (decoded is List) {
+          final restored = <String, SavedBook>{};
           for (final item in decoded) {
             final book = SavedBook.fromJson(Map<String, dynamic>.from(item as Map));
-            if (book.key.isNotEmpty) _books[book.key] = book;
+            if (book.key.isNotEmpty) restored[book.key] = book;
           }
+          _books..clear()..addAll(restored);
         }
       } catch (_) {
         // Preserve malformed storage (do not overwrite it until user changes the library).
       }
     }
-    notifyListeners();
   }
 
   bool has(UnifiedManga book) => _books.containsKey(normalizedTitle(book.title));
@@ -101,17 +147,22 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> add(UnifiedManga book) async {
+  Future<void> add(UnifiedManga book, {String preferredSource = ''}) async {
+    await _reload();
     final key = normalizedTitle(book.title);
     final current = _books[key];
     if (current == null) {
-      _books[key] = SavedBook(title: book.title, entries: {...book.entries});
+      _books[key] = SavedBook(title: book.title, entries: {...book.entries},
+          preferredSource: preferredSource);
     } else {
-      current.entries.addAll(book.entries);
+      for (final entry in book.entries.entries) {
+        current.entries.putIfAbsent(entry.key, () => entry.value);
+      }
     }
     await _save();
   }
   Future<void> remove(UnifiedManga book) async {
+    await _reload();
     _books.remove(normalizedTitle(book.title));
     await _save();
   }
@@ -119,34 +170,32 @@ class LibraryStore extends ChangeNotifier {
   /// source never marks its baseline or clears previously seen chapters.
   Future<void> recordChapterScan(String bookKey, String source,
       Iterable<String> seenKeys) async {
+    await _reload();
     final item = _books[bookKey];
-    if (item == null || !item.entries.containsKey(source)) return;
+    if (item == null || item.preferredSource != source) return;
     item.seenChapterKeys.addAll(seenKeys);
     item.initializedSources.add(source);
     await _save();
   }
 
-  /// Source-independent number/volume identity, or a source-scoped fallback.
-  /// This remains stable when the chapter's subtitle changes.
-  String _chapterKey(Chapter chapter, String source) =>
-      canonicalChapterKey(chapter) ?? '$source:${chapter.id}';
-
   bool isChapterRead(UnifiedManga book, Chapter chapter, String source) {
     final saved = get(book);
     if (saved == null) return false;
-    if (saved.readChapterKeys.contains(_chapterKey(chapter, source))) return true;
-    // Existing v1 libraries stored only the last manually completed chapter.
-    return saved.readChapterKeys.isEmpty && saved.lastChapterId.isEmpty &&
-        saved.lastChapter == chapter.name && saved.lastSource == source;
+    return saved.readChapterKeys.contains(sourceChapterKey(chapter, source)) ||
+        saved.readChapterKeys.contains('$source|id:name:${chapter.name}');
   }
 
   /// Save where the reader stopped; do not mark the chapter completed.
   Future<void> savePosition(UnifiedManga book, Chapter chapter, String source,
       {required int pageIndex, required int pageCount}) async {
+    await _reload();
     final key = normalizedTitle(book.title);
     final item = _books.putIfAbsent(key,
-        () => SavedBook(title: book.title, entries: {...book.entries}));
-    item.entries.addAll(book.entries);
+        () => SavedBook(title: book.title, entries: {...book.entries}, preferredSource: source));
+    if (item.preferredSource != source) return;
+    for (final entry in book.entries.entries) {
+      item.entries.putIfAbsent(entry.key, () => entry.value);
+    }
     item.lastChapter = chapter.name;
     item.lastChapterId = chapter.id;
     item.lastSource = source;
@@ -158,36 +207,57 @@ class LibraryStore extends ChangeNotifier {
     await _save();
   }
 
-  Future<void> markRead(UnifiedManga book, Chapter chapter, String source) async {
+  Future<void> markRead(UnifiedManga book, Chapter chapter, String source,
+      {Iterable<Chapter> availableChapters = const []}) async {
+    await _reload();
     final key = normalizedTitle(book.title);
     final item = _books.putIfAbsent(key,
-        () => SavedBook(title: book.title, entries: {...book.entries}));
-    item.entries.addAll(book.entries);
-    if (item.lastChapterId != chapter.id || item.lastSource != source) {
-      item.lastPageCount = 0;
+        () => SavedBook(title: book.title, entries: {...book.entries}, preferredSource: source));
+    if (item.preferredSource != source) return;
+    for (final entry in book.entries.entries) {
+      item.entries.putIfAbsent(entry.key, () => entry.value);
     }
-    item.lastChapter = chapter.name;
-    item.lastChapterId = chapter.id;
-    item.lastSource = source;
-    item.lastPageIndex = item.lastPageCount > 0 ? item.lastPageCount - 1 : 0;
     if (item.status == 'planned') item.status = 'reading';
-    item.readChapterKeys.add(_chapterKey(chapter, source));
-    item.lastUpdatedAt = DateTime.now().millisecondsSinceEpoch;
+    item.readChapterKeys.add(sourceChapterKey(chapter, source));
+    for (final candidate in availableChapters) {
+      final order = compareChapterChronology(candidate, chapter);
+      if (order != null && order <= 0) {
+        item.readChapterKeys.add(sourceChapterKey(candidate, source));
+      }
+    }
+    // Completion and resume are independent, including the current chapter.
     await _save();
   }
 
-  Future<void> setStatus(UnifiedManga book, String status) async {
+  Future<void> setStatus(UnifiedManga book, String status, {String preferredSource = ''}) async {
     if (!['planned', 'reading', 'completed'].contains(status)) return;
-    await add(book);
+    await add(book, preferredSource: preferredSource);
     _books[normalizedTitle(book.title)]!.status = status;
     await _save();
   }
 
   Future<void> unmarkRead(UnifiedManga book, Chapter chapter, String source) async {
+    await _reload();
     final item = get(book);
-    if (item == null) return;
-    item.readChapterKeys.remove(_chapterKey(chapter, source));
+    if (item == null || item.preferredSource != source) return;
+    item.readChapterKeys.remove(sourceChapterKey(chapter, source));
+    item.readChapterKeys.remove('$source|id:name:${chapter.name}');
+    // Remove the corresponding legacy alias so reload cannot resurrect it.
+    item.readChapterKeys.remove(canonicalChapterKey(chapter));
+    item.readChapterKeys.remove('$source:${chapter.id}');
     // Preserve the last reading position, even when a completion is undone.
+    await _save();
+  }
+
+  /// Only an explicit user selection changes a saved title's active source.
+  Future<void> setPreferredSource(UnifiedManga book, String source) async {
+    await _reload();
+    final item = get(book);
+    if (item == null || !book.entries.containsKey(source)) return;
+    for (final entry in book.entries.entries) {
+      item.entries.putIfAbsent(entry.key, () => entry.value);
+    }
+    item.preferredSource = source;
     await _save();
   }
 }

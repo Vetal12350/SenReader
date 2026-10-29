@@ -21,19 +21,9 @@ class ChapterScanReport {
   final int checkedTitles;
 }
 
-class _SourceResult {
-  _SourceResult(this.source, this.chapters);
-  final String source;
-  final List<Chapter> chapters;
-}
-
-/// Manual, bounded, source-independent chapter detection.
-///
-/// First successful scan per source initializes a baseline and produces NO
-/// releases. The source whose detail call finishes first is inspected first;
-/// no provider is given an artificial preference when selecting a release.
-/// Each candidate is verified with its public page-list endpoint before an
-/// alert can be returned. Network failures leave the baseline intact.
+/// Checks only each saved book's explicitly selected source. The first
+/// successful scan of a newly selected source establishes a silent baseline.
+/// Public page availability is verified before reporting a new chapter.
 class ChapterChecker {
   ChapterChecker({required this.repository, required this.library});
   final CatalogRepository repository;
@@ -46,44 +36,28 @@ class ChapterChecker {
     var checked = 0;
     for (final saved in List<SavedBook>.of(library.items)) {
       checked++;
-      UnifiedManga book = saved.toUnified();
-      try {
-        // Exact normalized title matching only; never fuzzy-link unrelated
-        // translations. A failed lookup does not block known sources.
-        final linked = await repository.findOtherSources(book);
-        if (linked.entries.length > book.entries.length) {
-          await library.add(linked);
-          book = linked;
-        }
-      } catch (_) {
-        warnings.add(saved.title + ': поиск альтернативных источников недоступен');
+      final book = saved.toUnified();
+      final selected = saved.preferredSource;
+      final source = repository.sources[selected];
+      final entry = book.entries[selected];
+      if (source == null || entry == null) {
+        warnings.add(saved.title + ': выбранный источник недоступен');
+        continue;
       }
-      final current = library.get(book);
-      if (current == null) continue;
-      final completed = <_SourceResult>[];
-      await Future.wait(book.entries.entries.map((record) async {
-        final source = repository.sources[record.key];
-        if (source == null) return;
-        try {
-          final detail = await source.detail(record.value);
-          completed.add(_SourceResult(record.key, detail.chapters));
-        } catch (_) {
-          warnings.add(saved.title + ': ' + source.name + ' недоступен');
-        }
-      }));
-
-      for (final response in completed) {
-        final source = repository.sources[response.source];
-        if (source == null) continue;
+      try {
+        final detail = await source.detail(entry);
+        await library.load();
+        final current = library.get(book);
+        if (current == null || current.preferredSource != selected) continue;
         final chapters = <String, Chapter>{};
-        for (final chapter in response.chapters) {
+        for (final chapter in detail.chapters) {
           final key = canonicalChapterKey(chapter);
           if (key != null) chapters.putIfAbsent(key, () => chapter);
         }
-        if (!current.initializedSources.contains(response.source)) {
+        if (!current.initializedSources.contains(selected)) {
           // On first successful visit baseline ALL existing public chapters.
           // Do not alert historical chapters or resurrect an old scan.
-          await library.recordChapterScan(current.key, response.source, chapters.keys);
+          await library.recordChapterScan(current.key, selected, chapters.keys);
           continue;
         }
         final newlyVerified = <String>[];
@@ -105,7 +79,7 @@ class ChapterChecker {
             })) continue;
             newlyVerified.add(chapterEntry.key);
             discoveries.add(ChapterDiscovery(
-              book: book, sourceKey: response.source,
+              book: book, sourceKey: selected,
               chapter: chapterEntry.value, canonicalKey: chapterEntry.key,
             ));
           } catch (_) {
@@ -114,13 +88,18 @@ class ChapterChecker {
           }
         }
         // Durable dedup is committed before exposing discoveries to the UI.
-        // A later source will see these keys and cannot alert them again.
         if (newlyVerified.isNotEmpty) {
           await library.recordChapterScan(
-            current.key, response.source, newlyVerified);
+            current.key, selected, newlyVerified);
         }
+      } catch (_) {
+        warnings.add(saved.title + ': ' + source.name + ' недоступен');
       }
     }
+    // A foreground selection made during a request invalidates that result.
+    await library.load();
+    discoveries.removeWhere((item) =>
+        library.get(item.book)?.preferredSource != item.sourceKey);
     return ChapterScanReport(discoveries, warnings, checked);
   }
 }

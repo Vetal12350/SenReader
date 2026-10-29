@@ -3,14 +3,15 @@ import 'package:flutter/material.dart';
 import 'core/models.dart';
 import 'core/chapter_identity.dart';
 import 'data/catalog_repository.dart';
-import 'data/chapter_checker.dart';
 import 'data/library_store.dart';
 import 'data/chapter_notification_service.dart';
 import 'data/chapter_background_scheduler.dart';
 import 'ui/detail_page.dart';
 import 'ui/reader_page.dart';
 import 'ui/widgets.dart';
-import 'ui/chapter_notifications_panel.dart';
+import 'data/chapter_alert_controller.dart';
+import 'ui/chapter_alert_offer.dart';
+import 'ui/settings_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -53,7 +54,8 @@ class SenReaderApp extends StatelessWidget {
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, required this.repository, required this.library});
+  const MainShell({super.key, required this.repository, required this.library, this.alerts});
+  final ChapterAlertController? alerts;
   final CatalogRepository repository;
   final LibraryStore library;
   @override State<MainShell> createState() => _MainShellState();
@@ -64,9 +66,7 @@ class _MainShellState extends State<MainShell> {
   String libraryFilter = 'all';
   CatalogResult? result;
   bool loading = false;
-  bool checkingChapters = false;
-  ChapterScanReport? chapterReport;
-  String? checkError;
+  late final ChapterAlertController alerts = widget.alerts ?? ChapterAlertController();
   String query = '';
   Timer? debounce;
   final TextEditingController searchController = TextEditingController();
@@ -101,15 +101,19 @@ class _MainShellState extends State<MainShell> {
 
   void _open(UnifiedManga book) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage(
-      book: book, repository: widget.repository, library: widget.library,
+      book: book, repository: widget.repository, library: widget.library, alerts: alerts,
     )));
   }
 
   Future<void> _resume(SavedBook saved) async {
+    await widget.library.load();
+    final current = widget.library.get(saved.toUnified());
+    if (current == null || !mounted) return;
+    saved = current;
     final book = saved.toUnified();
     final entry = saved.entries[saved.lastSource];
     final source = widget.repository.sources[saved.lastSource];
-    if (entry == null || source == null || saved.lastChapter.isEmpty) {
+    if (saved.lastSource != saved.preferredSource || entry == null || source == null || saved.lastChapter.isEmpty) {
       _open(book);
       return;
     }
@@ -129,7 +133,7 @@ class _MainShellState extends State<MainShell> {
       } else {
         Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
           book: book, chapter: target!, sourceKey: saved.lastSource,
-          repository: widget.repository, library: widget.library,
+          repository: widget.repository, library: widget.library, chapters: detail.chapters,
         )));
       }
     } catch (_) {
@@ -171,14 +175,14 @@ class _MainShellState extends State<MainShell> {
                   Expanded(child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center, children: [
-                      Text(item.title, maxLines: 3,
+                      Flexible(child: Text(item.title, maxLines: 3,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                        style: const TextStyle(fontWeight: FontWeight.w700))),
                       const SizedBox(height: 8),
-                      Text(item.lastChapter,
+                      Flexible(child: Text(item.lastChapter,
                         maxLines: 2, overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: Colors.white70,
-                          fontSize: 11)),
+                          fontSize: 11))),
                       if (item.lastPageCount > 0) ...[
                         const SizedBox(height: 8),
                         LinearProgressIndicator(
@@ -186,6 +190,7 @@ class _MainShellState extends State<MainShell> {
                           backgroundColor: Colors.white12),
                         const SizedBox(height: 4),
                         Text('Стр. ${item.lastPageIndex + 1}/${item.lastPageCount}',
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 10,
                             color: Colors.white60)),
                       ],
@@ -200,24 +205,6 @@ class _MainShellState extends State<MainShell> {
     },
   );
 
-  Future<void> _checkChapters() async {
-    if (checkingChapters || widget.library.items.isEmpty) return;
-    setState(() { checkingChapters = true; checkError = null; chapterReport = null; });
-    try {
-      final result = await ChapterChecker(
-        repository: widget.repository, library: widget.library,
-      ).check();
-      if (!mounted) return;
-      setState(() { checkingChapters = false; chapterReport = result; });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        checkingChapters = false;
-        checkError = 'Не удалось завершить проверку глав. Попробуй позже.';
-      });
-    }
-  }
-
   Future<void> _onNotificationTap() async {
     final state = ChapterNotificationService.instance.openedPayload;
     final payload = state.value;
@@ -225,17 +212,22 @@ class _MainShellState extends State<MainShell> {
     state.value = null; // Never re-open on UI rebuild.
     final info = ChapterNotificationService.decodePayload(payload);
     if (info == null) return;
+    await widget.library.load();
+    if (!mounted) return;
     SavedBook? saved;
     for (final book in widget.library.items) {
       if (book.key == info['book']) { saved = book; break; }
     }
     if (saved == null) return;
     final sourceKey = info['source']!;
+    if (saved.preferredSource != sourceKey) return;
     final entry = saved.entries[sourceKey];
     final source = widget.repository.sources[sourceKey];
     if (entry == null || source == null) return;
     try {
       final detail = await source.detail(entry);
+      await widget.library.load();
+      if (widget.library.get(saved.toUnified())?.preferredSource != sourceKey) return;
       Chapter? matched;
       for (final chapter in detail.chapters) {
         if (chapter.id == info['chapter'] &&
@@ -252,7 +244,7 @@ class _MainShellState extends State<MainShell> {
       }
       Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
         book: saved!.toUnified(), chapter: matched!,
-        sourceKey: sourceKey, repository: widget.repository, library: widget.library,
+        sourceKey: sourceKey, repository: widget.repository, library: widget.library, chapters: detail.chapters,
       )));
     } catch (_) {
       if (!mounted) return;
@@ -261,27 +253,22 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
-  void _openChapter(ChapterDiscovery discovery) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
-      book: discovery.book, chapter: discovery.chapter,
-      sourceKey: discovery.sourceKey,
-      repository: widget.repository, library: widget.library,
-    )));
-  }
-
   @override Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Row(children: [
           const Icon(Icons.auto_stories_rounded, size: 25, color: Color(0xFFFF893F)),
           const SizedBox(width: 10),
-          Text(tab == 0 ? 'SenReader' : tab == 1 ? 'Каталог' : 'Мои закладки',
-            style: const TextStyle(fontWeight: FontWeight.w800)),
+          Expanded(child: Text(tab == 0 ? 'SenReader' : tab == 1 ? 'Каталог' : 'Мои закладки',
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w800))),
         ]),
         actions: [
-          IconButton(tooltip: tab == 2 ? 'Проверить новые главы' : 'Обновить',
-            icon: const Icon(Icons.refresh),
-            onPressed: tab == 2 ? (checkingChapters ? null : _checkChapters) : _fetch),
+          if (tab != 2)
+            IconButton(tooltip: 'Обновить', icon: const Icon(Icons.refresh), onPressed: _fetch),
+          IconButton(tooltip: 'Настройки', icon: const Icon(Icons.settings_outlined),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsPage(
+              repository: widget.repository, library: widget.library, alerts: alerts)))),
         ],
       ),
       body: tab == 2 ? AnimatedBuilder(
@@ -313,38 +300,6 @@ class _MainShellState extends State<MainShell> {
                   ]),
                 ),
                 const SizedBox(height: 16),
-                const ChapterNotificationsPanel(),
-                const SizedBox(height: 8),
-                FilledButton.icon(
-                  onPressed: checkingChapters ? null : _checkChapters,
-                  icon: checkingChapters
-                      ? const SizedBox(width: 16, height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.notifications_active_outlined),
-                  label: Text(checkingChapters ? 'Проверяем источники…' : 'Проверить новые главы'),
-                ),
-                const SizedBox(height: 8),
-                if (checkError != null)
-                  Text(checkError!, style: const TextStyle(color: Color(0xFFFFBE80))),
-                if (chapterReport != null) ...[
-                  Text(chapterReport!.discoveries.isEmpty
-                      ? 'Новых доступных глав нет. Первая проверка сохраняет исходное состояние.'
-                      : 'Найдено новых глав: ${chapterReport!.discoveries.length}',
-                    style: const TextStyle(color: Colors.white70)),
-                  for (final discovery in chapterReport!.discoveries)
-                    ListTile(
-                      leading: const Icon(Icons.auto_stories),
-                      title: Text(discovery.book.title),
-                      subtitle: Text('${discovery.chapter.name} · ${discovery.sourceKey}'),
-                      trailing: const Icon(Icons.open_in_new),
-                      onTap: () => _openChapter(discovery),
-                    ),
-                  for (final warning in chapterReport!.warnings.take(8))
-                    Padding(padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: Text(warning,
-                        style: const TextStyle(color: Color(0xFFFFBE80), fontSize: 12))),
-                  const Divider(),
-                ],
                 if (filtered.isEmpty)
                   const EmptyView(icon: Icons.bookmark_border,
                     text: 'В этой категории пока нет произведений'),
@@ -387,7 +342,7 @@ class _MainShellState extends State<MainShell> {
                   child: Center(child: CircularProgressIndicator())),
               if (!loading && result != null &&
                   result!.senkuroPopular.isNotEmpty)
-                SizedBox(height: 197, child: ListView.separated(
+                SizedBox(height: MangaTile.heightFor(context, 116), child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: result!.senkuroPopular.take(15).length,
                   separatorBuilder: (context, index) => const SizedBox(width: 10),
@@ -440,7 +395,12 @@ class _MainShellState extends State<MainShell> {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: tab,
-        onDestinationSelected: (index) => setState(() => tab = index),
+        onDestinationSelected: (index) {
+          setState(() => tab = index);
+          if (index == 2 && widget.library.items.isNotEmpty) {
+            unawaited(offerChapterAlerts(context, alerts));
+          }
+        },
         destinations: const [
           NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Главная'),
           NavigationDestination(icon: Icon(Icons.explore_outlined), selectedIcon: Icon(Icons.explore), label: 'Каталог'),
