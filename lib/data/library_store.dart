@@ -148,7 +148,7 @@ class LibraryStore extends ChangeNotifier {
     item.lastSource = source;
     item.lastPageCount = pageCount < 0 ? 0 : pageCount;
     item.lastPageIndex = pageIndex.clamp(0,
-        item.lastPageCount > 0 ? item.lastPageCount - 1 : 0);
+        item.lastPageCount > 0 ? item.lastPageCount - 1 : 0).toInt();
     item.lastUpdatedAt = DateTime.now().millisecondsSinceEpoch;
     await _save();
   }
@@ -158,6 +158,9 @@ class LibraryStore extends ChangeNotifier {
     final item = _books.putIfAbsent(key,
         () => SavedBook(title: book.title, entries: {...book.entries}));
     item.entries.addAll(book.entries);
+    if (item.lastChapterId != chapter.id || item.lastSource != source) {
+      item.lastPageCount = 0;
+    }
     item.lastChapter = chapter.name;
     item.lastChapterId = chapter.id;
     item.lastSource = source;
