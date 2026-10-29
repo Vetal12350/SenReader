@@ -342,18 +342,23 @@ class _MainShellState extends State<MainShell> {
                   child: Center(child: CircularProgressIndicator())),
               if (!loading && result != null &&
                   result!.senkuroPopular.isNotEmpty)
-                SizedBox(height: MangaTile.heightFor(context, 116), child: ListView.separated(
+                // Size the horizontal carousel by its actual tile content,
+                // including OS font scaling, rather than a fragile fixed height.
+                SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
-                  itemCount: result!.senkuroPopular.take(15).length,
-                  separatorBuilder: (context, index) => const SizedBox(width: 10),
-                  itemBuilder: (context, index) {
-                    final item = result!.senkuroPopular[index];
-                    final book = UnifiedManga(title: item.title,
-                        entries: {'senkuro': item});
-                    return SizedBox(width: 116,
-                      child: MangaTile(book: book, onTap: () => _open(book)));
-                  },
-                )),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                    for (final item in result!.senkuroPopular.take(15)) ...[
+                      SizedBox(width: 116, child: MangaTile(
+                        book: UnifiedManga(title: item.title,
+                          entries: {'senkuro': item}),
+                        onTap: () => _open(UnifiedManga(title: item.title,
+                          entries: {'senkuro': item})),
+                      )),
+                      const SizedBox(width: 10),
+                    ],
+                  ]),
+                ),
               _continueReading(),
               const SizedBox(height: 30),
             ] else ...[
