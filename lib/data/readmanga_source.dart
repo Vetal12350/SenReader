@@ -104,6 +104,19 @@ class ReadMangaSource implements MangaSource {
         ? _attr(doc.querySelector('meta[itemprop="description"]'), ['content'])
         : doc.querySelector('div.cr-description__content')?.text.trim() ?? '';
     final genres = doc.querySelectorAll('a[href*="/list/category/"]').map((e) => e.text.trim()).where((e) => e.isNotEmpty).toSet().take(12).toList();
+    // Only a declared public aggregate rating with an explicit scale is
+    // trustworthy. Do not turn age restrictions or a count of votes into a
+    // fictional 10-point score.
+    final ratingNode = doc.querySelector('[itemprop="ratingValue"]');
+    final bestNode = doc.querySelector('[itemprop="bestRating"]');
+    final ratingValue = _attr(ratingNode, ['content']).isNotEmpty
+        ? _attr(ratingNode, ['content']) : ratingNode?.text.trim();
+    final bestValue = _attr(bestNode, ['content']).isNotEmpty
+        ? _attr(bestNode, ['content']) : bestNode?.text.trim();
+    final best = double.tryParse(bestValue ?? '');
+    final score = best == null || best < 1 || best > 100 ? null
+        : tenPointScore(ratingValue, max: best);
+
     var rows = doc.querySelectorAll('tr.item-row');
     if (rows.isEmpty) rows = doc.querySelectorAll('div.chapters-link table tr, table.table-chapters tr');
     final chapters = <Chapter>[];
@@ -124,7 +137,8 @@ class ReadMangaSource implements MangaSource {
     }
     return MangaDetail(entry: MangaEntry(source: key, id: entry.id, title: name,
         coverUrl: cover.isNotEmpty ? cover : entry.coverUrl),
-        chapters: chapters, description: description, genres: genres);
+        chapters: chapters, description: description, genres: genres,
+        rating: score);
   }
 
   /// Extract page metadata from the standard Grouple readerInit call. This is

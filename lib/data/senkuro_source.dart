@@ -30,7 +30,8 @@ query search($query: String!, $first: Int = 30) {
   static const _detailQuery = r'''
 query fetchManga($slug: String!) {
   manga(slug: $slug) {
-    slug titles { lang content } originalName { lang content }
+    slug score titles { lang content } originalName { lang content }
+    alternativeNames { lang content }
     localizations { lang description { __typename
       ... on TiptapNodeText { text }
       ... on TiptapNodeNestedBlock { content { __typename ... on TiptapNodeText { text } } }
@@ -183,6 +184,10 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
       chapters: chapters,
       description: loc is Map ? _flatten(loc['description']).trim() : '',
       genres: (m['labels'] as List? ?? []).whereType<Map>().map((e) => _title(e['titles'], null)).where((s) => s.isNotEmpty).take(12).toList(),
+      rating: tenPointScore(m['score']),
+      alternativeNames: (m['alternativeNames'] as List? ?? [])
+          .whereType<Map>().map((item) => '${item['content'] ?? ''}')
+          .where((name) => name.trim().isNotEmpty).take(6).toList(),
     );
   }
 
