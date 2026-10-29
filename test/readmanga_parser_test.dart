@@ -167,7 +167,7 @@ void main() {
       source.pages(const Chapter(
           id: '/kak_vyjit_v_akademii/vol2/127', name: 'Глава 127 (т. 2)')),
       throwsA(isA<SourceException>().having(
-        (e) => e.message, 'message', contains('недоступе'))),
+        (e) => e.message, 'message', contains('публичном доступе'))),
     );
   });
 
