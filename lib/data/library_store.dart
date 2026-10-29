@@ -8,7 +8,7 @@ import '../core/title_matching.dart';
 class SavedBook {
   SavedBook({
     required this.title, required this.entries, this.lastChapter = '',
-    this.lastSource = '', this.lastChapterId = '',
+    this.lastSource = '', this.status = 'planned', this.lastChapterId = '',
     this.lastPageIndex = 0, this.lastPageCount = 0, this.lastUpdatedAt = 0,
     Set<String>? readChapterKeys, Set<String>? seenChapterKeys,
     Set<String>? initializedSources,
@@ -20,6 +20,7 @@ class SavedBook {
   final Map<String, MangaEntry> entries;
   String lastChapter;
   String lastSource;
+  String status; // planned, reading, completed
   String lastChapterId;
   int lastPageIndex;
   int lastPageCount;
@@ -33,7 +34,7 @@ class SavedBook {
   Map<String, dynamic> toJson() => {
     'title': title,
     'entries': entries.map((k, v) => MapEntry(k, v.toJson())),
-    'lastChapter': lastChapter, 'lastSource': lastSource,
+    'lastChapter': lastChapter, 'lastSource': lastSource, 'status': status,
     'lastChapterId': lastChapterId, 'lastPageIndex': lastPageIndex,
     'lastPageCount': lastPageCount, 'lastUpdatedAt': lastUpdatedAt,
     'readChapterKeys': readChapterKeys.toList()..sort(),
@@ -47,6 +48,9 @@ class SavedBook {
       entries: raw.map((k, v) => MapEntry(k.toString(), MangaEntry.fromJson(Map<String, dynamic>.from(v as Map)))),
       lastChapter: json['lastChapter'] as String? ?? '',
       lastSource: json['lastSource'] as String? ?? '',
+      status: ['planned', 'reading', 'completed'].contains(json['status'])
+          ? json['status'] as String
+          : ((json['lastChapter'] as String? ?? '').isEmpty ? 'planned' : 'reading'),
       lastChapterId: json['lastChapterId'] as String? ?? '',
       lastPageIndex: ((json['lastPageIndex'] as num?)?.toInt() ?? 0).clamp(0, 100000).toInt(),
       lastPageCount: ((json['lastPageCount'] as num?)?.toInt() ?? 0).clamp(0, 100000),
@@ -146,6 +150,7 @@ class LibraryStore extends ChangeNotifier {
     item.lastChapter = chapter.name;
     item.lastChapterId = chapter.id;
     item.lastSource = source;
+    if (item.status == 'planned') item.status = 'reading';
     item.lastPageCount = pageCount < 0 ? 0 : pageCount;
     item.lastPageIndex = pageIndex.clamp(0,
         item.lastPageCount > 0 ? item.lastPageCount - 1 : 0).toInt();
@@ -165,8 +170,16 @@ class LibraryStore extends ChangeNotifier {
     item.lastChapterId = chapter.id;
     item.lastSource = source;
     item.lastPageIndex = item.lastPageCount > 0 ? item.lastPageCount - 1 : 0;
+    if (item.status == 'planned') item.status = 'reading';
     item.readChapterKeys.add(_chapterKey(chapter, source));
     item.lastUpdatedAt = DateTime.now().millisecondsSinceEpoch;
+    await _save();
+  }
+
+  Future<void> setStatus(UnifiedManga book, String status) async {
+    if (!['planned', 'reading', 'completed'].contains(status)) return;
+    await add(book);
+    _books[normalizedTitle(book.title)]!.status = status;
     await _save();
   }
 
