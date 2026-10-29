@@ -41,7 +41,7 @@ void main() {
     final restored = LibraryStore();
     await restored.load();
     expect(restored.isChapterRead(book, chapter, 'readmanga'), true);
-    expect(restored.get(book)!.lastPageIndex, 17);
+    expect(restored.get(book)!.lastPageIndex, 2);
     await restored.unmarkRead(book, chapter, 'readmanga');
     expect(restored.isChapterRead(book, chapter, 'readmanga'), false);
     expect(restored.get(book)!.lastChapterId, chapter.id);
@@ -62,5 +62,9 @@ void main() {
     final raw = (await SharedPreferences.getInstance())
         .getString(LibraryStore.storageKey)!;
     expect(jsonDecode(raw).single['lastPageIndex'], 4);
+    await library.unmarkRead(book, chapter, 'readmanga');
+    await library.load();
+    expect(library.isChapterRead(book, chapter, 'readmanga'), false);
+    expect(library.get(book)!.lastPageIndex, 4);
   });
 }

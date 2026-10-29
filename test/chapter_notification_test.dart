@@ -52,7 +52,7 @@ void main() {
         )));
   });
 
-  test('interval allowlist is bounded and configurable', () {
-    expect(ChapterAlertPreferences.availableIntervals, [30, 60, 180, 360]);
+  test('periodic interval is fixed at WorkManager minimum', () {
+    expect(ChapterAlertPreferences.availableIntervals, [15]);
   });
 }

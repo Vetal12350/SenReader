@@ -4,6 +4,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../core/title_matching.dart';
 import 'chapter_alert_preferences.dart';
 import 'chapter_checker.dart';
+import 'library_store.dart';
 
 class ChapterNotificationService {
   ChapterNotificationService._();
@@ -88,6 +89,11 @@ class ChapterNotificationService {
     }
     var posted = 0;
     for (final release in releases) {
+      // A source may have changed while the checker or Android was waiting.
+      final library = LibraryStore();
+      await library.load();
+      if (library.get(release.book)?.preferredSource != release.sourceKey ||
+          !await ChapterAlertPreferences().enabled()) continue;
       await _plugin.show(
         id: notificationId(release),
         title: release.book.title,

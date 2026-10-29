@@ -25,16 +25,34 @@ class MangaTile extends StatelessWidget {
   final UnifiedManga book;
   final VoidCallback onTap;
   final String? statusLabel;
+  static const coverAspectRatio = 0.72;
+  static const titleStyle = TextStyle(fontSize: 12, fontWeight: FontWeight.w600);
+
+  static double titleHeight(BuildContext context, double width) {
+    final painter = TextPainter(
+      text: TextSpan(text: 'Аg\nАg',
+          style: DefaultTextStyle.of(context).style.merge(titleStyle)),
+      maxLines: 2, textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    )..layout(maxWidth: width);
+    final height = painter.height;
+    painter.dispose();
+    return height;
+  }
+
+  static double heightFor(BuildContext context, double width) =>
+      width / coverAspectRatio + 7 + titleHeight(context, width);
+
   @override Widget build(BuildContext context) {
-    return InkWell(
+    return LayoutBuilder(builder: (context, constraints) => InkWell(
       borderRadius: BorderRadius.circular(12), onTap: onTap,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        AspectRatio(aspectRatio: 0.72, child: ClipRRect(
+        AspectRatio(aspectRatio: coverAspectRatio, child: ClipRRect(
           borderRadius: BorderRadius.circular(12),
           child: Stack(fit: StackFit.expand, children: [
             CoverImage(book.coverUrl),
             if (statusLabel != null)
-              Positioned(left: 6, top: 6,
+              Positioned(left: 6, right: 6, top: 6,
                 child: Container(
                   decoration: BoxDecoration(
                     color: const Color(0xFFFF893F),
@@ -42,24 +60,27 @@ class MangaTile extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(
                     horizontal: 6, vertical: 4),
                   child: Text(statusLabel!,
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: Colors.black,
                       fontSize: 10, fontWeight: FontWeight.w700)),
                 )),
-            Positioned(left: 6, bottom: 6, child: Container(
+            Positioned(left: 6, right: 6, bottom: 6, child: Container(
               decoration: BoxDecoration(color: const Color(0xD916161D), borderRadius: BorderRadius.circular(7)),
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
               child: Text(book.entries.length > 1 ? '${book.entries.length} источника' :
                 book.primary.source == 'senkuro' ? 'Senkuro' :
                 book.primary.source == 'remanga' ? 'ReManga' : 'ReadManga',
+                maxLines: 1, overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700)),
             )),
           ]),
         )),
         const SizedBox(height: 7),
-        Text(book.title, maxLines: 2, overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        SizedBox(height: titleHeight(context, constraints.maxWidth),
+          child: Text(book.title, maxLines: 2, overflow: TextOverflow.ellipsis,
+            style: titleStyle)),
       ]),
-    );
+    ));
   }
 }
 

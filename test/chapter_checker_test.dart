@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:senreader/core/chapter_identity.dart';
@@ -16,13 +17,17 @@ class FakeSource implements MangaSource {
   bool readable = true;
   List<Chapter> chapters = [];
   int pageCalls = 0;
+  int detailCalls = 0;
+  int searchCalls = 0;
   final entry = const MangaEntry(source: 'fixture', id: '1', title: 'Example');
 
   @override Future<List<MangaEntry>> popular() => search('');
-  @override Future<List<MangaEntry>> search(String query) async => [
-    MangaEntry(source: key, id: '1', title: 'Example'),
-  ];
+  @override Future<List<MangaEntry>> search(String query) async {
+    searchCalls++;
+    return [MangaEntry(source: key, id: '1', title: 'Example')];
+  }
   @override Future<MangaDetail> detail(MangaEntry record) async {
+    detailCalls++;
     if (!available) throw SourceException('offline');
     return MangaDetail(entry: record, chapters: chapters);
   }
@@ -99,7 +104,7 @@ void main() {
     expect(restored.items.single.seenChapterKeys, contains('v0:c1.5'));
   });
 
-  test('one canonical chapter across sources is notified once', () async {
+  test('only active source is fetched and a new canonical chapter alerts once', () async {
     final senkuro = FakeSource('senkuro')
       ..chapters = [const Chapter(id: 'first', name: 'Глава 3')];
     final remanga = FakeSource('remanga')
@@ -116,6 +121,9 @@ void main() {
     expect(result.discoveries.length, 1);
     expect(result.discoveries.single.canonicalKey, 'v0:c4');
     expect((await checker.check()).discoveries, isEmpty);
+    expect(remanga.detailCalls, 0);
+    expect(remanga.pageCalls, 0);
+    expect(remanga.searchCalls, 0);
   });
 
   test('changed subtitle does not alert and offline source preserves baseline', () async {
@@ -152,7 +160,7 @@ void main() {
     expect((await checker.check()).discoveries.single.canonicalKey, 'v0:c2');
   });
 
-  test('newly linked source baseline does not alert its historic chapters', () async {
+  test('only explicit source switch scans another source and silently baselines it', () async {
     final a = FakeSource('senkuro')..chapters = [const Chapter(id: '1', name: 'Глава 1')];
     final b = FakeSource('remanga')..chapters = [const Chapter(id: '99', name: 'Глава 99')];
     final library = await makeLibrary([a]);
@@ -162,8 +170,26 @@ void main() {
       'senkuro': a, 'remanga': b,
     }), library: library);
     expect((await checker.check()).discoveries, isEmpty);
+    expect(b.detailCalls, 0);
+    expect(b.searchCalls, 0);
+    expect(library.items.single.preferredSource, 'senkuro');
+    final book = library.items.single.toUnified();
+    book.entries['remanga'] = const MangaEntry(source: 'remanga', id: '1', title: 'Example');
+    await library.add(book);
+    await library.setPreferredSource(book, 'remanga');
+    final oldCalls = a.detailCalls;
+    expect((await checker.check()).discoveries, isEmpty);
+    expect(a.detailCalls, oldCalls);
+    expect(b.detailCalls, 1);
     expect(library.items.single.initializedSources, contains('remanga'));
     expect(library.items.single.seenChapterKeys, contains('v0:c99'));
+    b.chapters = [const Chapter(id: '100', name: 'Глава 100')];
+    expect((await checker.check()).discoveries.single.sourceKey, 'remanga');
+    expect((await checker.check()).discoveries, isEmpty);
+    expect(library.items.single.entries.keys, containsAll(['senkuro', 'remanga']));
+    await library.setPreferredSource(book, 'senkuro');
+    await library.setPreferredSource(book, 'remanga');
+    expect((await checker.check()).discoveries, isEmpty);
   });
 
   test('old v1 bookmarks and reading progress remain unchanged on load', () async {
@@ -181,6 +207,27 @@ void main() {
     expect(library.items.single.seenChapterKeys, isEmpty);
   });
 
+  test('source choice changed during page verification discards stale discovery', () async {
+    final source = _DelayedPagesSource('senkuro')
+      ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final other = FakeSource('remanga');
+    final library = await makeLibrary([source, other]);
+    final checker = ChapterChecker(repository: CatalogRepository(sources: {
+      'senkuro': source, 'remanga': other,
+    }), library: library);
+    await checker.check();
+    source.chapters = [const Chapter(id: '2', name: 'Глава 2')];
+    source.pending = Completer<List<PageImage>>();
+    final checking = checker.check();
+    await source.started.future;
+    await library.setPreferredSource(library.items.single.toUnified(), 'remanga');
+    source.pending!.complete([const PageImage('https://cdn.example.com/2.jpg')]);
+    expect((await checking).discoveries, isEmpty);
+    expect(library.items.single.preferredSource, 'remanga');
+    expect(library.items.single.seenChapterKeys, isNot(contains('v0:c2')));
+    expect(other.detailCalls, 0);
+  });
+
   test('ambiguous different-title sources are never silently joined', () async {
     final source = FakeSource('senkuro')
       ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
@@ -194,6 +241,17 @@ void main() {
     await ChapterChecker(repository: repo, library: library).check();
     expect(library.items.single.entries.keys, ['senkuro']);
   });
+}
+
+class _DelayedPagesSource extends FakeSource {
+  _DelayedPagesSource(super.key);
+  Completer<List<PageImage>>? pending;
+  final started = Completer<void>();
+  @override Future<List<PageImage>> pages(Chapter chapter) {
+    if (pending == null) return super.pages(chapter);
+    if (!started.isCompleted) started.complete();
+    return pending!.future;
+  }
 }
 
 class _MismatchedSource extends FakeSource {
