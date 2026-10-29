@@ -213,6 +213,38 @@ class _DetailPageState extends State<DetailPage> {
               onSelected: (_) => _select(source),
             ),
         ]),
+        const SizedBox(height: 12),
+        AnimatedBuilder(
+          animation: widget.library,
+          builder: (context, _) {
+            final saved = widget.library.get(book);
+            final status = saved?.status ?? 'planned';
+            final label = status == 'reading' ? 'Читаю' :
+                status == 'completed' ? 'Прочитано' : 'В планах';
+            return Row(children: [
+              PopupMenuButton<String>(
+                tooltip: 'Статус произведения',
+                onSelected: (value) => widget.library.setStatus(book, value),
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'reading', child: Text('Читаю')),
+                  PopupMenuItem(value: 'planned', child: Text('В планах')),
+                  PopupMenuItem(value: 'completed', child: Text('Прочитано')),
+                ],
+                child: Chip(
+                  avatar: const Icon(Icons.bookmark_added_outlined, size: 18),
+                  label: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Text(label),
+                    const SizedBox(width: 5),
+                    const Icon(Icons.keyboard_arrow_down_rounded, size: 18),
+                  ]),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(saved == null ? 'Нажми, чтобы добавить в библиотеку' : 'В библиотеке',
+                style: const TextStyle(color: Colors.white54, fontSize: 11)),
+            ]);
+          },
+        ),
         _continueAction(),
         const SizedBox(height: 18),
         // A failed alternative source is not an error when another source works.
