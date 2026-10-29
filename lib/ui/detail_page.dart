@@ -113,6 +113,15 @@ class _DetailPageState extends State<DetailPage> {
           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(detail?.entry.title ?? book.title,
               style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+            if (detail?.rating != null) ...[
+              const SizedBox(height: 8),
+              Row(children: [
+                const Icon(Icons.star_rounded, color: Color(0xFFFFD37E), size: 18),
+                const SizedBox(width: 4),
+                Text(detail!.rating!.toStringAsFixed(1) + ' / 10',
+                  style: const TextStyle(fontWeight: FontWeight.w700)),
+              ]),
+            ],
             const SizedBox(height: 10),
             const Text('Источник глав', style: TextStyle(color: Colors.white54, fontSize: 12)),
             const SizedBox(height: 6),
@@ -139,6 +148,12 @@ class _DetailPageState extends State<DetailPage> {
         if (detail != null) ...[
           if (detail!.genres.isNotEmpty)
             Wrap(spacing: 6, runSpacing: 4, children: detail!.genres.map((g) => Chip(label: Text(g, style: const TextStyle(fontSize: 11)))).toList()),
+          if (detail!.alternativeNames.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(detail!.alternativeNames.join(' / '),
+              maxLines: 3, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white60)),
+          ],
           if (detail!.description.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(detail!.description, maxLines: 7, overflow: TextOverflow.ellipsis,
