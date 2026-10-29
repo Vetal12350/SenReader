@@ -102,7 +102,7 @@ class _ReaderPageState extends State<ReaderPage> {
               child: Text('Нет доступных изображений. Возможно, глава удалена или доступ ограничен.')));
           }
           _pageCount = pages.length;
-          final initialIndex = _resumePage.clamp(0, pages.length - 1);
+          final initialIndex = _resumePage.clamp(0, pages.length - 1).toInt();
           return ScrollablePositionedList.builder(
             key: ValueKey('${widget.sourceKey}:${widget.chapter.id}'),
             itemPositionsListener: _positions,
