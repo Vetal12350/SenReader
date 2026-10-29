@@ -151,7 +151,7 @@ class _MainShellState extends State<MainShell> {
         SizedBox(height: 155, child: ListView.separated(
           scrollDirection: Axis.horizontal,
           itemCount: saved.take(12).length,
-          separatorBuilder: (_, _) => const SizedBox(width: 10),
+          separatorBuilder: (context, index) => const SizedBox(width: 10),
           itemBuilder: (context, index) {
             final item = saved[index];
             return SizedBox(width: 225, child: InkWell(
@@ -363,7 +363,7 @@ class _MainShellState extends State<MainShell> {
                 SizedBox(height: 197, child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   itemCount: result!.senkuroPopular.take(15).length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 10),
+                  separatorBuilder: (context, index) => const SizedBox(width: 10),
                   itemBuilder: (context, index) {
                     final item = result!.senkuroPopular[index];
                     final book = UnifiedManga(title: item.title,
