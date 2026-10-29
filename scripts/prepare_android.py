@@ -29,4 +29,22 @@ if 'isCoreLibraryDesugaringEnabled = true' not in build:
 if 'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:' not in build:
     build += '\n\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n'
 gradle.write_text(build, encoding='utf-8')
+
+# Disposable QA package has a unique Android ID, so older app data stays intact.
+qa_id = 'app.senreader.senreader.zazazaqa2'
+build = gradle.read_text(encoding='utf-8')
+old_id = 'applicationId = "app.senreader.senreader"'
+if old_id not in build:
+    raise SystemExit('Expected generated Android application ID not found')
+gradle.write_text(build.replace(old_id, f'applicationId = "{qa_id}"', 1),
+                  encoding='utf-8')
+body = manifest.read_text(encoding='utf-8')
+if 'android:name=".MainActivity"' not in body:
+    raise SystemExit('Expected generated Flutter activity not found')
+body = body.replace('android:name=".MainActivity"',
+                    'android:name="app.senreader.senreader.MainActivity"', 1)
+body = body.replace('android:label="senreader"',
+                    'android:label="SenReader ZazaZa QA"')
+manifest.write_text(body, encoding='utf-8')
+
 print('Android manifest and Gradle prepared for networking and notifications')
