@@ -5,6 +5,7 @@ import 'data/catalog_repository.dart';
 import 'data/library_store.dart';
 import 'ui/detail_page.dart';
 import 'ui/widgets.dart';
+import 'ui/chapter_updates_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -87,10 +88,14 @@ class _MainShellState extends State<MainShell> {
         title: Row(children: [
           const Icon(Icons.auto_stories_rounded, size: 25, color: Color(0xFFC6A8FF)),
           const SizedBox(width: 10),
-          Text(tab == 0 ? 'SenReader' : tab == 1 ? 'Каталог' : 'Моя библиотека',
-            style: const TextStyle(fontWeight: FontWeight.w800)),
+          Expanded(child: Text(tab == 0 ? 'SenReader' : tab == 1 ? 'Каталог' : 'Моя библиотека',
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w800))),
         ]),
         actions: [
+          if (tab == 2) IconButton(tooltip: 'Проверить новые главы', icon: const Icon(Icons.playlist_add_check),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChapterUpdatesPage(
+              library: widget.library, repository: widget.repository, runOnOpen: true)))),
           IconButton(tooltip: 'Обновить', icon: const Icon(Icons.refresh), onPressed: _fetch),
         ],
       ),
@@ -98,9 +103,14 @@ class _MainShellState extends State<MainShell> {
         animation: widget.library,
         builder: (context, _) {
           final saved = widget.library.items;
+          if (widget.library.loadError != null) return Center(child: Text(widget.library.loadError!));
           return saved.isEmpty
             ? const EmptyView(icon: Icons.bookmark_border, text: 'Здесь появятся сохранённые тайтлы')
             : ListView(padding: const EdgeInsets.all(16), children: [
+                FilledButton.icon(
+                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChapterUpdatesPage(
+                    library: widget.library, repository: widget.repository, runOnOpen: true))),
+                  icon: const Icon(Icons.playlist_add_check), label: const Text('Проверить новые главы')),
                 SectionTitle('Продолжить чтение', subtitle: '${saved.length} в библиотеке'),
                 ...saved.map((item) => ListTile(
                   contentPadding: const EdgeInsets.symmetric(vertical: 6),

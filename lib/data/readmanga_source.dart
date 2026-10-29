@@ -3,11 +3,14 @@ import 'package:html/parser.dart' as html_parser;
 import 'package:html/dom.dart' as dom;
 import 'package:http/http.dart' as http;
 import '../core/models.dart';
+import '../core/chapter_updates.dart';
 import '../core/source.dart';
 
 /// Reads public ReadManga pages. HTML selectors may break when the site changes.
 /// No login tokens are gathered or bundled into the app.
 class ReadMangaSource implements MangaSource {
+  ReadMangaSource({http.Client? client}) : _client = client;
+  final http.Client? _client;
   static const baseUrl = 'https://3.readmanga.ru';
   @override String get key => 'readmanga';
   @override String get name => 'ReadManga';
@@ -20,11 +23,13 @@ class ReadMangaSource implements MangaSource {
     }
     late http.Response response;
     try {
-      response = await http.get(uri, headers: {
+      final headers = {
         'Accept': 'text/html,application/xhtml+xml',
         'Accept-Language': 'ru-RU,ru;q=0.9',
         'Referer': '$baseUrl/',
-      }).timeout(const Duration(seconds: 18));
+      };
+      response = await (_client == null ? http.get(uri, headers: headers)
+          : _client.get(uri, headers: headers)).timeout(const Duration(seconds: 18));
     } catch (e) {
       throw SourceException('Нет соединения с ReadManga ($e)');
     }
@@ -107,7 +112,12 @@ class ReadMangaSource implements MangaSource {
       final name = match == null ? rawName
           : 'Глава ${match.group(2)}${match.group(3)?.isNotEmpty == true ? ': ${match.group(3)}' : ''}';
       final suffix = href.contains('?') ? '&mtr=true' : '?mtr=true';
-      chapters.add(Chapter(id: '$href$suffix', name: name));
+      final coordinates = chapterCoordinates(rawName);
+      final pathCoordinates = RegExp(r'/vol(\d+)/(\d+(?:[.,]\d+)?)(?:/|$)')
+        .firstMatch(_absolute(href).path);
+      chapters.add(Chapter(id: '$href$suffix', name: name,
+        volume: coordinates.volume ?? pathCoordinates?[1],
+        number: coordinates.number ?? pathCoordinates?[2]));
     }
     return MangaDetail(entry: MangaEntry(source: key, id: entry.id, title: name,
         coverUrl: cover.isNotEmpty ? cover : entry.coverUrl),

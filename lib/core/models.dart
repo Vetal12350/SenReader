@@ -18,9 +18,20 @@ class MangaEntry {
 }
 
 class Chapter {
-  const Chapter({required this.id, required this.name});
+  const Chapter({required this.id, required this.name, this.volume,
+    this.number, this.readable = true});
   final String id;
   final String name;
+  final String? volume;
+  final String? number;
+  final bool readable;
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name,
+    'volume': volume, 'number': number, 'readable': readable};
+  factory Chapter.fromJson(Map<String, dynamic> json) => Chapter(
+    id: json['id'] as String, name: json['name'] as String,
+    volume: json['volume'] as String?, number: json['number'] as String?,
+    readable: json['readable'] != false);
 }
 
 class PageImage {
@@ -38,9 +49,12 @@ class MangaDetail {
 }
 
 class UnifiedManga {
-  UnifiedManga({required this.title, required this.entries});
+  UnifiedManga({required this.title, required this.entries, this.savedId,
+    this.requiresLinkApproval = false});
   final String title;
   final Map<String, MangaEntry> entries;
+  final String? savedId;
+  final bool requiresLinkApproval;
   MangaEntry get primary => entries['senkuro'] ?? entries.values.first;
   String get coverUrl => primary.coverUrl.isNotEmpty
       ? primary.coverUrl

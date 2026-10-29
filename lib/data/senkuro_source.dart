@@ -6,6 +6,8 @@ import '../core/source.dart';
 /// Public catalog adapter. No credentials, paywall circumvention or CAPTCHA bypass.
 /// GraphQL schema based on the Apache-2.0 mangayomi-ru-sources adapter.
 class SenkuroSource implements MangaSource {
+  SenkuroSource({http.Client? client}) : _client = client;
+  final http.Client? _client;
   static const _api = 'https://api.senkuro.com/graphql';
   @override String get key => 'senkuro';
   @override String get name => 'Senkuro';
@@ -60,15 +62,17 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
   Future<Map<String, dynamic>> _gql(String operation, String query, Map<String, dynamic> variables) async {
     late http.Response response;
     try {
-      response = await http.post(Uri.parse(_api),
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/graphql-response+json, application/json',
-            'Origin': 'https://senkuro.com',
-            'Referer': 'https://senkuro.com/',
-          },
-          body: jsonEncode({'operationName': operation, 'query': query, 'variables': variables}),
-      ).timeout(const Duration(seconds: 18));
+      final client = _client;
+      final headers = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/graphql-response+json, application/json',
+        'Origin': 'https://senkuro.com',
+        'Referer': 'https://senkuro.com/',
+      };
+      final body = jsonEncode({'operationName': operation, 'query': query, 'variables': variables});
+      response = await (client == null ? http.post(Uri.parse(_api), headers: headers, body: body)
+          : client.post(Uri.parse(_api), headers: headers, body: body))
+          .timeout(const Duration(seconds: 18));
     } catch (e) {
       throw SourceException('Нет соединения с Senkuro ($e)');
     }
@@ -149,17 +153,19 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
     final branches = ((m['branches'] as List?) ?? []).whereType<Map>().toList()
       ..sort((a, b) => (b['primaryBranch'] == true ? 1 : 0).compareTo(a['primaryBranch'] == true ? 1 : 0));
     final chapters = <Chapter>[];
-    // Prefer the primary Russian branch; avoid mixing translations in v0.1.
-    if (branches.isNotEmpty) {
+    // Check every translation branch; canonical keys deduplicate releases.
+    for (final branch in branches) {
       String? cursor;
       for (var batch = 0; batch < 10; batch++) {
         final result = await _gql('fetchMangaChapters', _chaptersQuery, {
-          'branchId': '${branches.first['id']}',
+          'branchId': '${branch['id']}',
           'after': cursor,
           'orderBy': {'field': 'NUMBER', 'direction': 'DESC'},
         });
         final conn = result['mangaChapters'];
-        if (conn is! Map) break;
+        if (conn is! Map || conn['edges'] is! List) {
+          throw SourceException('Некорректный список глав Senkuro');
+        }
         for (final edge in (conn['edges'] as List? ?? [])) {
           final n = edge is Map ? edge['node'] : null;
           if (n is! Map) continue;
@@ -167,7 +173,8 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
           if (id.isEmpty) continue;
           final number = n['number'] ?? '?';
           final subtitle = (n['name'] is String && (n['name'] as String).isNotEmpty) ? ': ${n['name']}' : '';
-          chapters.add(Chapter(id: id, name: 'Глава $number$subtitle'));
+          chapters.add(Chapter(id: id, name: 'Глава $number$subtitle',
+            number: '$number', volume: n['volume']?.toString()));
         }
         final pageInfo = conn['pageInfo'];
         if (pageInfo is! Map || pageInfo['hasNextPage'] != true) break;

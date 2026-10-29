@@ -109,10 +109,11 @@ class ReMangaSource implements MangaSource {
       throw SourceException('ReManga: некорректная карточка произведения.');
     }
     final branches = (raw['branches'] as List).whereType<Map>();
-    final branch = branches.isEmpty ? '' : _id(branches.first['id']);
     final chapters = <Chapter>[];
     final seen = <String>{};
-    if (branch.isNotEmpty) {
+    for (final rawBranch in branches) {
+      final branch = _id(rawBranch['id']);
+      if (branch.isEmpty) continue;
       for (var page = 1; page <= maxChapterPages; page++) {
         final data = await _get('titles/chapters/', {
           'branch_id': branch, 'page': '$page', 'count': '500',
@@ -127,7 +128,8 @@ class ReMangaSource implements MangaSource {
           if (!_readable(item)) continue;
           final number = item['chapter'] is num ? '${item['chapter']}' : _text(item['chapter']);
           final subtitle = _text(item['name']);
-          chapters.add(Chapter(id: id,
+          chapters.add(Chapter(id: id, number: number,
+              volume: item['tome']?.toString() ?? item['volume']?.toString(),
               name: 'Глава ${number.isEmpty ? '?' : number}${subtitle.isEmpty ? '' : ': $subtitle'}'));
         }
         if (!added || items.isEmpty || data['next'] == null || data['next'] == false || data['next'] == '') break;

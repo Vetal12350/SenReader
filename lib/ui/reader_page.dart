@@ -67,8 +67,13 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _mark() async {
-    await widget.library.markRead(widget.book, widget.chapter, widget.sourceKey);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Прогресс чтения сохранён')));
+    try {
+      await widget.library.markRead(widget.book, widget.chapter, widget.sourceKey);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Прогресс чтения сохранён')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Прогресс не сохранён: $e')));
+    }
   }
 }

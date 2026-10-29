@@ -123,7 +123,7 @@ void main() {
         '"senkuro":{"source":"senkuro","id":"old","title":"Example","coverUrl":""},'
         '"readmanga":{"source":"readmanga","id":"/old","title":"Example","coverUrl":""}'
         '},"lastChapter":"Глава 7","lastSource":"readmanga"}]';
-    SharedPreferences.setMockInitialValues({LibraryStore.storageKey: legacy});
+    SharedPreferences.setMockInitialValues({LibraryStore.legacyStorageKey: legacy});
     final library = LibraryStore();
     await library.load();
     final book = library.items.single.toUnified();
@@ -137,5 +137,7 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     final raw = jsonDecode(prefs.getString('senreader.library.v1')!) as List;
     expect((raw.single as Map).keys.toSet(), {'title', 'entries', 'lastChapter', 'lastSource'});
+    expect(prefs.getString(LibraryStore.legacyStorageKey), legacy);
+    expect((jsonDecode(prefs.getString(LibraryStore.storageKey)!) as Map)['version'], 2);
   });
 }

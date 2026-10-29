@@ -29,24 +29,22 @@ class CatalogRepository {
     return CatalogResult(books: mergeEntries(lists.expand((e) => e)), warnings: warnings);
   }
 
-  // A matching title can come from multiple sites, but never assume localization
-  // equivalence when labels differ. Later versions will add user-approved links.
+  // Only one exact match per provider is safe to connect automatically.
   Future<UnifiedManga> findOtherSources(UnifiedManga book) async {
+    if (book.requiresLinkApproval) return book;
     final entries = {...book.entries};
     for (final source in sources.values) {
       if (entries.containsKey(source.key)) continue;
       try {
         final matches = await source.search(book.title);
-        for (final match in matches) {
-          if (normalizedTitle(match.title) == normalizedTitle(book.title)) {
-            entries[source.key] = match;
-            break;
-          }
-        }
+        final exact = {for (final match in matches)
+          if (normalizedTitle(match.title) == normalizedTitle(book.title)) match.id: match};
+        if (exact.length == 1) entries[source.key] = exact.values.single;
       } catch (_) {
         // Keep existing source even if another site is temporarily unavailable.
       }
     }
-    return UnifiedManga(title: book.title, entries: entries);
+    return UnifiedManga(title: book.title, entries: entries, savedId: book.savedId,
+      requiresLinkApproval: book.requiresLinkApproval);
   }
 }

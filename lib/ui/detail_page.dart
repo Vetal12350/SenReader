@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import '../core/models.dart';
+import '../core/chapter_updates.dart';
 import '../data/catalog_repository.dart';
 import '../data/library_store.dart';
 import 'reader_page.dart';
 import 'widgets.dart';
+import 'source_link_page.dart';
+import 'chapter_updates_page.dart';
 
 class DetailPage extends StatefulWidget {
   const DetailPage({super.key, required this.book, required this.repository, required this.library});
@@ -24,7 +27,23 @@ class _DetailPageState extends State<DetailPage> {
   int _request = 0;
   @override void initState() {
     super.initState();
-    book = widget.book;
+    final savedBook = widget.library.get(widget.book);
+    book = savedBook == null ? widget.book : UnifiedManga(title: savedBook.title,
+      entries: {...savedBook.entries}, savedId: savedBook.id,
+      requiresLinkApproval: savedBook.requiresLinkApproval || widget.book.requiresLinkApproval);
+    // A catalog group may overlap separately saved titles. Open one favorite and
+    // leave their connection to the confirmation flow.
+    if (widget.library.get(book) == null) {
+      for (final entry in book.entries.values.toList()) {
+        final saved = widget.library.get(UnifiedManga(title: entry.title, entries: {entry.source: entry},
+          requiresLinkApproval: book.requiresLinkApproval));
+        if (saved != null) {
+          book = saved.toUnified();
+          _warnings.add('Есть отдельно сохранённые источники. Подтвердите связь вручную.');
+          break;
+        }
+      }
+    }
     selected = book.primary.source;
     _load();
     _discoverOther();
@@ -33,8 +52,23 @@ class _DetailPageState extends State<DetailPage> {
   Future<void> _discoverOther() async {
     final next = await widget.repository.findOtherSources(book);
     if (!mounted) return;
-    setState(() => book = next);
-    if (widget.library.has(next)) await widget.library.add(next);
+    final entries = {...next.entries, ...book.entries};
+    final current = widget.library.get(book);
+    for (final entry in entries.values.toList()) {
+      if (book.entries.containsKey(entry.source)) continue;
+      final owner = widget.library.get(UnifiedManga(title: entry.title, entries: {entry.source: entry}));
+      if (owner != null && owner.id != current?.id) {
+        entries.remove(entry.source);
+        _warnings.add('${entry.source}: подтвердите связь с отдельным избранным вручную.');
+      }
+    }
+    final discovered = UnifiedManga(title: book.title, entries: entries, savedId: book.savedId,
+      requiresLinkApproval: book.requiresLinkApproval);
+    setState(() => book = discovered);
+    if (widget.library.has(discovered)) {
+      try { await widget.library.add(discovered); }
+      catch (e) { if (mounted) setState(() => _warnings.add('$e')); }
+    }
     // Discovery may finish after the initial detail request.
     if (mounted && !loading && (detail?.chapters.isEmpty == true || error != null)) {
       _fallback();
@@ -100,8 +134,12 @@ class _DetailPageState extends State<DetailPage> {
           tooltip: widget.library.has(book) ? 'Убрать из библиотеки' : 'Добавить в библиотеку',
           icon: Icon(widget.library.has(book) ? Icons.bookmark : Icons.bookmark_outline),
           onPressed: () async {
-            if (widget.library.has(book)) { await widget.library.remove(book); }
-            else { await widget.library.add(book); }
+            try {
+              if (widget.library.has(book)) { await widget.library.remove(book); }
+              else { await widget.library.add(book); }
+            } catch (e) {
+              if (mounted) setState(() => _warnings.add('$e'));
+            }
           },
         )),
       ]),
@@ -128,6 +166,18 @@ class _DetailPageState extends State<DetailPage> {
           ])),
         ]),
         const SizedBox(height: 18),
+        OutlinedButton.icon(onPressed: () async {
+          final linked = await Navigator.push<UnifiedManga>(context, MaterialPageRoute(builder: (_) => SourceLinkPage(
+            book: book, repository: widget.repository, library: widget.library)));
+          if (linked != null && mounted) setState(() => book = linked);
+        }, icon: const Icon(Icons.link), label: const Text('Связать источник')),
+        AnimatedBuilder(animation: widget.library, builder: (context, _) {
+          final saved = widget.library.get(book);
+          return saved == null ? const SizedBox.shrink() : OutlinedButton.icon(
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ChapterUpdatesPage(
+              library: widget.library, repository: widget.repository, bookId: saved.id, runOnOpen: true))),
+            icon: const Icon(Icons.refresh), label: const Text('Проверить новые главы'));
+        }),
         for (final warning in _warnings)
           Text(warning, style: const TextStyle(color: Color(0xFFFFBE80))),
         if (loading) const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator())),
@@ -150,7 +200,12 @@ class _DetailPageState extends State<DetailPage> {
             const Text('Глав нет или они недоступны. Попробуй другой источник.', style: TextStyle(color: Colors.white60)),
           ...detail!.chapters.map((chapter) => ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.menu_book_outlined),
+            leading: AnimatedBuilder(animation: widget.library, builder: (context, _) {
+              final key = canonicalChapterKey(chapter);
+              final read = key != null && (widget.library.get(book)?.progress.any(
+                (p) => canonicalChapterKey(p.chapter) == key) ?? false);
+              return Icon(read ? Icons.check_circle_outline : Icons.menu_book_outlined);
+            }),
             title: Text(chapter.name),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
