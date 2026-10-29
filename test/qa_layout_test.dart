@@ -66,7 +66,7 @@ void main() {
         expect(find.byType(MangaTile), findsWidgets);
         expect(tester.takeException(), isNull);
         final horizontal = find.byWidgetPredicate((widget) =>
-          widget is ListView && widget.scrollDirection == Axis.horizontal).first;
+          widget is SingleChildScrollView && widget.scrollDirection == Axis.horizontal).first;
         await tester.drag(horizontal, const Offset(-140, 0));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
