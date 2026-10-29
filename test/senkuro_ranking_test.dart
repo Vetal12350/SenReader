@@ -156,15 +156,15 @@ void main() {
     }
   });
 
-  testWidgets('body deadline cancels the stream without closing injected client', (tester) async {
+  test('body deadline cancels an idle response stream', () async {
+    // Use a short REAL timeout: Stopwatch is wall-clock based, whereas
+    // testWidgets runs timers in fake async and can leave this future pending.
     var cancelled = false;
     final controller = StreamController<List<int>>(onCancel: () { cancelled = true; });
     final client = _StreamClient((_) async => http.StreamedResponse(controller.stream, 200));
-    final source = SenkuroSource(client: client);
-    final expectation = expectLater(source.popular(), _sourceError);
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 19));
-    await expectation;
+    final source = SenkuroSource(client: client,
+        timeout: const Duration(milliseconds: 120));
+    await expectLater(source.popular(), _sourceError);
     expect(cancelled, isTrue);
     expect(client.closed, isFalse);
     await controller.close();
@@ -184,7 +184,10 @@ void main() {
       }
       await expectLater(future, throwsA(isA<SourceException>().having(
           (e) => e.message, 'message', contains('слишком большой'))));
-      expect(cancelled, isTrue);
+      // A declared oversized Content-Length is rejected before subscribing,
+      // so there is no stream subscription to cancel. The streamed case
+      // must cancel its active subscription on overflow.
+      expect(cancelled, !declared);
       expect(client.closed, isFalse);
       await controller.close();
     }
