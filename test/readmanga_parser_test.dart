@@ -143,4 +143,32 @@ void main() {
     }
   });
 
+
+  test('live hashed removed image is rejected even if it is a single URL', () async {
+    final image = 'https://resrm.one-way.work/static/deleted1-'
+        '24d87e88e6e47dc5c7b60c03c0a3e589.png';
+    final source = ReadMangaSource(client: MockClient((request) async {
+      expect(request.url.host, 'a.zazaza.me');
+      expect(request.url.path, '/kak_vyjit_v_akademii/vol2/127');
+      return http.Response("""
+        <script>readerInit({}, [
+          ['https://resrm.one-way.work/','','static/deleted1-24d87e88e6e47dc5c7b60c03c0a3e589.png',1,2]
+        ])</script>
+      """, 200);
+    }));
+    final parsed = source.parseReaderPages("""
+      <script>readerInit({}, [
+        ['https://resrm.one-way.work/','','static/deleted1-24d87e88e6e47dc5c7b60c03c0a3e589.png',1,2]
+      ])</script>
+    """);
+    expect(parsed, isEmpty);
+    expect(image, contains('deleted1-'));
+    await expectLater(
+      source.pages(const Chapter(
+          id: '/kak_vyjit_v_akademii/vol2/127', name: 'Глава 127 (т. 2)')),
+      throwsA(isA<SourceException>().having(
+        (e) => e.message, 'message', contains('недоступе'))),
+    );
+  });
+
 }
