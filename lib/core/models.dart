@@ -30,11 +30,16 @@ class PageImage {
 }
 
 class MangaDetail {
-  const MangaDetail({required this.entry, required this.chapters, this.description = '', this.genres = const []});
+  const MangaDetail({required this.entry, required this.chapters,
+    this.description = '', this.genres = const [], this.rating,
+    this.alternativeNames = const []});
   final MangaEntry entry;
   final List<Chapter> chapters;
   final String description;
   final List<String> genres;
+  /// Verified source rating converted to a 0–10 scale. Null = unknown.
+  final double? rating;
+  final List<String> alternativeNames;
 }
 
 class UnifiedManga {
@@ -51,4 +56,16 @@ class CatalogResult {
   const CatalogResult({required this.books, required this.warnings});
   final List<UnifiedManga> books;
   final List<String> warnings;
+}
+
+
+/// Public aggregate score only. No age ratings, popularity ranking or votes
+/// are converted into a fictitious reader score.
+double? tenPointScore(dynamic raw, {double max = 10}) {
+  if (raw is! num && raw is! String) return null;
+  final score = raw is num ? raw.toDouble() : double.tryParse(raw);
+  if (score == null || !score.isFinite || max <= 0 || max > 100 ||
+      score <= 0 || score > max) return null;
+  final normalized = score * 10 / max;
+  return double.parse(normalized.toStringAsFixed(1));
 }
