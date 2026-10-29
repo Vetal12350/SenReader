@@ -2,20 +2,29 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/models.dart';
+import '../core/chapter_identity.dart';
 import '../core/title_matching.dart';
 
 class SavedBook {
   SavedBook({
     required this.title, required this.entries, this.lastChapter = '',
-    this.lastSource = '', Set<String>? seenChapterKeys,
+    this.lastSource = '', this.lastChapterId = '',
+    this.lastPageIndex = 0, this.lastPageCount = 0, this.lastUpdatedAt = 0,
+    Set<String>? readChapterKeys, Set<String>? seenChapterKeys,
     Set<String>? initializedSources,
-  })  : seenChapterKeys = seenChapterKeys ?? <String>{},
+  })  : readChapterKeys = readChapterKeys ?? <String>{},
+        seenChapterKeys = seenChapterKeys ?? <String>{},
         initializedSources = initializedSources ?? <String>{};
 
   final String title;
   final Map<String, MangaEntry> entries;
   String lastChapter;
   String lastSource;
+  String lastChapterId;
+  int lastPageIndex;
+  int lastPageCount;
+  int lastUpdatedAt;
+  final Set<String> readChapterKeys;
   final Set<String> seenChapterKeys;
   final Set<String> initializedSources;
   String get key => normalizedTitle(title);
@@ -25,6 +34,9 @@ class SavedBook {
     'title': title,
     'entries': entries.map((k, v) => MapEntry(k, v.toJson())),
     'lastChapter': lastChapter, 'lastSource': lastSource,
+    'lastChapterId': lastChapterId, 'lastPageIndex': lastPageIndex,
+    'lastPageCount': lastPageCount, 'lastUpdatedAt': lastUpdatedAt,
+    'readChapterKeys': readChapterKeys.toList()..sort(),
     'seenChapterKeys': seenChapterKeys.toList()..sort(),
     'initializedSources': initializedSources.toList()..sort(),
   };
@@ -35,6 +47,13 @@ class SavedBook {
       entries: raw.map((k, v) => MapEntry(k.toString(), MangaEntry.fromJson(Map<String, dynamic>.from(v as Map)))),
       lastChapter: json['lastChapter'] as String? ?? '',
       lastSource: json['lastSource'] as String? ?? '',
+      lastChapterId: json['lastChapterId'] as String? ?? '',
+      lastPageIndex: ((json['lastPageIndex'] as num?)?.toInt() ?? 0).clamp(0, 100000),
+      lastPageCount: ((json['lastPageCount'] as num?)?.toInt() ?? 0).clamp(0, 100000),
+      lastUpdatedAt: ((json['lastUpdatedAt'] as num?)?.toInt() ?? 0).clamp(0, 9999999999999),
+      readChapterKeys: (json['readChapterKeys'] is List
+              ? (json['readChapterKeys'] as List).whereType<String>() : <String>[])
+          .where((value) => value.length <= 256).toSet(),
       seenChapterKeys: (json['seenChapterKeys'] is List
               ? (json['seenChapterKeys'] as List).whereType<String>() : <String>[])
           .where((value) => value.length <= 128).toSet(),
@@ -103,11 +122,56 @@ class LibraryStore extends ChangeNotifier {
     await _save();
   }
 
-  Future<void> markRead(UnifiedManga book, Chapter chapter, String source) async {
-    await add(book);
-    final item = _books[normalizedTitle(book.title)]!;
+  /// Source-independent number/volume identity, or a source-scoped fallback.
+  /// This remains stable when the chapter's subtitle changes.
+  String _chapterKey(Chapter chapter, String source) =>
+      canonicalChapterKey(chapter) ?? '$source:${chapter.id}';
+
+  bool isChapterRead(UnifiedManga book, Chapter chapter, String source) {
+    final saved = get(book);
+    if (saved == null) return false;
+    if (saved.readChapterKeys.contains(_chapterKey(chapter, source))) return true;
+    // Existing v1 libraries stored only the last manually completed chapter.
+    return saved.readChapterKeys.isEmpty && saved.lastChapterId.isEmpty &&
+        saved.lastChapter == chapter.name && saved.lastSource == source;
+  }
+
+  /// Save where the reader stopped; do not mark the chapter completed.
+  Future<void> savePosition(UnifiedManga book, Chapter chapter, String source,
+      {required int pageIndex, required int pageCount}) async {
+    final key = normalizedTitle(book.title);
+    final item = _books.putIfAbsent(key,
+        () => SavedBook(title: book.title, entries: {...book.entries}));
+    item.entries.addAll(book.entries);
     item.lastChapter = chapter.name;
+    item.lastChapterId = chapter.id;
     item.lastSource = source;
+    item.lastPageCount = pageCount < 0 ? 0 : pageCount;
+    item.lastPageIndex = pageIndex.clamp(0,
+        item.lastPageCount > 0 ? item.lastPageCount - 1 : 0);
+    item.lastUpdatedAt = DateTime.now().millisecondsSinceEpoch;
+    await _save();
+  }
+
+  Future<void> markRead(UnifiedManga book, Chapter chapter, String source) async {
+    final key = normalizedTitle(book.title);
+    final item = _books.putIfAbsent(key,
+        () => SavedBook(title: book.title, entries: {...book.entries}));
+    item.entries.addAll(book.entries);
+    item.lastChapter = chapter.name;
+    item.lastChapterId = chapter.id;
+    item.lastSource = source;
+    item.lastPageIndex = item.lastPageCount > 0 ? item.lastPageCount - 1 : 0;
+    item.readChapterKeys.add(_chapterKey(chapter, source));
+    item.lastUpdatedAt = DateTime.now().millisecondsSinceEpoch;
+    await _save();
+  }
+
+  Future<void> unmarkRead(UnifiedManga book, Chapter chapter, String source) async {
+    final item = get(book);
+    if (item == null) return;
+    item.readChapterKeys.remove(_chapterKey(chapter, source));
+    // Preserve the last reading position, even when a completion is undone.
     await _save();
   }
 }
