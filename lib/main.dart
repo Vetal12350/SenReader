@@ -61,6 +61,7 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int tab = 0;
+  String libraryFilter = 'all';
   CatalogResult? result;
   bool loading = false;
   bool checkingChapters = false;
@@ -287,10 +288,31 @@ class _MainShellState extends State<MainShell> {
         animation: widget.library,
         builder: (context, _) {
           final saved = widget.library.items;
+          final filtered = saved.where((item) =>
+            libraryFilter == 'all' || item.status == libraryFilter).toList();
           return saved.isEmpty
             ? const EmptyView(icon: Icons.bookmark_border, text: 'Здесь появятся сохранённые тайтлы')
             : ListView(padding: const EdgeInsets.all(16), children: [
-                SectionTitle('Продолжить чтение', subtitle: '${saved.length} в библиотеке'),
+                SectionTitle('Мои закладки', subtitle: '${saved.length} произведений'),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: [
+                    for (final option in const [
+                      ('all', 'Все'), ('reading', 'Читаю'),
+                      ('planned', 'В планах'), ('completed', 'Прочитано')
+                    ]) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          label: Text('${option.$2} ${option.$1 == 'all' ? saved.length : saved.where((b) => b.status == option.$1).length}'),
+                          selected: libraryFilter == option.$1,
+                          onSelected: (_) => setState(() => libraryFilter = option.$1),
+                        ),
+                      ),
+                    ],
+                  ]),
+                ),
+                const SizedBox(height: 16),
                 const ChapterNotificationsPanel(),
                 const SizedBox(height: 8),
                 FilledButton.icon(
@@ -323,14 +345,19 @@ class _MainShellState extends State<MainShell> {
                         style: const TextStyle(color: Color(0xFFFFBE80), fontSize: 12))),
                   const Divider(),
                 ],
-                ...saved.map((item) => ListTile(
-                  contentPadding: const EdgeInsets.symmetric(vertical: 6),
-                  leading: ClipRRect(borderRadius: BorderRadius.circular(6),
-                    child: CoverImage(item.toUnified().coverUrl, width: 54, height: 76)),
-                  title: Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-                  subtitle: Text(item.lastChapter.isEmpty ? 'Ещё не читали' : 'Последняя: ${item.lastChapter}'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => _open(item.toUnified()),
+                if (filtered.isEmpty)
+                  const EmptyView(icon: Icons.bookmark_border,
+                    text: 'В этой категории пока нет произведений'),
+                LayoutBuilder(builder: (context, constraints) => Wrap(
+                  spacing: 10, runSpacing: 18,
+                  children: filtered.map((item) => SizedBox(
+                    width: (constraints.maxWidth - 20) / 3,
+                    child: MangaTile(
+                      book: item.toUnified(),
+                      statusLabel: item.status == 'reading' ? 'Читаю' :
+                        item.status == 'completed' ? 'Прочитано' : 'В планах',
+                      onTap: () => _open(item.toUnified())),
+                  )).toList(),
                 )),
               ]);
         },
