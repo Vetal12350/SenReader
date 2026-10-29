@@ -105,7 +105,7 @@ class ReadMangaSource implements MangaSource {
       // Grouple often labels chapters "volume - chapter: subtitle".
       final match = RegExp(r'^(\d+)\s*[-—]\s*(\d+(?:\.\d+)?)\s*(?:[:—]\s*(.*))?$').firstMatch(rawName);
       final name = match == null ? rawName
-          : 'Глава ${match.group(2)}${match.group(3)?.isNotEmpty == true ? ': ${match.group(3)}' : ''}';
+          : 'Глава ${match.group(2)}${match.group(3)?.isNotEmpty == true ? ': ${match.group(3)}' : ''} (т. ${match.group(1)})';
       final suffix = href.contains('?') ? '&mtr=true' : '?mtr=true';
       chapters.add(Chapter(id: '$href$suffix', name: name));
     }
