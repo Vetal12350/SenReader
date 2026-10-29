@@ -134,9 +134,14 @@ class ReadMangaSource implements MangaSource {
     if (offset < 0) offset = html.indexOf('rm_h.initReader(');
     if (offset < 0) offset = html.indexOf('rm_h.readerDoInit(');
     if (offset < 0) return [];
-    final begin = html.indexOf('[[', offset);
-    final end = begin < 0 ? -1 : html.indexOf(']]', begin);
-    if (begin < 0 || end < 0) return [];
+    // Modern reader scripts sometimes format nested arrays with whitespace
+    // between brackets. Both "[[" and "[\n [" represent the same page list.
+    final outer = RegExp(r'\[\s*\[').firstMatch(html.substring(offset));
+    if (outer == null) return [];
+    final begin = offset + outer.start;
+    final close = RegExp(r'\]\s*\]').firstMatch(html.substring(begin));
+    if (close == null) return [];
+    final end = begin + close.start;
     final body = html.substring(begin + 1, end + 1);
     final regex = RegExp(r'''\[\s*(['"])([^'"]*)\1\s*,\s*(['"])([^'"]*)\3\s*,\s*(['"])([^'"]*)\5\s*(?:,\s*[^\]]+)?\]''');
     final images = <PageImage>[];
