@@ -20,6 +20,8 @@ class _DetailPageState extends State<DetailPage> {
   MangaDetail? detail;
   bool loading = true;
   String? error;
+  bool showChapters = true;
+  bool newestFirst = true;
   final Set<String> _attempted = {};
   final List<String> _warnings = [];
   int _request = 0;
@@ -94,6 +96,51 @@ class _DetailPageState extends State<DetailPage> {
     _load();
   }
 
+
+  static String chapterVolume(Chapter chapter) {
+    final m = RegExp(r'\(\s*т\.\s*([0-9]+(?:\.[0-9]+)?)\s*\)')
+        .firstMatch(chapter.name);
+    return m == null ? 'Главы без тома' : 'Том ' + m.group(1)!;
+  }
+
+  void _openChapter(Chapter chapter) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
+      book: book, chapter: chapter, sourceKey: selected,
+      repository: widget.repository, library: widget.library,
+    )));
+  }
+
+  Widget _continueAction() => AnimatedBuilder(
+    animation: widget.library,
+    builder: (context, _) {
+      final previous = widget.library.get(book);
+      if (previous == null || previous.lastSource != selected ||
+          previous.lastChapter.isEmpty || detail == null) {
+        return const SizedBox.shrink();
+      }
+      Chapter? match;
+      for (final chapter in detail!.chapters) {
+        if (chapter.name == previous.lastChapter) {
+          match = chapter;
+          break;
+        }
+      }
+      if (match == null) return const SizedBox.shrink();
+      final target = match;
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        child: SizedBox(width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: () => _openChapter(target),
+            icon: const Icon(Icons.play_arrow_rounded),
+            label: Text('Продолжить: ' + target.name,
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
+        ),
+      );
+    },
+  );
+
   @override Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Произведение'), actions: [
@@ -163,6 +210,7 @@ class _DetailPageState extends State<DetailPage> {
               onSelected: (_) => _select(source),
             ),
         ]),
+        _continueAction(),
         const SizedBox(height: 18),
         for (final warning in _warnings)
           Text(warning, style: const TextStyle(color: Color(0xFFFFBE80))),
@@ -173,33 +221,60 @@ class _DetailPageState extends State<DetailPage> {
           OutlinedButton.icon(onPressed: _retry, icon: const Icon(Icons.refresh), label: const Text('Повторить')),
         ],
         if (detail != null) ...[
-          if (detail!.genres.isNotEmpty)
+          SizedBox(width: double.infinity, child: SegmentedButton<bool>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: false, label: Text('Информация')),
+              ButtonSegment(value: true, label: Text('Главы')),
+            ],
+            selected: {showChapters},
+            onSelectionChanged: (value) => setState(() => showChapters = value.first),
+          )),
+          const SizedBox(height: 8),
+          if (!showChapters && detail!.genres.isNotEmpty)
             Wrap(spacing: 6, runSpacing: 4, children: detail!.genres.map((g) => Chip(label: Text(g, style: const TextStyle(fontSize: 11)))).toList()),
-          if (detail!.alternativeNames.isNotEmpty) ...[
+          if (!showChapters && detail!.alternativeNames.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(detail!.alternativeNames.join(' / '),
               maxLines: 3, overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: Colors.white60)),
           ],
-          if (detail!.description.isNotEmpty) ...[
+          if (!showChapters && detail!.description.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(detail!.description, maxLines: 7, overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: Colors.white70, height: 1.45)),
           ],
+          if (showChapters) ...[
           const SizedBox(height: 24),
           SectionTitle('Главы', subtitle: '${detail!.chapters.length} · ${widget.repository.sources[selected]?.name}'),
           if (detail!.chapters.isEmpty)
             const Text('Глав нет или они недоступны. Попробуй другой источник.', style: TextStyle(color: Colors.white60)),
-          ...detail!.chapters.map((chapter) => ListTile(
+          Align(alignment: Alignment.centerRight, child: IconButton(
+            tooltip: newestFirst ? 'Сначала старые' : 'Сначала новые',
+            onPressed: () => setState(() => newestFirst = !newestFirst),
+            icon: const Icon(Icons.swap_vert_rounded),
+          )),
+          for (var index = 0; index < detail!.chapters.length; index++) ...[
+            if (index == 0 || chapterVolume(
+                  detail!.chapters[newestFirst ? index : detail!.chapters.length - 1 - index])
+                != chapterVolume(detail!.chapters[
+                  newestFirst ? index - 1 : detail!.chapters.length - index]))
+              Align(alignment: Alignment.centerLeft, child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Text(chapterVolume(
+                  detail!.chapters[newestFirst ? index : detail!.chapters.length - 1 - index]),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              )),
+            ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.menu_book_outlined),
-            title: Text(chapter.name),
+            title: Text(detail!.chapters[newestFirst ? index : detail!.chapters.length - 1 - index].name),
             trailing: const Icon(Icons.chevron_right),
-            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
-              book: book, chapter: chapter, sourceKey: selected,
-              repository: widget.repository, library: widget.library,
-            ))),
-          )),
+            onTap: () => _openChapter(detail!.chapters[
+              newestFirst ? index : detail!.chapters.length - 1 - index]),
+          ),
+          ],
+          ],
         ],
       ]),
     );
