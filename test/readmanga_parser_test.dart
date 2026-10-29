@@ -104,4 +104,33 @@ void main() {
     );
   });
 
+
+  test('public source rating is normalized only with an explicit bestRating', () async {
+    final client = MockClient((request) async => http.Response('''
+      <h1>Example</h1>
+      <div itemprop="aggregateRating">
+        <meta itemprop="ratingValue" content="4.4" />
+        <meta itemprop="bestRating" content="5" />
+      </div>
+      <table><tr class="item-row">
+        <a class="chapter-link" href="/chapter/1">1 - 7</a>
+      </tr></table>
+    ''', 200));
+    final source = ReadMangaSource(client: client);
+    final item = const MangaEntry(source: 'readmanga', id: '/sample', title: 'Example');
+    final detail = await source.detail(item);
+    expect(detail.rating, 8.8);
+    expect(detail.chapters.single.name, contains('Глава 7'));
+  });
+
+  test('numeric ratings reject invalid scales and unknown values', () {
+    expect(tenPointScore(4.5, max: 5), 9);
+    expect(tenPointScore(87, max: 100), 8.7);
+    expect(tenPointScore(-1), isNull);
+    expect(tenPointScore(105, max: 100), isNull);
+    expect(tenPointScore('not-a-score'), isNull);
+    expect(tenPointScore(double.nan), isNull);
+    expect(tenPointScore('7.2'), 7.2);
+  });
+
 }
