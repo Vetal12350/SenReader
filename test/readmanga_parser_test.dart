@@ -84,6 +84,59 @@ void main() {
     expect(pages.first.headers['Referer'], 'https://www.google.com/');
   });
 
+  test('CDN HTTP 300 retries with the official host Referer', () async {
+    var primaryRequests = 0;
+    var alternateRequests = 0;
+    final client = MockClient((request) async {
+      if (request.url.host == 'a.zazaza.me') {
+        return http.Response("""
+          <script>readerInit({}, [
+            ['https://cdn.example/','','one.jpg',1,2],
+            ['https://cdn.example/','','two.jpg',1,2],
+            ['https://cdn.example/','','three.jpg',1,2]
+          ])</script>
+        """, 200);
+      }
+      if (request.headers['referer'] == 'https://www.google.com/') {
+        primaryRequests++;
+        return http.Response('Multiple Choices', 300);
+      }
+      expect(request.headers['referer'], 'https://a.zazaza.me/');
+      alternateRequests++;
+      final n = request.url.path.contains('one') ? 1 :
+          request.url.path.contains('two') ? 2 : 3;
+      return http.Response.bytes(List<int>.filled(8500, n), 200,
+          headers: {'content-type': 'image/jpeg'});
+    });
+    final pages = await ReadMangaSource(client: client)
+        .pages(const Chapter(id: '/chapter/127', name: 'Глава 127'));
+    expect(primaryRequests, 3);
+    expect(alternateRequests, 3);
+    expect(pages, hasLength(3));
+    expect(pages.every((p) => p.headers['Referer'] == 'https://a.zazaza.me/'),
+        isTrue);
+  });
+
+  test('CDN HTTP 300 still fails when source Referer does not help', () async {
+    final client = MockClient((request) async {
+      if (request.url.host == 'a.zazaza.me') {
+        return http.Response("""
+          <script>readerInit({}, [
+            ['https://cdn.example/','','one.jpg',1,2],
+            ['https://cdn.example/','','two.jpg',1,2]
+          ])</script>
+        """, 200);
+      }
+      return http.Response('Multiple Choices', 300);
+    });
+    await expectLater(
+      ReadMangaSource(client: client)
+          .pages(const Chapter(id: '/chapter/127', name: 'Глава 127')),
+      throwsA(isA<SourceException>().having(
+        (e) => e.message, 'message', contains('HTTP 300'))),
+    );
+  });
+
   test('CDN HTTP 403 fails as unavailable instead of a readable chapter', () async {
     final client = MockClient((request) async {
       if (request.url.host == 'a.zazaza.me') {
