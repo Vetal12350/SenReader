@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../core/models.dart';
 import '../data/catalog_repository.dart';
@@ -106,35 +107,61 @@ class _DetailPageState extends State<DetailPage> {
         )),
       ]),
       body: ListView(padding: const EdgeInsets.all(16), children: [
-        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          ClipRRect(borderRadius: BorderRadius.circular(12), child: CoverImage(
-            detail?.entry.coverUrl ?? book.coverUrl, width: 120, height: 170)),
-          const SizedBox(width: 16),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(detail?.entry.title ?? book.title,
-              style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
-            if (detail?.rating != null) ...[
-              const SizedBox(height: 8),
-              Row(children: [
-                const Icon(Icons.star_rounded, color: Color(0xFFFFD37E), size: 18),
-                const SizedBox(width: 4),
-                Text(detail!.rating!.toStringAsFixed(1) + ' / 10',
-                  style: const TextStyle(fontWeight: FontWeight.w700)),
+        ClipRRect(borderRadius: BorderRadius.circular(16),
+          child: Stack(children: [
+            Positioned.fill(child: ImageFiltered(
+              imageFilter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
+              child: CoverImage(detail?.entry.coverUrl ?? book.coverUrl,
+                width: double.infinity, height: 430))),
+            Container(width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(14, 24, 14, 22),
+              decoration: const BoxDecoration(gradient: LinearGradient(
+                begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                colors: [Color(0x9917131B), Color(0xE519131E)])),
+              child: Column(children: [
+                ClipRRect(borderRadius: BorderRadius.circular(12),
+                  child: CoverImage(detail?.entry.coverUrl ?? book.coverUrl,
+                    width: 190, height: 263)),
+                const SizedBox(height: 16),
+                Text(detail?.entry.title ?? book.title,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 26,
+                    fontWeight: FontWeight.w800)),
+                if (detail?.alternativeNames.isNotEmpty == true) ...[
+                  const SizedBox(height: 8),
+                  Text(detail!.alternativeNames.take(3).join(' / '),
+                    maxLines: 3, textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white70)),
+                ],
+                if (detail?.rating != null) ...[
+                  const SizedBox(height: 11),
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    const Icon(Icons.star_rounded,
+                      color: Color(0xFFFFD37E), size: 21),
+                    const SizedBox(width: 4),
+                    Text(detail!.rating!.toStringAsFixed(1) + ' / 10',
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 7),
+                    Text(widget.repository.sources[selected]?.name ?? selected,
+                      style: const TextStyle(color: Colors.white70)),
+                  ]),
+                ],
               ]),
-            ],
-            const SizedBox(height: 10),
-            const Text('Источник глав', style: TextStyle(color: Colors.white54, fontSize: 12)),
-            const SizedBox(height: 6),
-            Wrap(spacing: 6, children: [
-              for (final source in book.entries.keys)
-                ChoiceChip(
-                  label: Text(widget.repository.sources[source]?.name ?? source,
-                    style: const TextStyle(fontSize: 12)),
-                  selected: selected == source,
-                  onSelected: (_) => _select(source),
-                ),
-            ]),
+            ),
           ])),
+        const SizedBox(height: 14),
+        const Text('Источник глав',
+          style: TextStyle(color: Colors.white70, fontSize: 12)),
+        const SizedBox(height: 6),
+        Wrap(spacing: 6, children: [
+          for (final source in book.entries.keys)
+            ChoiceChip(
+              label: Text(widget.repository.sources[source]?.name ?? source,
+                style: const TextStyle(fontSize: 12)),
+              selected: selected == source,
+              onSelected: (_) => _select(source),
+            ),
         ]),
         const SizedBox(height: 18),
         for (final warning in _warnings)
