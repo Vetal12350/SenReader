@@ -221,7 +221,11 @@ class LibraryTransfer {
 
   static Uri _https(String value, Set<String> hosts) {
     final uri = Uri.tryParse(value);
+    // Uri canonicalizes an explicit default port (:443), so hasPort alone
+    // cannot enforce our no-explicit-port backup policy. Check raw authority.
+    final rawAuthority = RegExp(r'^https://([^/?#]+)').firstMatch(value)?.group(1);
     if (uri == null || uri.scheme != 'https' || !uri.hasAuthority ||
+        rawAuthority == null || rawAuthority.contains(':') ||
         !hosts.contains(uri.host) || uri.userInfo.isNotEmpty ||
         uri.hasPort || uri.hasQuery || uri.hasFragment ||
         RegExp(r'[\s\\\x00-\x1f\x7f%]').hasMatch(value) ||
