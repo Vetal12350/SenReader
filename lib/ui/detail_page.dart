@@ -19,6 +19,9 @@ class _DetailPageState extends State<DetailPage> {
   MangaDetail? detail;
   bool loading = true;
   String? error;
+  final Set<String> _attempted = {};
+  final List<String> _warnings = [];
+  int _request = 0;
   @override void initState() {
     super.initState();
     book = widget.book;
@@ -33,31 +36,60 @@ class _DetailPageState extends State<DetailPage> {
     setState(() => book = next);
     if (widget.library.has(next)) await widget.library.add(next);
     // Discovery may finish after the initial detail request.
-    if (mounted && selected == 'senkuro' && next.entries.containsKey('readmanga') &&
-        ((detail != null && detail!.chapters.isEmpty) || error != null)) {
-      _select('readmanga');
+    if (mounted && !loading && (detail?.chapters.isEmpty == true || error != null)) {
+      _fallback();
     }
   }
 
   Future<void> _load() async {
+    final request = ++_request;
+    final sourceKey = selected;
+    _attempted.add(sourceKey);
     setState(() { loading = true; error = null; detail = null; });
     try {
-      final next = await widget.repository.sources[selected]!.detail(book.entries[selected]!);
-      if (!mounted) return;
+      final source = widget.repository.sources[sourceKey];
+      if (source == null) throw StateError('Источник $sourceKey недоступен');
+      final next = await source.detail(book.entries[sourceKey]!);
+      if (!mounted || request != _request) return;
       setState(() { loading = false; detail = next; });
-      // If the primary source has no chapters, look for an existing alternative.
-      if (next.chapters.isEmpty && selected == 'senkuro' && book.entries.containsKey('readmanga')) {
-        _select('readmanga');
+      if (next.chapters.isEmpty) {
+        setState(() => _warnings.add('${source.name}: публичные главы недоступны.'));
+        _fallback();
       }
     } catch (e) {
-      if (!mounted) return;
-      setState(() { loading = false; error = '$e'; });
+      if (!mounted || request != _request) return;
+      setState(() {
+        loading = false;
+        error = '$e';
+        _warnings.add('${widget.repository.sources[sourceKey]?.name ?? sourceKey}: $e');
+      });
+      _fallback();
+    }
+  }
+
+  void _fallback() {
+    for (final source in book.entries.keys) {
+      if (!_attempted.contains(source) && widget.repository.sources.containsKey(source)) {
+        setState(() => selected = source);
+        _load();
+        return;
+      }
     }
   }
 
   void _select(String value) {
     if (selected == value) return;
-    setState(() => selected = value);
+    setState(() {
+      selected = value;
+      _attempted.clear();
+      _warnings.clear();
+    });
+    _load();
+  }
+
+  void _retry() {
+    _attempted.clear();
+    _warnings.clear();
     _load();
   }
 
@@ -96,11 +128,13 @@ class _DetailPageState extends State<DetailPage> {
           ])),
         ]),
         const SizedBox(height: 18),
+        for (final warning in _warnings)
+          Text(warning, style: const TextStyle(color: Color(0xFFFFBE80))),
         if (loading) const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator())),
         if (error != null) ...[
           Text('Не удалось получить главы: $error', style: const TextStyle(color: Color(0xFFFFBE80))),
           const SizedBox(height: 10),
-          OutlinedButton.icon(onPressed: _load, icon: const Icon(Icons.refresh), label: const Text('Повторить')),
+          OutlinedButton.icon(onPressed: _retry, icon: const Icon(Icons.refresh), label: const Text('Повторить')),
         ],
         if (detail != null) ...[
           if (detail!.genres.isNotEmpty)

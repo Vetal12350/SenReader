@@ -3,11 +3,13 @@ import '../core/source.dart';
 import '../core/title_matching.dart';
 import 'readmanga_source.dart';
 import 'senkuro_source.dart';
+import 'remanga_source.dart';
 
 class CatalogRepository {
-  CatalogRepository() : sources = {
+  CatalogRepository({Map<String, MangaSource>? sources}) : sources = sources ?? {
     'senkuro': SenkuroSource(),
     'readmanga': ReadMangaSource(),
+    'remanga': ReMangaSource(),
   };
   final Map<String, MangaSource> sources;
 
@@ -27,7 +29,7 @@ class CatalogRepository {
     return CatalogResult(books: mergeEntries(lists.expand((e) => e)), warnings: warnings);
   }
 
-  // A matching title can come from both sites, but never assume localization
+  // A matching title can come from multiple sites, but never assume localization
   // equivalence when labels differ. Later versions will add user-approved links.
   Future<UnifiedManga> findOtherSources(UnifiedManga book) async {
     final entries = {...book.entries};
