@@ -12,6 +12,8 @@ import 'ui/widgets.dart';
 import 'data/chapter_alert_controller.dart';
 import 'ui/chapter_alert_offer.dart';
 import 'ui/settings_page.dart';
+import 'data/theme_controller.dart';
+import 'ui/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -24,38 +26,35 @@ Future<void> main() async {
     // Keep the library usable even if this Android version cannot schedule
     // background checks; manual checking remains available.
   }
-  runApp(SenReaderApp(library: library));
+  final themes = ThemeController();
+  try { await themes.load(); } catch (_) { /* Use the existing dark default. */ }
+  runApp(SenReaderApp(library: library, themes: themes));
 }
 
 class SenReaderApp extends StatelessWidget {
-  const SenReaderApp({super.key, required this.library});
+  const SenReaderApp({super.key, required this.library, required this.themes});
   final LibraryStore library;
+  final ThemeController themes;
 
   @override
-  Widget build(BuildContext context) {
-    const accent = Color(0xFFFF893F);
-    return MaterialApp(
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: themes,
+    builder: (context, _) => MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'SenReader',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(seedColor: accent, brightness: Brightness.dark),
-        scaffoldBackgroundColor: const Color(0xFF100F14),
-        cardColor: const Color(0xFF20191D),
-        appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF100F14)),
-        navigationBarTheme: const NavigationBarThemeData(
-          backgroundColor: Color(0xFF171419),
-          indicatorColor: Color(0xFF41281F),
-        ),
-      ),
-      home: MainShell(repository: CatalogRepository(), library: library),
-    );
-  }
+      theme: SenReaderTheme.build(Brightness.light),
+      darkTheme: SenReaderTheme.build(Brightness.dark),
+      themeMode: themes.mode,
+      home: MainShell(repository: CatalogRepository(),
+          library: library, themes: themes),
+    ),
+  );
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, required this.repository, required this.library, this.alerts});
+  const MainShell({super.key, required this.repository, required this.library, this.alerts, this.themes});
   final ChapterAlertController? alerts;
+  final ThemeController? themes;
   final CatalogRepository repository;
   final LibraryStore library;
   @override State<MainShell> createState() => _MainShellState();
@@ -165,7 +164,7 @@ class _MainShellState extends State<MainShell> {
               child: Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF211B20),
+                  color: Theme.of(context).cardColor,
                   borderRadius: BorderRadius.circular(14)),
                 child: Row(children: [
                   ClipRRect(borderRadius: BorderRadius.circular(9),
@@ -181,18 +180,16 @@ class _MainShellState extends State<MainShell> {
                       const SizedBox(height: 8),
                       Flexible(child: Text(item.lastChapter,
                         maxLines: 2, overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white70,
-                          fontSize: 11))),
+                        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11))),
                       if (item.lastPageCount > 0) ...[
                         const SizedBox(height: 8),
                         LinearProgressIndicator(
                           value: (item.lastPageIndex + 1) / item.lastPageCount,
-                          backgroundColor: Colors.white12),
+                          backgroundColor: Theme.of(context).colorScheme.outlineVariant),
                         const SizedBox(height: 4),
                         Text('Стр. ${item.lastPageIndex + 1}/${item.lastPageCount}',
                           maxLines: 1, overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 10,
-                            color: Colors.white60)),
+                          style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant)),
                       ],
                     ],
                   )),
@@ -268,7 +265,8 @@ class _MainShellState extends State<MainShell> {
             IconButton(tooltip: 'Обновить', icon: const Icon(Icons.refresh), onPressed: _fetch),
           IconButton(tooltip: 'Настройки', icon: const Icon(Icons.settings_outlined),
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsPage(
-              repository: widget.repository, library: widget.library, alerts: alerts)))),
+              repository: widget.repository, library: widget.library, alerts: alerts,
+               themes: widget.themes)))),
         ],
       ),
       body: tab == 2 ? AnimatedBuilder(
