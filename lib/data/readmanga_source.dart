@@ -11,7 +11,7 @@ class ReadMangaSource implements MangaSource {
   ReadMangaSource({http.Client? client}) : _client = client;
   final http.Client? _client;
 
-  static const baseUrl = 'https://3.readmanga.ru';
+  static const baseUrl = 'https://a.zazaza.me';
   @override String get key => 'readmanga';
   @override String get name => 'ReadManga';
   // Grouple's current public ReadManga image endpoint expects a general
@@ -21,7 +21,19 @@ class ReadMangaSource implements MangaSource {
     'Referer': 'https://www.google.com/',
     'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
   };
-  Uri _absolute(String path) => Uri.parse(baseUrl).resolve(path);
+  // Public domain changed; old saved absolute IDs remain portable.
+  Uri _absolute(String path) {
+    final uri = Uri.parse(path);
+    if (uri.hasScheme && uri.scheme == 'https' &&
+        (uri.host == '3.readmanga.ru' || uri.host == 'a.zazaza.me')) {
+      return Uri.parse(baseUrl).resolve(uri.path +
+          (uri.hasQuery ? '?' + uri.query : ''));
+    }
+    if (uri.hasScheme || uri.hasAuthority || path.startsWith('//')) {
+      throw SourceException('ReadManga: адрес вне разрешённого сайта.');
+    }
+    return Uri.parse(baseUrl).resolve(path);
+  }
 
   Future<String> _html(Uri uri) async {
     if (uri.scheme != 'https' || uri.host != Uri.parse(baseUrl).host) {
