@@ -8,10 +8,19 @@ import '../core/source.dart';
 /// Reads public ReadManga pages. HTML selectors may break when the site changes.
 /// No login tokens are gathered or bundled into the app.
 class ReadMangaSource implements MangaSource {
+  ReadMangaSource({http.Client? client}) : _client = client;
+  final http.Client? _client;
+
   static const baseUrl = 'https://3.readmanga.ru';
   @override String get key => 'readmanga';
   @override String get name => 'ReadManga';
-  @override Map<String, String> get imageHeaders => const {'Referer': '$baseUrl/'};
+  // Grouple's current public ReadManga image endpoint expects a general
+  // search-engine referer. A site referer is sometimes served a removed-page
+  // image instead of manga content, even with a successful HTTP status.
+  @override Map<String, String> get imageHeaders => const {
+    'Referer': 'https://www.google.com/',
+    'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+  };
   Uri _absolute(String path) => Uri.parse(baseUrl).resolve(path);
 
   Future<String> _html(Uri uri) async {
@@ -20,11 +29,15 @@ class ReadMangaSource implements MangaSource {
     }
     late http.Response response;
     try {
-      response = await http.get(uri, headers: {
+      final headers = {
         'Accept': 'text/html,application/xhtml+xml',
         'Accept-Language': 'ru-RU,ru;q=0.9',
-        'Referer': '$baseUrl/',
-      }).timeout(const Duration(seconds: 18));
+        'Referer': 'https://www.google.com/',
+      };
+      response = await (_client == null
+          ? http.get(uri, headers: headers)
+          : _client.get(uri, headers: headers)
+      ).timeout(const Duration(seconds: 18));
     } catch (e) {
       throw SourceException('Нет соединения с ReadManga ($e)');
     }
@@ -136,13 +149,97 @@ class ReadMangaSource implements MangaSource {
       else if (url.startsWith('/')) url = '$baseUrl$url';
       if (!url.startsWith('https://')) continue;
       // Do not include removal placeholders in the actual reader.
-      if (url.contains('/static/deleted1.png')) continue;
+      if (_isPlaceholderUrl(url)) continue;
       images.add(PageImage(url, headers: imageHeaders));
     }
     return images;
   }
 
+  static bool _isPlaceholderUrl(String url) {
+    final uri = Uri.tryParse(url);
+    if (uri == null) return true;
+    final path = uri.path.toLowerCase();
+    return path.endsWith('/deleted1.png') ||
+        path.endsWith('/deleted.png') ||
+        path.endsWith('/removed.png') ||
+        path.endsWith('/censored.png');
+  }
+
+  /// Read only a small prefix of the image response to recognize identical
+  /// CDN-hosted removal cards masquerading as real manga pages. No full
+  /// chapter images are downloaded by this preflight.
+  Future<List<int>> _sampleImage(http.Client client, PageImage page) async {
+    final uri = Uri.tryParse(page.url);
+    if (uri == null || uri.scheme != 'https' || uri.host.isEmpty ||
+        uri.userInfo.isNotEmpty) {
+      throw SourceException('ReadManga: некорректная ссылка на страницу главы.');
+    }
+    try {
+      final request = http.Request('GET', uri);
+      request.headers.addAll(page.headers);
+      final response = await client.send(request)
+          .timeout(const Duration(seconds: 15));
+      if (response.statusCode != 200 && response.statusCode != 206) {
+        throw SourceException('ReadManga: изображение недоступно (HTTP ${response.statusCode}).');
+      }
+      final type = response.headers['content-type']?.toLowerCase() ?? '';
+      if (type.isNotEmpty && !type.startsWith('image/')) {
+        throw SourceException('ReadManga: сервер вернул не изображение.');
+      }
+      const sampleLimit = 8192;
+      final bytes = <int>[];
+      await for (final chunk in response.stream
+          .timeout(const Duration(seconds: 15))) {
+        final remaining = sampleLimit - bytes.length;
+        if (remaining <= 0) break;
+        bytes.addAll(chunk.take(remaining));
+        if (bytes.length >= sampleLimit) break;
+      }
+      if (bytes.isEmpty) {
+        throw SourceException('ReadManga: изображение пустое.');
+      }
+      return bytes;
+    } on SourceException {
+      rethrow;
+    } catch (_) {
+      throw SourceException('ReadManga: не удалось проверить доступность изображения.');
+    }
+  }
+
+  static bool _samePrefix(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  Future<void> _checkImages(List<PageImage> images) async {
+    if (images.isEmpty) {
+      throw SourceException('ReadManga: главы нет в публичном доступе (удалена или закрыта).');
+    }
+    if (images.length >= 2 &&
+        images.take(3).map((image) => image.url).toSet().length == 1) {
+      throw SourceException('ReadManga: сервер отдаёт одинаковую заглушку вместо страниц.');
+    }
+    final client = _client ?? http.Client();
+    try {
+      final sampled = await Future.wait(
+          images.take(3).map((image) => _sampleImage(client, image)));
+      if (sampled.length >= 2 && sampled.every(
+          (bytes) => _samePrefix(sampled.first, bytes))) {
+        throw SourceException(
+            'ReadManga: вместо страниц возвращается одинаковая картинка — '
+            'возможно, манга удалена на этом зеркале.');
+      }
+    } finally {
+      if (_client == null) client.close();
+    }
+  }
+
   @override Future<List<PageImage>> pages(Chapter chapter) async {
-    return parseReaderPages(await _html(_absolute(chapter.id)));
+    final images = parseReaderPages(await _html(_absolute(chapter.id)));
+    await _checkImages(images);
+    return images;
   }
 }
