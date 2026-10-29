@@ -54,7 +54,7 @@ void main() {
       ..['completedChapterKeys'] = ['v0:c1', 'v0:c12']
       ..['resume'] = {'chapter': '12', 'page': 8}
       ..['status'] = 'completed';
-    (book['entries'] as Map)['senkuro']['futureEntry'] = {'value': true};
+    ((book['entries'] as Map)['senkuro'] as Map<String, dynamic>)['futureEntry'] = {'value': true};
     final envelope = jsonDecode(backup([book])) as Map<String, dynamic>;
     envelope['futureEnvelope'] = {'revision': 7};
     final parsed = transfer.parse(jsonEncode(envelope));
@@ -67,7 +67,7 @@ void main() {
 
   test('valid multi-source entries and exact trusted cover hosts', () {
     final book = row();
-    (book['entries'] as Map).addAll({
+    (book['entries'] as Map<String, dynamic>).addAll({
       'readmanga': {
         'source': 'readmanga', 'id': 'https://a.zazaza.me/example',
         'title': 'Another translated title', 'coverUrl': 'https://a.zazaza.me/cover.jpg',
