@@ -205,7 +205,8 @@ class ReadMangaSource implements MangaSource {
     final path = uri.path.toLowerCase();
     // The live public chapter page also references hashed placeholder
     // assets such as /static/deleted1-<digest>.png.
-    return RegExp(r'/(?:deleted1?|removed|censored)(?:-[a-f0-9]{8,})?\.png
+    return RegExp(r'/(?:deleted1?|removed|censored)(?:-[a-f0-9]{8,})?\.png$')
+        .hasMatch(path);
   }
 
   /// Read only a small prefix of the image response to recognize identical
