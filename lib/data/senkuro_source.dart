@@ -81,15 +81,17 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
           })
         ..body = jsonEncode({'operationName': operation, 'query': query, 'variables': variables});
       final response = await client.send(request).timeout(_timeout);
+      // Reject oversized/failed responses before opening a stream iterator.
+      // Cancelling an iterator which was never subscribed can await forever.
+      if (response.statusCode != 200) {
+        throw SourceException('Senkuro: HTTP ${response.statusCode}. Возможно, доступ ограничен.');
+      }
+      if ((response.contentLength ?? 0) > _maxResponseBytes) {
+        throw SourceException('Senkuro: ответ слишком большой.');
+      }
       final iterator = StreamIterator(response.stream);
       final bytes = <int>[];
       try {
-        if (response.statusCode != 200) {
-          throw SourceException('Senkuro: HTTP ${response.statusCode}. Возможно, доступ ограничен.');
-        }
-        if ((response.contentLength ?? 0) > _maxResponseBytes) {
-          throw SourceException('Senkuro: ответ слишком большой.');
-        }
         while (true) {
           final remaining = _timeout - elapsed.elapsed;
           if (remaining <= Duration.zero) throw TimeoutException('Senkuro');
