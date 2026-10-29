@@ -7,9 +7,11 @@ import '../core/source.dart';
 /// Public catalog adapter. No credentials, paywall circumvention or CAPTCHA bypass.
 /// GraphQL schema based on the Apache-2.0 mangayomi-ru-sources adapter.
 class SenkuroSource implements MangaSource {
-  SenkuroSource({http.Client? client}) : _client = client;
+  SenkuroSource({http.Client? client,
+      Duration timeout = const Duration(seconds: 18)})
+      : _client = client, _timeout = timeout;
   final http.Client? _client;
-  static const _timeout = Duration(seconds: 18);
+  final Duration _timeout;
   static const _maxResponseBytes = 4 * 1024 * 1024;
   static const _api = 'https://api.senkuro.com/graphql';
   @override String get key => 'senkuro';
