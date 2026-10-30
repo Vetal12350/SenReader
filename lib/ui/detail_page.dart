@@ -302,7 +302,7 @@ class _DetailPageState extends State<DetailPage> {
           const SizedBox(height: 24),
           SectionTitle('Главы', subtitle: '${detail!.chapters.length} · ${widget.repository.sources[selected]?.name}'),
           if (detail!.chapters.isEmpty)
-            const Text('Глав нет или они недоступны. Попробуй другой источник.', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            Text('Глав нет или они недоступны. Попробуй другой источник.', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
           Align(alignment: Alignment.centerRight, child: IconButton(
             tooltip: newestFirst ? 'Сначала старые' : 'Сначала новые',
             onPressed: () => setState(() => newestFirst = !newestFirst),
