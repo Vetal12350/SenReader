@@ -59,7 +59,7 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
             value: enabled,
             onChanged: loading ? null : _toggle,
           ),
-          const Text(
+          Text(
             'Проверки раз в 15 минут — по возможности Android: Doze и экономия батареи '
             'могут задерживать их. Первое сканирование сохраняет '
             'исходный список без уведомлений; мгновенная доставка не гарантируется.',
