@@ -4,6 +4,7 @@ import 'core/models.dart';
 import 'core/chapter_identity.dart';
 import 'data/catalog_repository.dart';
 import 'data/library_store.dart';
+import 'data/reading_suggestions.dart';
 import 'data/chapter_notification_service.dart';
 import 'data/chapter_background_scheduler.dart';
 import 'ui/detail_page.dart';
@@ -67,6 +68,8 @@ class _MainShellState extends State<MainShell> {
   String catalogSort = 'default';
   CatalogResult? result;
   bool loading = false;
+  int _suggestionRequest = 0;
+  final Map<String, Chapter> _newChapters = {};
   late final ChapterAlertController alerts = widget.alerts ?? ChapterAlertController();
   String query = '';
   Timer? debounce;
@@ -92,6 +95,42 @@ class _MainShellState extends State<MainShell> {
     final next = await widget.repository.getCatalog(query: thisQuery);
     if (!mounted || thisQuery != query) return;
     setState(() { result = next; loading = false; });
+    unawaited(_refreshNewChapters());
+  }
+
+  Future<void> _refreshNewChapters() async {
+    final request = ++_suggestionRequest;
+    final saved = widget.library.items
+      .where((item) => item.lastChapter.isNotEmpty &&
+        item.lastSource == item.preferredSource && item.status != 'dropped' &&
+        item.status != 'viewed').toList()
+      ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
+    final suggestions = <String, Chapter>{};
+    // Bound parallel calls and avoid bogus update indicators when offline.
+    for (var i = 0; i < saved.length && i < 12; i += 3) {
+      await Future.wait(saved.skip(i).take(3).map((item) async {
+        final entry = item.entries[item.preferredSource];
+        final source = widget.repository.sources[item.preferredSource];
+        if (entry == null || source == null) return;
+        try {
+          final detail = await source.detail(entry);
+          final fresh = nextAvailableChapter(item, detail.chapters);
+          final current = widget.library.get(item.toUnified());
+          if (fresh != null && current != null &&
+              current.preferredSource == item.preferredSource &&
+              current.lastChapterId == item.lastChapterId &&
+              current.lastSource == item.lastSource) {
+            suggestions[item.key] = fresh;
+          }
+        } catch (_) {
+          // Network failures never produce false-positive suggestions.
+        }
+      }));
+      if (!mounted || request != _suggestionRequest) return;
+    }
+    if (mounted && request == _suggestionRequest) {
+      setState(() { _newChapters..clear()..addAll(suggestions); });
+    }
   }
 
   void _onSearch(String value) {
@@ -166,10 +205,12 @@ class _MainShellState extends State<MainShell> {
     unawaited(widget.library.markViewed(book));
     Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage(
       book: book, repository: widget.repository, library: widget.library, alerts: alerts,
-    )));
+    ))).then((_) {
+      if (mounted) unawaited(_refreshNewChapters());
+    });
   }
 
-  Future<void> _resume(SavedBook saved) async {
+  Future<void> _resume(SavedBook saved, Chapter newChapter) async {
     await widget.library.load();
     final current = widget.library.get(saved.toUnified());
     if (current == null || !mounted) return;
@@ -185,8 +226,8 @@ class _MainShellState extends State<MainShell> {
       final detail = await source.detail(entry);
       Chapter? target;
       for (final chapter in detail.chapters) {
-        if ((saved.lastChapterId.isNotEmpty && chapter.id == saved.lastChapterId) ||
-            (saved.lastChapterId.isEmpty && chapter.name == saved.lastChapter)) {
+        if (chapter.id == newChapter.id &&
+            nextAvailableChapter(saved, detail.chapters)?.id == chapter.id) {
           target = chapter;
           break;
         }
@@ -195,10 +236,11 @@ class _MainShellState extends State<MainShell> {
       if (target == null) {
         _open(book);
       } else {
-        Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
+        await Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
           book: book, chapter: target!, sourceKey: saved.lastSource,
           repository: widget.repository, library: widget.library, chapters: detail.chapters,
         )));
+        if (mounted) unawaited(_refreshNewChapters());
       }
     } catch (_) {
       if (!mounted) return;
@@ -210,13 +252,15 @@ class _MainShellState extends State<MainShell> {
     animation: widget.library,
     builder: (context, _) {
       final saved = widget.library.items
-          .where((item) => item.lastChapter.isNotEmpty).toList()
+          .where((item) => _newChapters.containsKey(item.key) &&
+              item.lastSource == item.preferredSource &&
+              item.status != 'dropped').toList()
         ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
       if (saved.isEmpty) return const SizedBox.shrink();
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const SizedBox(height: 28),
         SectionTitle('Продолжить чтение',
-          subtitle: 'Твоя сохранённая глава и страница'),
+          subtitle: 'Есть новые непрочитанные главы'),
         SizedBox(height: 155, child: ListView.separated(
           scrollDirection: Axis.horizontal,
           itemCount: saved.take(12).length,
@@ -224,7 +268,7 @@ class _MainShellState extends State<MainShell> {
           itemBuilder: (context, index) {
             final item = saved[index];
             return SizedBox(width: 225, child: InkWell(
-              onTap: () => _resume(item),
+              onTap: () => _resume(item, _newChapters[item.key]!),
               borderRadius: BorderRadius.circular(14),
               child: Container(
                 padding: const EdgeInsets.all(10),
@@ -243,7 +287,7 @@ class _MainShellState extends State<MainShell> {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontWeight: FontWeight.w700))),
                       const SizedBox(height: 8),
-                      Flexible(child: Text(item.lastChapter,
+                      Flexible(child: Text('Новая: ${_newChapters[item.key]!.name}',
                         maxLines: 2, overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11))),
                       if (item.lastPageCount > 0) ...[

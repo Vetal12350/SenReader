@@ -1,0 +1,60 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:senreader/core/models.dart';
+import 'package:senreader/data/library_store.dart';
+import 'package:senreader/data/reading_suggestions.dart';
+
+void main() {
+  final entry = <String, MangaEntry>{
+    'readmanga': const MangaEntry(source: 'readmanga', id: '/test',
+      title: 'Title'),
+    'senkuro': const MangaEntry(source: 'senkuro', id: 'title',
+      title: 'Title'),
+  };
+  const chapters = [
+    Chapter(id: '127', name: 'Глава 127 (т. 2)'),
+    Chapter(id: '126', name: 'Глава 126 (т. 2)'),
+    Chapter(id: '125', name: 'Глава 125 (т. 2)'),
+  ];
+  SavedBook saved({String last = 'Глава 126 (т. 2)',
+    String lastSource = 'readmanga', String preferred = 'readmanga',
+    String status = 'reading', Set<String>? read}) =>
+      SavedBook(title: 'Title', entries: entry, lastChapter: last,
+        lastChapterId: 'last', lastSource: lastSource, preferredSource: preferred,
+        status: status, readChapterKeys: read);
+
+  test('current newest chapter never appears in continue-reading', () {
+    expect(nextAvailableChapter(
+      saved(last: 'Глава 127 (т. 2)'), chapters), isNull);
+  });
+  test('saves the position but only suggests genuinely newer chapters', () {
+    final record = saved();
+    record.lastPageCount = 108;
+    record.lastPageIndex = 107;
+    expect(nextAvailableChapter(record, chapters)?.id, '127');
+    expect(nextAvailableChapter(record,
+      chapters.where((c) => c.id != '127')), isNull);
+  });
+  test('does not suggest a chapter already marked read', () {
+    expect(nextAvailableChapter(saved(read: {'readmanga|v2:c127'}),
+      chapters), isNull);
+  });
+  test('no suggestions for alternate source, dropped or never opened', () {
+    expect(nextAvailableChapter(saved(preferred: 'senkuro'),
+      chapters), isNull);
+    expect(nextAvailableChapter(saved(status: 'dropped'),
+      chapters), isNull);
+    expect(nextAvailableChapter(saved(last: ''),
+      chapters), isNull);
+    expect(nextAvailableChapter(saved(last: 'Спецвыпуск'),
+      chapters), isNull);
+  });
+  test('decimal and volume sorting finds earliest later chapter', () {
+    final set = [
+      const Chapter(id: '3', name: 'Глава 1 (т. 3)'),
+      const Chapter(id: 'b', name: 'Глава 9.6 (т. 2)'),
+      const Chapter(id: 'a', name: 'Глава 9.51 (т. 2)'),
+    ];
+    expect(nextAvailableChapter(saved(last: 'Глава 9.5 (т. 2)'),
+      set)?.id, 'a');
+  });
+}
