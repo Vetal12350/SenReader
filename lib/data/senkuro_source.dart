@@ -22,6 +22,7 @@ class SenkuroSource implements MangaSource {
 query fetchMangas($first: Int = 30) {
   mangas(first: $first, orderBy: {field: POPULARITY_SCORE, direction: DESC}) {
     edges { node { id slug titles { lang content } originalName { lang content }
+      labels { titles { lang content } }
       cover { main: resize(width: 300, height: 420, format: WEBP) { url } } } }
   }
 }''';
@@ -206,7 +207,12 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
       if (sourceId.isNotEmpty) seenIds.add(sourceId);
       if (duplicate) return null;
       seenEntryIds.add(id);
-      return MangaEntry(source: key, id: id, title: title, coverUrl: _cover(n['cover']));
+      return MangaEntry(source: key, id: id, title: title,
+        coverUrl: _cover(n['cover']),
+        tags: _optionalList(n['labels']).whereType<Map>()
+            .map((label) => _title(label['titles'], null))
+            .where((tag) => tag.isNotEmpty)
+            .toSet().take(24).toList());
     }).whereType<MangaEntry>().toList();
   }
 
