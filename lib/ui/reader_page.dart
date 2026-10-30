@@ -5,6 +5,7 @@ import '../core/models.dart';
 import '../core/chapter_identity.dart';
 import '../data/catalog_repository.dart';
 import '../data/library_store.dart';
+import '../data/reading_completion.dart';
 
 /// Chapter page URLs are kept as lightweight metadata; the indexed list
 /// lazily builds image widgets, so scrolling does not retain all image widgets.
@@ -79,6 +80,12 @@ class _ReaderPageState extends State<ReaderPage> {
       if (mounted) {
         setState(() {
           _segments.add(_ChapterSegment(widget.chapter, pages));
+          // Restored progress proves earlier pages were already traversed.
+          // The last image must still load before this chapter auto-completes.
+          for (var i = 0; i < _resumePage && i < pages.length; i++) {
+            _loadedPageKeys.add(
+              _VisibleChapterPage(widget.chapter, i, pages.length).key);
+          }
           _pageCount = pages.length;
         });
       }
@@ -161,12 +168,17 @@ class _ReaderPageState extends State<ReaderPage> {
           : _atSeriesEnd && visible.any((item) =>
               item.index == _itemCount - 1) &&
             !visible.any((item) => item.index < endIndex);
-      if (passed && segment.pages.isNotEmpty &&
-          !_autoCompletedChapters.contains(segment.chapter.id) &&
-          List.generate(segment.pages.length,
-            (page) => _VisibleChapterPage(segment.chapter, page,
-              segment.pages.length).key)
-            .every(_loadedPageKeys.contains)) {
+      if (chapterFullyRead(
+          forwardScrolled: _hasForwardScrolled,
+          passedChapterBoundary: passed,
+          pageCount: segment.pages.length,
+          alreadyCompleted: _autoCompletedChapters.contains(segment.chapter.id),
+          loadedPages: [
+            for (var page = 0; page < segment.pages.length; page++)
+              if (_loadedPageKeys.contains(
+                _VisibleChapterPage(segment.chapter, page,
+                  segment.pages.length).key)) page,
+          ])) {
         _autoCompletedChapters.add(segment.chapter.id);
         final chapter = segment.chapter;
         _autoMarkChain = _autoMarkChain.then((_) async {
