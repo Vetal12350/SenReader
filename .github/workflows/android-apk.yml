@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+# Prevent an older main build from publishing over a newer QA APK.
+concurrency:
+  group: senreader-android-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -21,22 +26,55 @@ jobs:
         with:
           channel: stable
           cache: true
+      - name: Verify protected signing wrapper preparation
+        run: python3 scripts/test_prepare_android.py
       - name: Generate Android wrapper
         run: |
           flutter create --project-name senreader --org app.senreader --platforms android .
-          python3 scripts/prepare_android.py
           rm -f test/widget_test.dart
+      - name: Configure stable signing from GitHub Secrets (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          SIGNING_KEY: ${{ secrets.SENREADER_SIGNING_KEY_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SENREADER_SIGNING_STORE_PASSWORD }}
+          SIGNING_ALIAS: ${{ secrets.SENREADER_SIGNING_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SENREADER_SIGNING_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$SIGNING_KEY" && -n "$SIGNING_STORE_PASSWORD" && -n "$SIGNING_ALIAS" && -n "$SIGNING_KEY_PASSWORD" ]]; then
+            printf '%s' "$SIGNING_KEY" | base64 --decode > android/app/senreader-upload.jks
+            chmod 600 android/app/senreader-upload.jks
+            {
+              printf 'storeFile=senreader-upload.jks\n'
+              printf 'storePassword=%s\n' "$SIGNING_STORE_PASSWORD"
+              printf 'keyAlias=%s\n' "$SIGNING_ALIAS"
+              printf 'keyPassword=%s\n' "$SIGNING_KEY_PASSWORD"
+            } > android/key.properties
+            chmod 600 android/key.properties
+            echo 'SENREADER_STABLE_SIGNING=true' >> "$GITHUB_ENV"
+            echo 'Protected release signing enabled for main.'
+          else
+            echo 'Stable signing is not configured. Using an ephemeral debug APK.'
+          fi
+      - name: Prepare Android manifest and signing
+        run: python3 scripts/prepare_android.py
       - name: Install packages
         run: flutter pub get
       - name: Unit tests
         run: flutter test
       - name: Build debug APK
         run: flutter build apk --debug
+      - name: Build persistently signed release APK
+        if: github.event_name == 'push' && env.SENREADER_STABLE_SIGNING == 'true'
+        run: flutter build apk --release --build-number "$GITHUB_RUN_NUMBER"
       - name: Publish APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: SenReader-debug-APK
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          path: |
+            build/app/outputs/flutter-apk/app-debug.apk
+            build/app/outputs/flutter-apk/app-release.apk
           if-no-files-found: error
           retention-days: 7
 
@@ -63,6 +101,9 @@ jobs:
           set -euo pipefail
           test -s apk/app-debug.apk
           cp apk/app-debug.apk SenReader-latest-debug.apk
+          if [[ -s apk/app-release.apk ]]; then
+            cp apk/app-release.apk SenReader-latest.apk
+          fi
           if ! gh release view qa-latest >/dev/null 2>&1; then
             gh release create qa-latest --target "$GITHUB_SHA" \
               --title "SenReader Android QA (прямая загрузка)" \
@@ -70,4 +111,9 @@ jobs:
               --prerelease
           fi
           gh release upload qa-latest SenReader-latest-debug.apk --clobber
-          gh release edit qa-latest --notes "Проверенная сборка main, commit: ${GITHUB_SHA}. Устанавливайте поверх имеющейся версии только при совпадающей подписи. Не удаляйте старую версию без резервного копирования."
+          if [[ -s SenReader-latest.apk ]]; then
+            gh release upload qa-latest SenReader-latest.apk --clobber
+            gh release edit qa-latest --notes "Подписанная постоянным ключом release-сборка main, commit: ${GITHUB_SHA}. Прямая ссылка: SenReader-latest.apk. Первое обновление с ранее установленного debug APK всё равно требует миграции данных; не удаляйте приложение без проверенной резервной копии."
+          else
+            gh release edit qa-latest --notes "Проверенная debug-сборка main, commit: ${GITHUB_SHA}. Постоянный ключ пока не настроен. Не удаляйте установленную версию без резервной копии; эта debug-сборка может не обновить предыдущую."
+          fi

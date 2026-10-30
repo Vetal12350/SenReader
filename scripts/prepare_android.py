@@ -28,5 +28,30 @@ if 'isCoreLibraryDesugaringEnabled = true' not in build:
                           'compileOptions {\n        isCoreLibraryDesugaringEnabled = true', 1)
 if 'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:' not in build:
     build += '\n\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n'
+# Only a securely provided GitHub Actions secret may enable persistent
+# signing. Never commit a keystore or credentials to the repository.
+if Path('android/key.properties').exists():
+    if 'signingConfig = signingConfigs.getByName("debug")' not in build:
+        raise SystemExit('Expected Flutter Gradle signing block is missing')
+    # Kotlin DSL requires plugins {} before arbitrary top-level statements.
+    # Imports are legal before plugins, but val declarations are not.
+    build = 'import java.util.Properties\nimport java.io.FileInputStream\n\n' + build
+    snippet = """val senreaderSigning = Properties()
+val senreaderPropertiesFile = rootProject.file("key.properties")
+senreaderSigning.load(FileInputStream(senreaderPropertiesFile))
+
+android {
+    signingConfigs {
+        create("senreaderStable") {
+            keyAlias = senreaderSigning.getProperty("keyAlias")
+            keyPassword = senreaderSigning.getProperty("keyPassword")
+            storeFile = file(senreaderSigning.getProperty("storeFile"))
+            storePassword = senreaderSigning.getProperty("storePassword")
+        }
+    }
+"""
+    build = build.replace("android {", snippet, 1)
+    build = build.replace('signingConfig = signingConfigs.getByName("debug")',
+                          'signingConfig = signingConfigs.getByName("senreaderStable")', 1)
 gradle.write_text(build, encoding='utf-8')
 print('Android manifest and Gradle prepared for networking and notifications')
