@@ -139,23 +139,36 @@ void main() {
       chapters: source.chapters, library: library,
       repository: CatalogRepository(sources: {source.key: source})), 2));
     await tester.pumpAndSettle();
-    final appBar = tester.widget<AppBar>(find.byType(AppBar));
-    expect(appBar.actions, isNull);
-    final scaffold = tester.widget<Scaffold>(find.byType(Scaffold).first);
-    expect(scaffold.bottomNavigationBar, isNotNull);
-    expect(scaffold.extendBody, false);
+    // Both bars are hidden until a short tap in the center.
+    expect(find.byType(AppBar), findsNothing);
+    expect(find.byTooltip('Список глав'), findsNothing);
+    await tester.tapAt(const Offset(160, 350));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(AppBar, source.chapters[1].name), findsOneWidget);
+    expect(find.byTooltip('Список глав'), findsOneWidget);
     expect(find.byType(SafeArea), findsWidgets);
     await tester.tap(find.byTooltip('Список глав'));
     await tester.pumpAndSettle();
     expect(find.byType(ListTile), findsNWidgets(3));
     await tester.tap(find.widgetWithText(ListTile, source.chapters[0].name));
     await tester.pumpAndSettle();
+    expect(find.byType(AppBar), findsNothing);
+    await tester.tapAt(const Offset(160, 350));
+    await tester.pumpAndSettle();
     expect(find.widgetWithText(AppBar, source.chapters[0].name), findsOneWidget);
-    final next = tester.widget<IconButton>(find.widgetWithIcon(IconButton, Icons.skip_next_rounded));
+    final next = tester.widget<IconButton>(
+      find.widgetWithIcon(IconButton, Icons.skip_next_rounded));
     expect(next.onPressed, isNull);
     await tester.tap(find.byTooltip('Предыдущая глава'));
     await tester.pumpAndSettle();
+    expect(find.byType(AppBar), findsNothing);
+    await tester.tapAt(const Offset(160, 350));
+    await tester.pumpAndSettle();
     expect(find.widgetWithText(AppBar, source.chapters[1].name), findsOneWidget);
+    // A second center tap hides everything again.
+    await tester.tapAt(const Offset(160, 350));
+    await tester.pumpAndSettle();
+    expect(find.byType(AppBar), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -167,6 +180,9 @@ void main() {
     await tester.pumpWidget(scaledApp(ReaderPage(book: source.book,
       chapter: source.chapters[1], sourceKey: source.key, chapters: source.chapters,
       library: library, repository: CatalogRepository(sources: {source.key: source})), 1));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithIcon(IconButton, Icons.visibility_off_outlined), findsNothing);
+    await tester.tapAt(const Offset(400, 300));
     await tester.pumpAndSettle();
     await tester.tap(find.widgetWithIcon(IconButton, Icons.visibility_off_outlined));
     await tester.pumpAndSettle();
