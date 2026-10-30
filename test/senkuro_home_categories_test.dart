@@ -11,7 +11,7 @@ void main() {
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       requests.add(body);
       expect(body['operationName'], 'fetchMangas');
-      expect(body['query'], contains('type: $type'));
+      expect(body['query'], contains('type: \$type'));
       expect(body['query'], contains('orderBy:'));
       return http.Response(jsonEncode({'data': {'mangas': {'edges': [
         {'node': {
