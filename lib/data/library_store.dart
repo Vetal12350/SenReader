@@ -12,6 +12,7 @@ class SavedBook {
     this.lastPageIndex = 0, this.lastPageCount = 0, this.lastUpdatedAt = 0,
     Set<String>? readChapterKeys, Set<String>? seenChapterKeys,
     Set<String>? initializedSources,
+    this.favorite = false,
     String preferredSource = '',
     int readHistoryVersion = 2,
   })  : readChapterKeys = readChapterKeys ?? <String>{},
@@ -54,7 +55,8 @@ class SavedBook {
   String lastChapter;
   String lastSource;
   String preferredSource;
-  String status; // planned, reading, completed
+  String status; // viewed, planned, reading, completed, dropped
+  bool favorite;
   String lastChapterId;
   int lastPageIndex;
   int lastPageCount;
@@ -69,6 +71,7 @@ class SavedBook {
     'title': title,
     'entries': entries.map((k, v) => MapEntry(k, v.toJson())),
     'lastChapter': lastChapter, 'lastSource': lastSource, 'status': status,
+    'favorite': favorite,
     'preferredSource': preferredSource,
     'readHistoryVersion': 2,
     'lastChapterId': lastChapterId, 'lastPageIndex': lastPageIndex,
@@ -86,7 +89,8 @@ class SavedBook {
       lastSource: json['lastSource'] as String? ?? '',
       preferredSource: json['preferredSource'] as String? ?? '',
       readHistoryVersion: (json['readHistoryVersion'] as num?)?.toInt() ?? 1,
-      status: ['planned', 'reading', 'completed'].contains(json['status'])
+      favorite: json['favorite'] == true,
+      status: ['viewed', 'planned', 'reading', 'completed', 'dropped'].contains(json['status'])
           ? json['status'] as String
           : ((json['lastChapter'] as String? ?? '').isEmpty ? 'planned' : 'reading'),
       lastChapterId: json['lastChapterId'] as String? ?? '',
@@ -161,6 +165,30 @@ class LibraryStore extends ChangeNotifier {
     }
     await _save();
   }
+  /// Opening a new title records it separately without placing it in
+  /// 'В планах'. Never downgrade an explicit library status.
+  Future<void> markViewed(UnifiedManga book) async {
+    await _reload();
+    final key = normalizedTitle(book.title);
+    if (!_books.containsKey(key)) {
+      _books[key] = SavedBook(title: book.title, entries: {...book.entries},
+        status: 'viewed');
+    }
+    await _save();
+  }
+
+  /// 'Любимое' is independent of reading status (e.g. favorite + reading).
+  Future<void> setFavorite(UnifiedManga book, bool favorite,
+      {String preferredSource = ''}) async {
+    await _reload();
+    final key = normalizedTitle(book.title);
+    final item = _books.putIfAbsent(key,
+      () => SavedBook(title: book.title, entries: {...book.entries},
+        preferredSource: preferredSource, status: 'viewed'));
+    item.favorite = favorite;
+    await _save();
+  }
+
   Future<void> remove(UnifiedManga book) async {
     await _reload();
     _books.remove(normalizedTitle(book.title));
@@ -199,7 +227,7 @@ class LibraryStore extends ChangeNotifier {
     item.lastChapter = chapter.name;
     item.lastChapterId = chapter.id;
     item.lastSource = source;
-    if (item.status == 'planned') item.status = 'reading';
+    if (item.status == 'planned' || item.status == 'viewed') item.status = 'reading';
     item.lastPageCount = pageCount < 0 ? 0 : pageCount;
     item.lastPageIndex = pageIndex.clamp(0,
         item.lastPageCount > 0 ? item.lastPageCount - 1 : 0).toInt();
@@ -217,7 +245,7 @@ class LibraryStore extends ChangeNotifier {
     for (final entry in book.entries.entries) {
       item.entries.putIfAbsent(entry.key, () => entry.value);
     }
-    if (item.status == 'planned') item.status = 'reading';
+    if (item.status == 'planned' || item.status == 'viewed') item.status = 'reading';
     item.readChapterKeys.add(sourceChapterKey(chapter, source));
     for (final candidate in availableChapters) {
       final order = compareChapterChronology(candidate, chapter);
@@ -230,22 +258,49 @@ class LibraryStore extends ChangeNotifier {
   }
 
   Future<void> setStatus(UnifiedManga book, String status, {String preferredSource = ''}) async {
-    if (!['planned', 'reading', 'completed'].contains(status)) return;
+    if (!['viewed', 'planned', 'reading', 'completed', 'dropped'].contains(status)) return;
     await add(book, preferredSource: preferredSource);
     _books[normalizedTitle(book.title)]!.status = status;
     await _save();
   }
 
-  Future<void> unmarkRead(UnifiedManga book, Chapter chapter, String source) async {
+  /// Unreading chapter N clears N and every chronologically newer chapter
+  /// for that same source, never an older chapter or a different translation.
+  /// Unknown/special labels can only remove their exact key.
+  Future<void> unmarkRead(UnifiedManga book, Chapter chapter, String source,
+      {Iterable<Chapter> availableChapters = const []}) async {
     await _reload();
     final item = get(book);
     if (item == null || item.preferredSource != source) return;
-    item.readChapterKeys.remove(sourceChapterKey(chapter, source));
-    item.readChapterKeys.remove('$source|id:name:${chapter.name}');
-    // Remove the corresponding legacy alias so reload cannot resurrect it.
-    item.readChapterKeys.remove(canonicalChapterKey(chapter));
-    item.readChapterKeys.remove('$source:${chapter.id}');
-    // Preserve the last reading position, even when a completion is undone.
+    final affected = <Chapter>[chapter];
+    if (canonicalChapterKey(chapter) != null) {
+      for (final candidate in availableChapters) {
+        final order = compareChapterChronology(candidate, chapter);
+        if (order != null && order >= 0) affected.add(candidate);
+      }
+    }
+    for (final current in affected) {
+      item.readChapterKeys.remove(sourceChapterKey(current, source));
+      item.readChapterKeys.remove('$source|id:name:${current.name}');
+      item.readChapterKeys.remove(canonicalChapterKey(current));
+      item.readChapterKeys.remove('$source:${current.id}');
+    }
+    // Historical canonical completions can outlive the currently loaded
+    // chapter page. Clear newer scoped canonical keys too; never alter other
+    // sources and never infer ordering for unparseable specials.
+    final boundary = canonicalChapterKey(chapter);
+    if (boundary != null) {
+      item.readChapterKeys.removeWhere((key) {
+        final prefix = '$source|';
+        if (!key.startsWith(prefix + 'v')) return false;
+        final canonical = key.substring(prefix.length);
+        final parts = RegExp(r'^v([0-9]+(?:\.[0-9]+)?):c([0-9]+(?:\.[0-9]+)?)$').firstMatch(canonical);
+        if (parts == null) return false;
+        final parsed = Chapter(id: canonical,
+          name: 'Глава ${parts.group(2)} (т. ${parts.group(1)})');
+        return (compareChapterChronology(parsed, chapter) ?? -1) >= 0;
+      });
+    }
     await _save();
   }
 

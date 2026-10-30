@@ -35,6 +35,7 @@ class ChapterChecker {
     final warnings = <String>[];
     var checked = 0;
     for (final saved in List<SavedBook>.of(library.items)) {
+      if (saved.status == 'viewed' || saved.status == 'dropped') continue;
       checked++;
       final book = saved.toUnified();
       final selected = saved.preferredSource;

@@ -90,7 +90,7 @@ void main() {
     await tester.tap(find.text('Библиотека'));
     await tester.pumpAndSettle();
     expect(find.byType(MangaTile), findsOneWidget);
-    expect(find.byType(ChoiceChip), findsNWidgets(4));
+    expect(find.byType(ChoiceChip), findsNWidgets(7));
     expect(find.byType(ChapterNotificationsPanel), findsNothing);
     expect(find.text('Проверить новые главы'), findsNothing);
     await tester.tap(find.byTooltip('Настройки'));
