@@ -20,6 +20,15 @@ class _TitleSource implements MangaSource {
   @override Future<List<PageImage>> pages(Chapter chapter) async => const [];
 }
 
+class _SearchableTitleSource extends _TitleSource {
+  @override Future<MangaDetail> detail(MangaEntry record) async =>
+    MangaDetail(entry: record, chapters: const [
+      Chapter(id: '1', name: 'Глава 1 (т. 1)'),
+      Chapter(id: '2', name: 'Глава 2 (т. 1)'),
+      Chapter(id: '3', name: 'Глава 3 (т. 1)'),
+    ], description: 'Это краткое описание произведения.');
+}
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
@@ -46,4 +55,25 @@ void main() {
     expect(library.has(book), false);
     expect(tester.takeException(), isNull);
   });
+  testWidgets('Senkuro-style title has read button, source and searchable chapters',
+      (tester) async {
+    final source = _SearchableTitleSource();
+    final book = UnifiedManga(title: source.entry.title,
+      entries: {source.key: source.entry});
+    await tester.pumpWidget(MaterialApp(home: DetailPage(
+      book: book, library: LibraryStore(),
+      repository: CatalogRepository(sources: {source.key: source}),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('title-read-button')), findsOneWidget);
+    expect(find.byTooltip('Сменить источник'), findsOneWidget);
+    await tester.scrollUntilVisible(find.byKey(const Key('chapter-search')),
+      160, scrollable: find.byType(Scrollable).first);
+    await tester.enterText(find.byKey(const Key('chapter-search')), '3');
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(ListTile, 'Глава 3 (т. 1)'), findsOneWidget);
+    expect(find.widgetWithText(ListTile, 'Глава 1 (т. 1)'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
 }
