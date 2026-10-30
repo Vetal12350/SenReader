@@ -35,7 +35,7 @@ if Path('android/key.properties').exists():
         raise SystemExit('Expected Flutter Gradle signing block is missing')
     # Kotlin DSL requires plugins {} before arbitrary top-level statements.
     # Imports are legal before plugins, but val declarations are not.
-    build = 'import java.util.Properties\\nimport java.io.FileInputStream\\n\\n' + build
+    build = 'import java.util.Properties\nimport java.io.FileInputStream\n\n' + build
     snippet = """val senreaderSigning = Properties()
 val senreaderPropertiesFile = rootProject.file("key.properties")
 senreaderSigning.load(FileInputStream(senreaderPropertiesFile))
