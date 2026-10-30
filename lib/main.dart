@@ -162,6 +162,8 @@ class _MainShellState extends State<MainShell> {
   );
 
   void _open(UnifiedManga book) {
+    // Viewing is a separate category, not the "В планах" library status.
+    unawaited(widget.library.markViewed(book));
     Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage(
       book: book, repository: widget.repository, library: widget.library, alerts: alerts,
     )));
@@ -338,7 +340,8 @@ class _MainShellState extends State<MainShell> {
         builder: (context, _) {
           final saved = widget.library.items;
           final filtered = saved.where((item) =>
-            libraryFilter == 'all' || item.status == libraryFilter).toList();
+            libraryFilter == 'all' || (libraryFilter == 'favorite'
+              ? item.favorite : item.status == libraryFilter)).toList();
           return saved.isEmpty
             ? const EmptyView(icon: Icons.bookmark_border, text: 'Здесь появятся сохранённые тайтлы')
             : ListView(padding: const EdgeInsets.all(16), children: [
@@ -347,13 +350,15 @@ class _MainShellState extends State<MainShell> {
                   scrollDirection: Axis.horizontal,
                   child: Row(children: [
                     for (final option in const [
-                      ('all', 'Все'), ('reading', 'Читаю'),
-                      ('planned', 'В планах'), ('completed', 'Прочитано')
+                      ('all', 'Все'), ('viewed', 'Открыто'),
+                      ('reading', 'Читаю'), ('planned', 'В планах'),
+                      ('completed', 'Прочитано'), ('dropped', 'Заброшено'),
+                      ('favorite', 'Любимое')
                     ]) ...[
                       Padding(
                         padding: const EdgeInsets.only(right: 8),
                         child: ChoiceChip(
-                          label: Text('${option.$2} ${option.$1 == 'all' ? saved.length : saved.where((b) => b.status == option.$1).length}'),
+                          label: Text('${option.$2} ${option.$1 == 'all' ? saved.length : saved.where((b) => option.$1 == 'favorite' ? b.favorite : b.status == option.$1).length}'),
                           selected: libraryFilter == option.$1,
                           onSelected: (_) => setState(() => libraryFilter = option.$1),
                         ),
@@ -371,8 +376,11 @@ class _MainShellState extends State<MainShell> {
                     width: (constraints.maxWidth - 20) / 3,
                     child: MangaTile(
                       book: item.toUnified(),
-                      statusLabel: item.status == 'reading' ? 'Читаю' :
-                        item.status == 'completed' ? 'Прочитано' : 'В планах',
+                      statusLabel: item.favorite ? '♥ Любимое' :
+                        item.status == 'reading' ? 'Читаю' :
+                        item.status == 'completed' ? 'Прочитано' :
+                        item.status == 'dropped' ? 'Заброшено' :
+                        item.status == 'viewed' ? 'Открыто' : 'В планах',
                       onTap: () => _open(item.toUnified())),
                   )).toList(),
                 )),
