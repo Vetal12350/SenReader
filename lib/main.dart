@@ -64,6 +64,8 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int tab = 0;
   String libraryFilter = 'all';
+  String catalogSourceFilter = 'all';
+  String catalogSort = 'default';
   CatalogResult? result;
   bool loading = false;
   late final ChapterAlertController alerts = widget.alerts ?? ChapterAlertController();
@@ -98,6 +100,67 @@ class _MainShellState extends State<MainShell> {
     debounce?.cancel();
     debounce = Timer(const Duration(milliseconds: 450), _fetch);
   }
+
+  /// Local controls apply to the results returned by the available sources;
+  /// they are not a claim of server-wide filtered or chronological ranking.
+  List<UnifiedManga> _visibleCatalogBooks() {
+    final books = (result?.books ?? const <UnifiedManga>[])
+        .where((book) => catalogSourceFilter == 'all' ||
+            book.entries.containsKey(catalogSourceFilter))
+        .toList();
+    if (catalogSort == 'titleAsc') {
+      books.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+    } else if (catalogSort == 'titleDesc') {
+      books.sort((a, b) => b.title.toLowerCase().compareTo(a.title.toLowerCase()));
+    }
+    return books;
+  }
+
+  Widget _catalogControls() => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Wrap(spacing: 8, runSpacing: 6, children: [
+        PopupMenuButton<String>(
+          tooltip: 'Фильтр по источнику',
+          initialValue: catalogSourceFilter,
+          onSelected: (value) => setState(() => catalogSourceFilter = value),
+          itemBuilder: (context) => const [
+            PopupMenuItem(value: 'all', child: Text('Все источники')),
+            PopupMenuItem(value: 'senkuro', child: Text('Senkuro')),
+            PopupMenuItem(value: 'readmanga', child: Text('ReadManga')),
+            PopupMenuItem(value: 'remanga', child: Text('ReManga')),
+          ],
+          child: Chip(
+            avatar: const Icon(Icons.filter_list, size: 18),
+            label: Text(catalogSourceFilter == 'all' ? 'Все источники' :
+              catalogSourceFilter == 'senkuro' ? 'Senkuro' :
+              catalogSourceFilter == 'readmanga' ? 'ReadManga' : 'ReManga'),
+          ),
+        ),
+        PopupMenuButton<String>(
+          tooltip: 'Сортировка каталога',
+          initialValue: catalogSort,
+          onSelected: (value) => setState(() => catalogSort = value),
+          itemBuilder: (context) => const [
+            PopupMenuItem(value: 'default', child: Text('По умолчанию')),
+            PopupMenuItem(value: 'titleAsc', child: Text('Название А-Я')),
+            PopupMenuItem(value: 'titleDesc', child: Text('Название Я-А')),
+          ],
+          child: Chip(
+            avatar: const Icon(Icons.sort, size: 18),
+            label: Text(catalogSort == 'default' ? 'По умолчанию' :
+              catalogSort == 'titleAsc' ? 'Название А-Я' : 'Название Я-А'),
+          ),
+        ),
+      ]),
+      Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 12),
+        child: Text('Фильтры и сортировка действуют на загруженные результаты',
+          style: TextStyle(fontSize: 11,
+            color: Theme.of(context).colorScheme.onSurfaceVariant)),
+      ),
+    ],
+  );
 
   void _open(UnifiedManga book) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage(
@@ -254,6 +317,7 @@ class _MainShellState extends State<MainShell> {
   }
 
   @override Widget build(BuildContext context) {
+    final catalogBooks = tab == 1 ? _visibleCatalogBooks() : result?.books ?? <UnifiedManga>[];
     return Scaffold(
       appBar: AppBar(
         title: Row(children: [
@@ -373,6 +437,7 @@ class _MainShellState extends State<MainShell> {
                 ),
               ),
               const SizedBox(height: 18),
+              _catalogControls(),
             ],
             SectionTitle(tab == 0 ? 'Общий каталог' :
                   query.isEmpty ? 'Каталог' : 'Результаты поиска',
@@ -385,12 +450,13 @@ class _MainShellState extends State<MainShell> {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(w, style: const TextStyle(color: Color(0xFFFFBE80), fontSize: 12)),
               )),
-            if (!loading && result != null && result!.books.isEmpty)
-              const EmptyView(icon: Icons.search_off, text: 'Ничего не найдено или источники недоступны.'),
-            if (!loading && result != null && result!.books.isNotEmpty)
+            if (!loading && result != null && catalogBooks.isEmpty)
+              const EmptyView(icon: Icons.search_off,
+                text: 'По заданным фильтрам ничего не найдено.'),
+            if (!loading && result != null && catalogBooks.isNotEmpty)
               LayoutBuilder(builder: (context, box) => Wrap(
                 spacing: 10, runSpacing: 18,
-                children: result!.books.map((book) => SizedBox(
+                children: catalogBooks.map((book) => SizedBox(
                   width: (box.maxWidth - 20) / 3,
                   child: MangaTile(book: book, onTap: () => _open(book)),
                 )).toList(),
