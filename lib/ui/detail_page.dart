@@ -1,4 +1,3 @@
-import 'dart:ui';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../core/models.dart';
@@ -205,9 +204,9 @@ class _DetailPageState extends State<DetailPage> {
     builder: (context, _) {
       final saved = widget.library.get(book);
       Chapter? target;
-      if (detail != null && saved?.lastSource == selected) {
+      if (detail != null && saved != null && saved.lastSource == selected) {
         for (final chapter in detail!.chapters) {
-          if ((saved!.lastChapterId.isNotEmpty &&
+          if ((saved.lastChapterId.isNotEmpty &&
                 chapter.id == saved.lastChapterId) ||
               (saved.lastChapterId.isEmpty &&
                 chapter.name == saved.lastChapter)) {
