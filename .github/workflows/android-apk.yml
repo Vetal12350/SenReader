@@ -60,7 +60,7 @@ jobs:
         run: flutter build apk --debug
       - name: Build persistently signed release APK
         if: github.event_name == 'push' && env.SENREADER_STABLE_SIGNING == 'true'
-        run: flutter build apk --release
+        run: flutter build apk --release --build-number "$GITHUB_RUN_NUMBER"
       - name: Publish APK artifact
         uses: actions/upload-artifact@v4
         with:
