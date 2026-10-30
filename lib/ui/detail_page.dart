@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/models.dart';
 import '../data/catalog_repository.dart';
 import '../data/library_store.dart';
+import '../core/title_metadata.dart';
 import '../data/chapter_alert_controller.dart';
 import 'chapter_alert_offer.dart';
 import 'reader_page.dart';
@@ -191,13 +192,6 @@ class _DetailPageState extends State<DetailPage> {
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 24,
                     color: Colors.white, fontWeight: FontWeight.w800)),
-                if (detail?.alternativeNames.isNotEmpty == true) ...[
-                  const SizedBox(height: 8),
-                  Text(detail!.alternativeNames.take(3).join(' / '),
-                    maxLines: 3, textAlign: TextAlign.center,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70)),
-                ],
                 if (detail?.rating != null) ...[
                   const SizedBox(height: 11),
                   Wrap(alignment: WrapAlignment.center,
@@ -281,18 +275,36 @@ class _DetailPageState extends State<DetailPage> {
             onSelectionChanged: (value) => setState(() => showChapters = value.first),
           )),
           const SizedBox(height: 8),
-          if (!showChapters && detail!.genres.isNotEmpty)
-            Wrap(spacing: 6, runSpacing: 4, children: detail!.genres.map((g) => Chip(label: Text(g, style: const TextStyle(fontSize: 11)))).toList()),
-          if (!showChapters && detail!.alternativeNames.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text(detail!.alternativeNames.join(' / '),
-              maxLines: 3, overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
-          ],
-          if (!showChapters && detail!.description.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Text(detail!.description, maxLines: 7, overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, height: 1.45)),
+          if (!showChapters) ...[
+            if (detail!.description.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              const Text('Описание', style: TextStyle(fontSize: 18,
+                fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(detail!.description,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  height: 1.45)),
+            ],
+            if (distinctAlternativeNames(detail!.entry.title,
+                detail!.alternativeNames).isNotEmpty) ...[
+              const SizedBox(height: 18),
+              const Text('Альтернативные названия', style: TextStyle(
+                fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Text(distinctAlternativeNames(detail!.entry.title,
+                detail!.alternativeNames).join(' / '),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant)),
+            ],
+            if (detail!.genres.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              const Text('Жанры и теги', style: TextStyle(fontSize: 18,
+                fontWeight: FontWeight.bold)),
+              Wrap(spacing: 6, runSpacing: 4,
+                children: detail!.genres.toSet().map((g) => Chip(
+                  label: Text(g, style: const TextStyle(fontSize: 11)))).toList()),
+            ],
           ],
           if (showChapters) ...[
           const SizedBox(height: 24),
