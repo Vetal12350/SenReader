@@ -31,8 +31,10 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _loadingChapters = false;
   // Distraction-free by default; users reveal controls with a central tap.
   bool _controlsVisible = false;
-  void _onCenterTap(TapUpDetails details) {
-    final size = MediaQuery.sizeOf(context);
+  void _onCenterTap(TapUpDetails details, Size viewport) {
+    // The real reader viewport may differ from MediaQuery's logical size
+    // (tests, split-screen, inset/resized windows).
+    final size = viewport;
     final point = details.localPosition;
     if (point.dx < size.width * 0.22 || point.dx > size.width * 0.78 ||
         point.dy < size.height * 0.2 || point.dy > size.height * 0.8) {
@@ -197,9 +199,10 @@ class _ReaderPageState extends State<ReaderPage> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(children: [
-        Positioned.fill(child: GestureDetector(
+        Positioned.fill(child: LayoutBuilder(builder: (context, constraints) =>
+          GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onTapUp: _onCenterTap,
+          onTapUp: (details) => _onCenterTap(details, constraints.biggest),
           child: FutureBuilder<List<PageImage>>(
         future: future,
         builder: (context, snapshot) {
@@ -245,7 +248,7 @@ class _ReaderPageState extends State<ReaderPage> {
           );
         },
       ),
-        )),
+        ))),
         if (_controlsVisible)
           Positioned(top: 0, left: 0, right: 0,
             height: kToolbarHeight + MediaQuery.paddingOf(context).top,
