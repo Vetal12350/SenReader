@@ -13,7 +13,7 @@ def run_case(signed: bool):
         manifest = root / "android/app/src/main/AndroidManifest.xml"
         gradle = root / "android/app/build.gradle.kts"
         manifest.parent.mkdir(parents=True)
-        gradle.parent.mkdir(parents=True)
+        gradle.parent.mkdir(parents=True, exist_ok=True)
         manifest.write_text("<manifest><application /></manifest>", encoding="utf-8")
         gradle.write_text("""plugins {
     id("com.android.application")
