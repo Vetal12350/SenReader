@@ -197,12 +197,12 @@ class _ReaderPageState extends State<ReaderPage> {
           }
           if (snapshot.hasError) {
             return Center(child: Padding(padding: const EdgeInsets.all(24),
-              child: Text('Ошибка главы: ${snapshot.error}')));
+              child: Text('Ошибка главы: ${snapshot.error}', style: const TextStyle(color: Colors.white))));
           }
           final pages = snapshot.data ?? [];
           if (pages.isEmpty) {
             return const Center(child: Padding(padding: EdgeInsets.all(24),
-              child: Text('Нет доступных изображений. Возможно, глава удалена или доступ ограничен.')));
+              child: Text('Нет доступных изображений. Возможно, глава удалена или доступ ограничен.', style: TextStyle(color: Colors.white))));
           }
           final initialIndex = _resumePage.clamp(0, pages.length - 1).toInt();
           return ScrollablePositionedList.builder(

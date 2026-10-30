@@ -201,7 +201,7 @@ class _DetailPageState extends State<DetailPage> {
                 Text(detail?.entry.title ?? book.title,
                   textAlign: TextAlign.center,
                   style: const TextStyle(fontSize: 24,
-                    fontWeight: FontWeight.w800)),
+                    color: Colors.white, fontWeight: FontWeight.w800)),
                 if (detail?.alternativeNames.isNotEmpty == true) ...[
                   const SizedBox(height: 8),
                   Text(detail!.alternativeNames.take(3).join(' / '),
@@ -217,7 +217,7 @@ class _DetailPageState extends State<DetailPage> {
                       color: Color(0xFFFFD37E), size: 21),
                     const SizedBox(width: 4),
                     Text(detail!.rating!.toStringAsFixed(1) + ' / 10',
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
                     const SizedBox(width: 7),
                     Text(widget.repository.sources[selected]?.name ?? selected,
                       style: const TextStyle(color: Colors.white70)),
@@ -258,7 +258,7 @@ class _DetailPageState extends State<DetailPage> {
               ),
               const SizedBox(width: 8),
               Text(saved == null ? 'Нажми, чтобы добавить в библиотеку' : 'В библиотеке',
-                style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11)),
             ]);
           },
         ),
@@ -291,18 +291,18 @@ class _DetailPageState extends State<DetailPage> {
             const SizedBox(height: 10),
             Text(detail!.alternativeNames.join(' / '),
               maxLines: 3, overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white60)),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
           ],
           if (!showChapters && detail!.description.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(detail!.description, maxLines: 7, overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white70, height: 1.45)),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, height: 1.45)),
           ],
           if (showChapters) ...[
           const SizedBox(height: 24),
           SectionTitle('Главы', subtitle: '${detail!.chapters.length} · ${widget.repository.sources[selected]?.name}'),
           if (detail!.chapters.isEmpty)
-            const Text('Глав нет или они недоступны. Попробуй другой источник.', style: TextStyle(color: Colors.white60)),
+            Text('Глав нет или они недоступны. Попробуй другой источник.', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
           Align(alignment: Alignment.centerRight, child: IconButton(
             tooltip: newestFirst ? 'Сначала старые' : 'Сначала новые',
             onPressed: () => setState(() => newestFirst = !newestFirst),
@@ -344,7 +344,7 @@ class _DetailPageState extends State<DetailPage> {
                       },
                     ),
                     title: Text(chapter.name,
-                      style: TextStyle(color: read ? Colors.white60 : null)),
+                      style: TextStyle(color: read ? Theme.of(context).colorScheme.onSurfaceVariant : null)),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => _openChapter(chapter),
                   );

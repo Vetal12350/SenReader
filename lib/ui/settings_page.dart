@@ -5,13 +5,15 @@ import '../data/chapter_checker.dart';
 import '../data/library_store.dart';
 import 'chapter_notifications_panel.dart';
 import 'reader_page.dart';
+import '../data/theme_controller.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.repository, required this.library,
-    required this.alerts});
+    required this.alerts, this.themes});
   final CatalogRepository repository;
   final LibraryStore library;
   final ChapterAlertController alerts;
+  final ThemeController? themes;
   @override State<SettingsPage> createState() => _SettingsPageState();
 }
 
@@ -60,6 +62,32 @@ class _SettingsPageState extends State<SettingsPage> {
   @override Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Настройки')),
     body: ListView(padding: const EdgeInsets.all(16), children: [
+      const Text('Оформление', style: TextStyle(
+        fontSize: 20, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 10),
+      Builder(builder: (context) {
+        final controller = widget.themes;
+        if (controller == null) return const SizedBox.shrink();
+        return AnimatedBuilder(animation: controller, builder: (context, _) =>
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            for (final option in const [
+              (ThemeMode.dark, 'Тёмная'),
+              (ThemeMode.light, 'Светлая'),
+              (ThemeMode.system, 'Системная'),
+            ])
+              ChoiceChip(
+                key: ValueKey('theme-${option.$1.name}'),
+                label: Text(option.$2),
+                selected: controller.mode == option.$1,
+                onSelected: (_) => controller.setMode(option.$1),
+              ),
+          ]),
+        );
+      }),
+      const SizedBox(height: 24),
+      const Text('Уведомления', style: TextStyle(
+        fontSize: 20, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 10),
       ChapterNotificationsPanel(alerts: widget.alerts),
       const SizedBox(height: 12),
       FilledButton.icon(onPressed: checking ? null : _check,

@@ -10,9 +10,10 @@ class CoverImage extends StatelessWidget {
 
   @override Widget build(BuildContext context) {
     final fallback = Container(width: width, height: height,
-      color: const Color(0xFF33313B),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
       alignment: Alignment.center,
-      child: const Icon(Icons.menu_book_rounded, color: Colors.white38, size: 30));
+      child: Icon(Icons.menu_book_rounded,
+        color: Theme.of(context).colorScheme.onSurfaceVariant, size: 30));
     if (!url.startsWith('https://')) return fallback;
     return Image.network(url, width: width, height: height, fit: BoxFit.cover,
       headers: headers, errorBuilder: (context, error, stack) => fallback);
@@ -71,7 +72,7 @@ class MangaTile extends StatelessWidget {
                 book.primary.source == 'senkuro' ? 'Senkuro' :
                 book.primary.source == 'remanga' ? 'ReManga' : 'ReadManga',
                 maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700)),
+                style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: Colors.white)),
             )),
           ]),
         )),
@@ -92,7 +93,7 @@ class SectionTitle extends StatelessWidget {
     padding: const EdgeInsets.only(bottom: 14), child: Column(
       crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-        if (subtitle.isNotEmpty) Text(subtitle, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+        if (subtitle.isNotEmpty) Text(subtitle, style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
       ]),
   );
 }
@@ -104,9 +105,10 @@ class EmptyView extends StatelessWidget {
   @override Widget build(BuildContext context) => Center(child: Padding(
     padding: const EdgeInsets.all(36),
     child: Column(mainAxisSize: MainAxisSize.min, children: [
-      Icon(icon, size: 46, color: Colors.white30),
+      Icon(icon, size: 46, color: Theme.of(context).colorScheme.onSurfaceVariant),
       const SizedBox(height: 12),
-      Text(text, textAlign: TextAlign.center, style: const TextStyle(color: Colors.white60)),
+      Text(text, textAlign: TextAlign.center,
+        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
     ]),
   ));
 }
