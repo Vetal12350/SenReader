@@ -270,23 +270,6 @@ class _DetailPageState extends State<DetailPage> {
           Chip(label: Text(widget.repository.sources[selected]?.name ?? selected)),
         ]),
         _readingAction(),
-        if (detail != null)
-          Card(
-            margin: const EdgeInsets.only(top: 12, bottom: 12),
-            child: Padding(padding: const EdgeInsets.all(13),
-              child: Row(children: [
-                Expanded(child: Column(children: [
-                  const Icon(Icons.library_books_outlined),
-                  Text('${detail!.chapters.length} глав',
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
-                ])),
-                Expanded(child: Column(children: [
-                  const Icon(Icons.menu_book_outlined),
-                  Text(widget.repository.sources[selected]?.name ?? selected,
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-                ])),
-              ])),
-          ),
         const SizedBox(height: 14),
         AnimatedBuilder(
           animation: widget.library,
@@ -342,6 +325,23 @@ class _DetailPageState extends State<DetailPage> {
             ]);
           },
         ),
+        if (detail != null)
+          Card(
+            margin: const EdgeInsets.only(top: 12, bottom: 12),
+            child: Padding(padding: const EdgeInsets.all(13),
+              child: Row(children: [
+                Expanded(child: Column(children: [
+                  const Icon(Icons.library_books_outlined),
+                  Text('${detail!.chapters.length} глав',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                ])),
+                Expanded(child: Column(children: [
+                  const Icon(Icons.menu_book_outlined),
+                  Text(widget.repository.sources[selected]?.name ?? selected,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                ])),
+              ])),
+          ),
         const SizedBox(height: 18),
         // A failed alternative source is not an error when another source works.
         if (!loading && detail == null)
