@@ -26,6 +26,37 @@ query fetchMangas($first: Int = 30) {
       cover { main: resize(width: 300, height: 420, format: WEBP) { url } } } }
   }
 }''';
+  // Server-backed categories, following Senkuro's documented public browse
+  // filters. Keep this separate from the existing stable popularity query.
+  static const _homeQuery = r'''
+query fetchMangas($first: Int = 18, $type: MangaTypeFilter,
+    $orderField: MangaOrderField = POPULARITY_SCORE) {
+  mangas(first: $first, type: $type,
+    orderBy: {field: $orderField, direction: DESC}) {
+    edges { node { id slug type titles { lang content }
+      originalName { lang content } labels { titles { lang content } }
+      cover { main: resize(width: 300, height: 420, format: WEBP) { url } } } }
+  }
+}''';
+
+  /// Public, explicitly ordered Senkuro manga browse categories.
+  /// Unknown values are rejected rather than sent to a remote API.
+  Future<List<MangaEntry>> browseHome({
+      String? type, String orderField = 'POPULARITY_SCORE'}) async {
+    if (type != null && !const {'MANGA', 'MANHWA', 'MANHUA'}.contains(type)) {
+      throw ArgumentError.value(type, 'type', 'Unsupported Senkuro type');
+    }
+    if (!const {'POPULARITY_SCORE', 'LAST_CHAPTER_AT', 'CREATED_AT'}
+        .contains(orderField)) {
+      throw ArgumentError.value(orderField, 'orderField', 'Unsupported order');
+    }
+    final data = await _gql('fetchMangas', _homeQuery, {
+      'first': 18, 'type': type == null ? null : {'include': [type]},
+      'orderField': orderField,
+    });
+    return _parseNodes(_edges(data['mangas']));
+  }
+
   static const _searchQuery = r'''
 query search($query: String!, $first: Int = 30) {
   search(query: $query, type: MANGA, first: $first) {
