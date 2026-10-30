@@ -377,11 +377,32 @@ class _ReaderPageState extends State<ReaderPage> {
               if (heading != null) {
                 return Container(
                   key: ValueKey('chapter-boundary-${heading.id}'),
-                  alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 22),
-                  child: Text(heading.name, textAlign: TextAlign.center,
-                    style: const TextStyle(color: Colors.white,
-                      fontWeight: FontWeight.w700, fontSize: 18)),
+                  margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 22),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18, vertical: 24),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF362016),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFFF893F),
+                      width: 1.5),
+                  ),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.auto_stories_rounded,
+                      color: Color(0xFFFFAC78), size: 30),
+                    const SizedBox(height: 12),
+                    const Text('СЛЕДУЮЩАЯ ГЛАВА',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Color(0xFFFFAC78),
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.5, fontSize: 12)),
+                    const SizedBox(height: 8),
+                    Text(heading.name, textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white,
+                        fontWeight: FontWeight.w700, fontSize: 21)),
+                    const SizedBox(height: 10),
+                    const Icon(Icons.keyboard_double_arrow_down_rounded,
+                      color: Color(0xFFFFAC78), size: 28),
+                  ]),
                 );
               }
               final item = _pageAt(index);
