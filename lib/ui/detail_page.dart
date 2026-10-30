@@ -2,6 +2,7 @@ import 'dart:ui';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../core/models.dart';
+import '../core/chapter_identity.dart';
 import '../data/catalog_repository.dart';
 import '../data/library_store.dart';
 import '../core/title_metadata.dart';
@@ -28,6 +29,8 @@ class _DetailPageState extends State<DetailPage> {
   bool loading = true;
   String? error;
   bool showChapters = true;
+  bool _descriptionExpanded = false;
+  String _chapterQuery = '';
   bool newestFirst = true;
   final Set<String> _attempted = {};
   final List<String> _warnings = [];
@@ -62,7 +65,7 @@ class _DetailPageState extends State<DetailPage> {
     final request = ++_request;
     final sourceKey = selected;
     _attempted.add(sourceKey);
-    setState(() { loading = true; error = null; detail = null; _similarFuture = null; });
+    setState(() { loading = true; error = null; detail = null; _similarFuture = null; _chapterQuery = ''; });
     try {
       final source = widget.repository.sources[sourceKey];
       if (source == null) throw StateError('Источник $sourceKey недоступен');
@@ -188,43 +191,57 @@ class _DetailPageState extends State<DetailPage> {
     )));
   }
 
-  Widget _continueAction() => AnimatedBuilder(
+  Chapter? _startChapter() {
+    final chapters = detail?.chapters ?? const <Chapter>[];
+    if (chapters.isEmpty) return null;
+    final chronological = chapters.where(
+      (chapter) => canonicalChapterKey(chapter) != null).toList()
+      ..sort((a, b) => compareChapterChronology(a, b)!);
+    return chronological.isNotEmpty ? chronological.first : chapters.last;
+  }
+
+  Widget _readingAction() => AnimatedBuilder(
     animation: widget.library,
     builder: (context, _) {
-      final previous = widget.library.get(book);
-      if (previous == null || previous.lastSource != selected ||
-          previous.lastChapter.isEmpty || detail == null) {
-        return const SizedBox.shrink();
-      }
-      Chapter? match;
-      for (final chapter in detail!.chapters) {
-        if (previous.lastChapterId.isNotEmpty
-            ? chapter.id == previous.lastChapterId
-            : chapter.name == previous.lastChapter) {
-          match = chapter;
-          break;
+      final saved = widget.library.get(book);
+      Chapter? target;
+      if (detail != null && saved?.lastSource == selected) {
+        for (final chapter in detail!.chapters) {
+          if ((saved!.lastChapterId.isNotEmpty &&
+                chapter.id == saved.lastChapterId) ||
+              (saved.lastChapterId.isEmpty &&
+                chapter.name == saved.lastChapter)) {
+            target = chapter;
+            break;
+          }
         }
       }
-      if (match == null) return const SizedBox.shrink();
-      final target = match;
+      target ??= _startChapter();
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: SizedBox(width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: () => _openChapter(target),
-            icon: const Icon(Icons.play_arrow_rounded),
-            label: Text('Продолжить: ' + target.name,
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-          ),
-        ),
+        padding: const EdgeInsets.only(top: 14, bottom: 8),
+        child: SizedBox(width: double.infinity, child: FilledButton.icon(
+          key: const Key('title-read-button'),
+          onPressed: target == null ? null : () => _openChapter(target!),
+          icon: const Icon(Icons.menu_book_rounded),
+          label: Text(saved?.lastChapter.isNotEmpty == true
+            ? 'Продолжить чтение' : 'Читать'),
+        )),
       );
     },
   );
 
+  static String _creditRole(String role) => switch (role.toUpperCase()) {
+    'AUTHOR' || 'WRITER' || 'STORY' => 'Сюжет',
+    'ARTIST' || 'ILLUSTRATOR' || 'ART' => 'Иллюстрации',
+    _ => role,
+  };
+
   @override Widget build(BuildContext context) {
+    final chapterResults = (detail?.chapters ?? const <Chapter>[])
+        .where((chapter) => chapter.name.toLowerCase().contains(
+          _chapterQuery.toLowerCase())).toList();
     return Scaffold(
-      appBar: AppBar(title: const Text('Произведение', maxLines: 1,
-        overflow: TextOverflow.ellipsis), actions: [
+      appBar: AppBar(title: const Text(''), actions: [
         PopupMenuButton<String>(
           tooltip: 'Сменить источник', icon: const Icon(Icons.source_outlined),
           initialValue: selected, onSelected: _select,
@@ -234,43 +251,43 @@ class _DetailPageState extends State<DetailPage> {
         ),
       ]),
       body: ListView(padding: const EdgeInsets.all(16), children: [
-        ClipRRect(borderRadius: BorderRadius.circular(16),
-          child: Stack(children: [
-            Positioned.fill(child: ImageFiltered(
-              imageFilter: ImageFilter.blur(sigmaX: 26, sigmaY: 26),
-              child: CoverImage(detail?.entry.coverUrl ?? book.coverUrl,
-                width: double.infinity, height: 360))),
-            Container(width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(14, 20, 14, 20),
-              decoration: const BoxDecoration(gradient: LinearGradient(
-                begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                colors: [Color(0x9917131B), Color(0xE519131E)])),
-              child: Column(children: [
-                ClipRRect(borderRadius: BorderRadius.circular(12),
-                  child: CoverImage(detail?.entry.coverUrl ?? book.coverUrl,
-                    width: 148, height: 204)),
-                const SizedBox(height: 16),
-                Text(detail?.entry.title ?? book.title,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 24,
-                    color: Colors.white, fontWeight: FontWeight.w800)),
-                if (detail?.rating != null) ...[
-                  const SizedBox(height: 11),
-                  Wrap(alignment: WrapAlignment.center,
-                    crossAxisAlignment: WrapCrossAlignment.center, children: [
-                    const Icon(Icons.star_rounded,
-                      color: Color(0xFFFFD37E), size: 21),
-                    const SizedBox(width: 4),
-                    Text(detail!.rating!.toStringAsFixed(1) + ' / 10',
-                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white)),
-                    const SizedBox(width: 7),
-                    Text(widget.repository.sources[selected]?.name ?? selected,
-                      style: const TextStyle(color: Colors.white70)),
-                  ]),
-                ],
-              ]),
-            ),
-          ])),
+        const SizedBox(height: 10),
+        Center(child: ClipRRect(borderRadius: BorderRadius.circular(16),
+          child: CoverImage(detail?.entry.coverUrl ?? book.coverUrl,
+            width: 192, height: 258))),
+        const SizedBox(height: 18),
+        Text(detail?.entry.title ?? book.title,
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 12),
+        Wrap(alignment: WrapAlignment.center,
+          spacing: 10, runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center, children: [
+          if (detail?.rating != null) ...[
+            const Icon(Icons.star_rounded, color: Color(0xFFFFA04E), size: 21),
+            Text('${detail!.rating!.toStringAsFixed(1)} / 10',
+              style: const TextStyle(fontWeight: FontWeight.w700)),
+          ],
+          Chip(label: Text(widget.repository.sources[selected]?.name ?? selected)),
+        ]),
+        _readingAction(),
+        if (detail != null)
+          Card(
+            margin: const EdgeInsets.only(top: 12, bottom: 12),
+            child: Padding(padding: const EdgeInsets.all(13),
+              child: Row(children: [
+                Expanded(child: Column(children: [
+                  const Icon(Icons.library_books_outlined),
+                  Text('${detail!.chapters.length} глав',
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                ])),
+                Expanded(child: Column(children: [
+                  const Icon(Icons.menu_book_outlined),
+                  Text(widget.repository.sources[selected]?.name ?? selected,
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                ])),
+              ])),
+          ),
         const SizedBox(height: 14),
         AnimatedBuilder(
           animation: widget.library,
@@ -326,7 +343,6 @@ class _DetailPageState extends State<DetailPage> {
             ]);
           },
         ),
-        _continueAction(),
         const SizedBox(height: 18),
         // A failed alternative source is not an error when another source works.
         if (!loading && detail == null)
@@ -342,7 +358,7 @@ class _DetailPageState extends State<DetailPage> {
           SizedBox(width: double.infinity, child: SegmentedButton<bool>(
             showSelectedIcon: false,
             segments: const [
-              ButtonSegment(value: false, label: Text('Информация')),
+              ButtonSegment(value: false, label: Text('О тайтле')),
               ButtonSegment(value: true, label: Text('Главы')),
             ],
             selected: {showChapters},
@@ -350,15 +366,25 @@ class _DetailPageState extends State<DetailPage> {
           )),
           const SizedBox(height: 8),
           if (!showChapters) ...[
+            if (detail!.genres.isNotEmpty) ...[
+              const SizedBox(height: 16),
+              Wrap(spacing: 6, runSpacing: 4,
+                children: detail!.genres.toSet().map((tag) =>
+                  Chip(label: Text(tag, style: const TextStyle(fontSize: 11)))).toList()),
+            ],
             if (detail!.description.isNotEmpty) ...[
-              const SizedBox(height: 14),
-              const Text('Описание', style: TextStyle(fontSize: 18,
-                fontWeight: FontWeight.bold)),
-              const SizedBox(height: 8),
+              const SizedBox(height: 18),
               Text(detail!.description,
+                maxLines: _descriptionExpanded ? null : 5,
+                overflow: _descriptionExpanded ? null : TextOverflow.ellipsis,
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                   height: 1.45)),
+              if (detail!.description.length > 240)
+                TextButton(
+                  onPressed: () => setState(() =>
+                    _descriptionExpanded = !_descriptionExpanded),
+                  child: Text(_descriptionExpanded ? 'Свернуть' : 'Раскрыть полностью')),
             ],
             if (distinctAlternativeNames(detail!.entry.title,
                 detail!.alternativeNames).isNotEmpty) ...[
@@ -371,18 +397,10 @@ class _DetailPageState extends State<DetailPage> {
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurfaceVariant)),
             ],
-            if (detail!.genres.isNotEmpty) ...[
-              const SizedBox(height: 18),
-              const Text('Жанры и теги', style: TextStyle(fontSize: 18,
-                fontWeight: FontWeight.bold)),
-              Wrap(spacing: 6, runSpacing: 4,
-                children: detail!.genres.toSet().map((g) => Chip(
-                  label: Text(g, style: const TextStyle(fontSize: 11)))).toList()),
-            ],
             _similarSection(detail!),
             if (detail!.creators.isNotEmpty) ...[
               const SizedBox(height: 18),
-              const Text('Создатели', style: TextStyle(fontSize: 18,
+              const Text('Персонал', style: TextStyle(fontSize: 18,
                 fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               for (final creator in detail!.creators)
@@ -397,7 +415,7 @@ class _DetailPageState extends State<DetailPage> {
                           Text(creator.name,
                             style: const TextStyle(fontWeight: FontWeight.w600)),
                           if (creator.roles.isNotEmpty)
-                            Text(creator.roles.join(', '),
+                            Text(creator.roles.map(_creditRole).join(', '),
                               style: TextStyle(fontSize: 12,
                                 color: Theme.of(context).colorScheme.onSurfaceVariant)),
                         ],
@@ -408,6 +426,14 @@ class _DetailPageState extends State<DetailPage> {
           if (showChapters) ...[
           const SizedBox(height: 24),
           SectionTitle('Главы', subtitle: '${detail!.chapters.length} · ${widget.repository.sources[selected]?.name}'),
+          const SizedBox(height: 12),
+          TextField(
+            key: const Key('chapter-search'),
+            onChanged: (value) => setState(() => _chapterQuery = value),
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              hintText: 'Номер или название главы'),
+          ),
           if (detail!.chapters.isEmpty)
             Text('Глав нет или они недоступны. Попробуй другой источник.', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
           Align(alignment: Alignment.centerRight, child: IconButton(
@@ -415,20 +441,20 @@ class _DetailPageState extends State<DetailPage> {
             onPressed: () => setState(() => newestFirst = !newestFirst),
             icon: const Icon(Icons.swap_vert_rounded),
           )),
-          for (var index = 0; index < detail!.chapters.length; index++) ...[
+          for (var index = 0; index < chapterResults.length; index++) ...[
             if (index == 0 || chapterVolume(
-                  detail!.chapters[newestFirst ? index : detail!.chapters.length - 1 - index])
-                != chapterVolume(detail!.chapters[
-                  newestFirst ? index - 1 : detail!.chapters.length - index]))
+                  chapterResults[newestFirst ? index : chapterResults.length - 1 - index])
+                != chapterVolume(chapterResults[
+                  newestFirst ? index - 1 : chapterResults.length - index]))
               Align(alignment: Alignment.centerLeft, child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 child: Text(chapterVolume(
-                  detail!.chapters[newestFirst ? index : detail!.chapters.length - 1 - index]),
+                  chapterResults[newestFirst ? index : chapterResults.length - 1 - index]),
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               )),
             Builder(builder: (context) {
-              final chapter = detail!.chapters[
-                newestFirst ? index : detail!.chapters.length - 1 - index];
+              final chapter = chapterResults[
+                newestFirst ? index : chapterResults.length - 1 - index];
               return AnimatedBuilder(
                 animation: widget.library,
                 builder: (context, _) {
