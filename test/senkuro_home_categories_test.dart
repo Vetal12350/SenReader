@@ -10,9 +10,8 @@ void main() {
     final source = SenkuroSource(client: MockClient((request) async {
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       requests.add(body);
-      expect(body['operationName'], 'fetchMangas');
-      expect(body['query'], contains('type: \$type'));
-      expect(body['query'], contains('orderBy:'));
+      // Assertions after the mock request preserve a useful failure
+      // message instead of being masked as a generic network exception.
       return http.Response(jsonEncode({'data': {'mangas': {'edges': [
         {'node': {
           'id': 'id-1', 'slug': 'series', 'type': 'MANHWA',
@@ -20,9 +19,12 @@ void main() {
           'labels': [{'titles': [{'lang': 'RU', 'content': 'Фэнтези'}]}],
           'cover': {'main': {'url': 'https://cdn.example/cover.webp'}},
         }}
-      ]}}}), 200);
+      ]}}}), 200, headers: {'content-type': 'application/json'});
     }));
     final manhwa = await source.browseHome(type: 'MANHWA');
+    expect(requests.first['operationName'], 'fetchMangas');
+    expect(requests.first['query'], contains('type: \\$type'));
+    expect(requests.first['query'], contains('orderBy:'));
     expect(manhwa.single.title, 'Серия');
     expect(manhwa.single.tags, ['Фэнтези']);
     expect(requests.single['variables']['type'], {'include': ['MANHWA']});
