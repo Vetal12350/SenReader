@@ -612,10 +612,10 @@ class _MainShellState extends State<MainShell> {
               const SizedBox(height: 18),
               _catalogControls(),
             ],
-            SectionTitle(tab == 0 ? 'Общий каталог' :
-                  query.isEmpty ? 'Каталог' : 'Результаты поиска',
+            if (tab == 1) ...[
+            SectionTitle(query.isEmpty ? 'Каталог' : 'Результаты поиска',
               subtitle: 'Senkuro · ReadManga · ReManga'),
-            if (loading && tab != 0)
+            if (loading)
               const Padding(padding: EdgeInsets.all(32),
                 child: Center(child: CircularProgressIndicator())),
             if (activeResult != null && activeResult.warnings.isNotEmpty)
@@ -623,10 +623,10 @@ class _MainShellState extends State<MainShell> {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(w, style: const TextStyle(color: Color(0xFFFFBE80), fontSize: 12)),
               )),
-            if ((tab == 0 || !loading) && activeResult != null && catalogBooks.isEmpty)
+            if (!loading && activeResult != null && catalogBooks.isEmpty)
               const EmptyView(icon: Icons.search_off,
                 text: 'По заданным фильтрам ничего не найдено.'),
-            if ((tab == 0 || !loading) && activeResult != null && catalogBooks.isNotEmpty)
+            if (!loading && activeResult != null && catalogBooks.isNotEmpty)
               LayoutBuilder(builder: (context, box) => Wrap(
                 spacing: 10, runSpacing: 18,
                 children: catalogBooks.map((book) => SizedBox(
@@ -634,6 +634,7 @@ class _MainShellState extends State<MainShell> {
                   child: MangaTile(book: book, onTap: () => _open(book)),
                 )).toList(),
               )),
+            ],
           ],
         ),
       ),

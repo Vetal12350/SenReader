@@ -132,4 +132,24 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('home does not show mixed-source general catalog tiles', (tester) async {
+    final sources = <String, MangaSource>{
+      'senkuro': _TestCatalogSource('senkuro', 'Сенкуро тайтл'),
+      'readmanga': _TestCatalogSource('readmanga', 'Другой источник'),
+    };
+    await tester.pumpWidget(MaterialApp(home: MainShell(
+      repository: CatalogRepository(sources: sources), library: LibraryStore(),
+      alerts: ChapterAlertController(
+        preferences: MemoryAlertPreferences()..shown = true),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('Сенкуро тайтл'), findsWidgets);
+    expect(find.text('Другой источник'), findsNothing);
+    expect(find.text('Общий каталог'), findsNothing);
+    await tester.tap(find.text('Каталог').first);
+    await tester.pumpAndSettle();
+    expect(find.text('Другой источник'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
 }
