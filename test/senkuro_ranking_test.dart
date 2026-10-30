@@ -256,6 +256,11 @@ void main() {
           'alternativeNames': [{'content': 'Alternate'}],
           'localizations': [{'lang': 'RU', 'description': [{'content': [{'text': 'Description'}]}]}],
           'labels': [{'titles': [{'content': 'Fantasy'}]}],
+           'mainStaff': [
+             {'roles': ['AUTHOR'], 'person': {'name': 'Public Author'}},
+             {'roles': ['ARTIST'], 'person': {'name': 'Public Artist'}},
+             {'roles': [], 'person': {'name': ''}},
+           ],
           'cover': {'main': {'url': 'https://cdn.example/detail.webp'}},
           'branches': [{'id': 'secondary'}, {'id': 'primary', 'primaryBranch': true}],
         }}});
@@ -277,6 +282,8 @@ void main() {
     expect(detail.alternativeNames, ['Alternate']);
     expect(detail.description, 'Description');
     expect(detail.genres, ['Fantasy']);
+    expect(detail.creators.map((c) => c.name), ['Public Author', 'Public Artist']);
+    expect(detail.creators.first.roles, ['AUTHOR']);
     expect(detail.chapters.map((c) => c.id), ['chapter-1', 'chapter-2']);
     expect(batches, 2);
   });
