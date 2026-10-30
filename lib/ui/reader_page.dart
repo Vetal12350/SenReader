@@ -29,6 +29,19 @@ class _ReaderPageState extends State<ReaderPage> {
   final ValueNotifier<int> _visiblePage = ValueNotifier(0);
   late List<Chapter> _chapters;
   bool _loadingChapters = false;
+  // Distraction-free by default; users reveal controls with a central tap.
+  bool _controlsVisible = false;
+  void _onCenterTap(TapUpDetails details, Size viewport) {
+    // The real reader viewport may differ from MediaQuery's logical size
+    // (tests, split-screen, inset/resized windows).
+    final size = viewport;
+    final point = details.localPosition;
+    if (point.dx < size.width * 0.22 || point.dx > size.width * 0.78 ||
+        point.dy < size.height * 0.2 || point.dy > size.height * 0.8) {
+      return;
+    }
+    if (mounted) setState(() => _controlsVisible = !_controlsVisible);
+  }
 
   @override void initState() {
     super.initState();
@@ -88,9 +101,8 @@ class _ReaderPageState extends State<ReaderPage> {
     if (_pendingPage != null) await _storePosition(_pendingPage!);
     await widget.library.markRead(widget.book, widget.chapter, widget.sourceKey,
       availableChapters: _chapters);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Глава отмечена прочитанной')));
+    // The eye marker updates immediately through LibraryStore listeners.
+    // A snackbar would overlap the reader's bottom actions after marking.
   }
 
   Future<void> _go(Chapter chapter) async {
@@ -185,11 +197,13 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.chapter.name,
-        maxLines: 1, overflow: TextOverflow.ellipsis)),
-      bottomNavigationBar: _toolbar(),
       backgroundColor: Colors.black,
-      body: FutureBuilder<List<PageImage>>(
+      body: Stack(children: [
+        Positioned.fill(child: LayoutBuilder(builder: (context, constraints) =>
+          GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTapUp: (details) => _onCenterTap(details, constraints.biggest),
+          child: FutureBuilder<List<PageImage>>(
         future: future,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
@@ -234,6 +248,24 @@ class _ReaderPageState extends State<ReaderPage> {
           );
         },
       ),
+        ))),
+        if (_controlsVisible)
+          Positioned(top: 0, left: 0, right: 0,
+            height: kToolbarHeight + MediaQuery.paddingOf(context).top,
+            child: AppBar(
+              backgroundColor: const Color(0xEE151317),
+              foregroundColor: Colors.white,
+              leading: IconButton(
+                tooltip: 'Назад к произведению',
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.maybePop(context),
+              ),
+              title: Text(widget.chapter.name,
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            )),
+        if (_controlsVisible)
+          Positioned(bottom: 0, left: 0, right: 0, child: _toolbar()),
+      ]),
     );
   }
 }
