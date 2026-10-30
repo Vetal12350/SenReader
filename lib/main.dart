@@ -66,9 +66,9 @@ class _MainShellState extends State<MainShell> {
   int tab = 0;
   String libraryFilter = 'all';
   String catalogSourceFilter = 'all';
-  String catalogSort = 'default';
   String? catalogTagFilter;
   CatalogResult? result;
+  CatalogResult? _homeResult; // Never replaced by catalog search results.
   bool loading = false;
   int _suggestionRequest = 0;
   final Map<String, Chapter> _newChapters = {};
@@ -98,7 +98,11 @@ class _MainShellState extends State<MainShell> {
     setState(() => loading = true);
     final next = await widget.repository.getCatalog(query: thisQuery);
     if (!mounted || thisQuery != query) return;
-    setState(() { result = next; loading = false; });
+    setState(() {
+      result = next;
+      if (thisQuery.isEmpty) _homeResult = next;
+      loading = false;
+    });
     unawaited(_refreshNewChapters());
     if (thisQuery.isEmpty) unawaited(_refreshSenkuroSections());
   }
@@ -177,11 +181,6 @@ class _MainShellState extends State<MainShell> {
           (catalogTagFilter == null || book.entries.values.any(
             (entry) => entry.tags.contains(catalogTagFilter))))
         .toList();
-    if (catalogSort == 'titleAsc') {
-      books.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-    } else if (catalogSort == 'titleDesc') {
-      books.sort((a, b) => b.title.toLowerCase().compareTo(a.title.toLowerCase()));
-    }
     return books;
   }
 
@@ -269,10 +268,6 @@ class _MainShellState extends State<MainShell> {
   }
 
   Widget _homeCollections() {
-    final books = result?.books ?? const <UnifiedManga>[];
-    final topTags = _catalogTags.where((tag) =>
-      books.where((book) => book.entries.values.any(
-        (entry) => entry.tags.contains(tag))).length >= 3).take(2);
     return Column(children: [
       for (final section in const [
         'Последние обновления', 'Топ манхв',
@@ -282,14 +277,6 @@ class _MainShellState extends State<MainShell> {
           _sourceRow(section,
             _senkuroSections[section]!.map((entry) =>
               UnifiedManga(title: entry.title, entries: {'senkuro': entry}))),
-      _sourceRow('На ReadManga',
-        books.where((book) => book.entries.containsKey('readmanga'))),
-      _sourceRow('На ReManga',
-        books.where((book) => book.entries.containsKey('remanga'))),
-      for (final tag in topTags)
-        _sourceRow('По тегу: $tag',
-          books.where((book) => book.entries.values.any(
-            (entry) => entry.tags.contains(tag)))),
     ]);
   }
 
@@ -321,25 +308,11 @@ class _MainShellState extends State<MainShell> {
             'Фильтры' : 'Тег: $catalogTagFilter'),
           onPressed: _openCatalogTags,
         ),
-        PopupMenuButton<String>(
-          tooltip: 'Сортировка каталога',
-          initialValue: catalogSort,
-          onSelected: (value) => setState(() => catalogSort = value),
-          itemBuilder: (context) => const [
-            PopupMenuItem(value: 'default', child: Text('По умолчанию')),
-            PopupMenuItem(value: 'titleAsc', child: Text('Название А-Я')),
-            PopupMenuItem(value: 'titleDesc', child: Text('Название Я-А')),
-          ],
-          child: Chip(
-            avatar: const Icon(Icons.sort, size: 18),
-            label: Text(catalogSort == 'default' ? 'По умолчанию' :
-              catalogSort == 'titleAsc' ? 'Название А-Я' : 'Название Я-А'),
-          ),
-        ),
+
       ]),
       Padding(
         padding: const EdgeInsets.only(top: 4, bottom: 12),
-        child: Text('Фильтры и сортировка действуют на загруженные результаты',
+        child: Text('Фильтры действуют на загруженные результаты',
           style: TextStyle(fontSize: 11,
             color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ),
@@ -506,7 +479,10 @@ class _MainShellState extends State<MainShell> {
   }
 
   @override Widget build(BuildContext context) {
-    final catalogBooks = tab == 1 ? _visibleCatalogBooks() : result?.books ?? <UnifiedManga>[];
+    // A search must never replace the home feed when switching tabs.
+    final activeResult = tab == 0 ? _homeResult : result;
+    final catalogBooks = tab == 1 ? _visibleCatalogBooks() :
+        _homeResult?.books ?? <UnifiedManga>[];
     return Scaffold(
       appBar: AppBar(
         title: Row(children: [
@@ -600,15 +576,15 @@ class _MainShellState extends State<MainShell> {
               if (loading)
                 const SizedBox(height: 195,
                   child: Center(child: CircularProgressIndicator())),
-              if (!loading && result != null &&
-                  result!.senkuroPopular.isNotEmpty)
+              if ((tab == 0 || !loading) && activeResult != null &&
+                  activeResult!.senkuroPopular.isNotEmpty)
                 // Size the horizontal carousel by its actual tile content,
                 // including OS font scaling, rather than a fragile fixed height.
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                    for (final item in result!.senkuroPopular.take(15)) ...[
+                    for (final item in activeResult!.senkuroPopular.take(15)) ...[
                       SizedBox(width: 116, child: MangaTile(
                         book: UnifiedManga(title: item.title,
                           entries: {'senkuro': item}),
@@ -620,7 +596,7 @@ class _MainShellState extends State<MainShell> {
                   ]),
                 ),
               _continueReading(),
-              if (!loading && result != null) _homeCollections(),
+              if (_homeResult != null) _homeCollections(),
               const SizedBox(height: 30),
             ] else ...[
               TextField(
@@ -642,15 +618,15 @@ class _MainShellState extends State<MainShell> {
             if (loading && tab != 0)
               const Padding(padding: EdgeInsets.all(32),
                 child: Center(child: CircularProgressIndicator())),
-            if (result != null && result!.warnings.isNotEmpty)
-              ...result!.warnings.map((w) => Padding(
+            if (activeResult != null && activeResult.warnings.isNotEmpty)
+              ...activeResult!.warnings.map((w) => Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(w, style: const TextStyle(color: Color(0xFFFFBE80), fontSize: 12)),
               )),
-            if (!loading && result != null && catalogBooks.isEmpty)
+            if ((tab == 0 || !loading) && activeResult != null && catalogBooks.isEmpty)
               const EmptyView(icon: Icons.search_off,
                 text: 'По заданным фильтрам ничего не найдено.'),
-            if (!loading && result != null && catalogBooks.isNotEmpty)
+            if ((tab == 0 || !loading) && activeResult != null && catalogBooks.isNotEmpty)
               LayoutBuilder(builder: (context, box) => Wrap(
                 spacing: 10, runSpacing: 18,
                 children: catalogBooks.map((book) => SizedBox(

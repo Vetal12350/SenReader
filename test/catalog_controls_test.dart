@@ -25,6 +25,14 @@ class _TestCatalogSource implements MangaSource {
   @override Future<List<PageImage>> pages(Chapter chapter) async => const [];
 }
 
+class _SearchCatalogSource extends _TestCatalogSource {
+  _SearchCatalogSource() : super('senkuro', 'Популярная манга');
+  @override Future<List<MangaEntry>> search(String query) async => [
+    const MangaEntry(source: 'senkuro', id: 'dungeon',
+        title: 'Подземная одиссея'),
+  ];
+}
+
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
@@ -60,27 +68,44 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('catalog local title sorting changes visual order', (tester) async {
-    final sources = <String, MangaSource>{
-      'senkuro': _TestCatalogSource('senkuro', 'Альфа'),
-      'readmanga': _TestCatalogSource('readmanga', 'Янтарь'),
-    };
+  testWidgets('catalog no longer has alphabetical title sorting', (tester) async {
+    final source = _TestCatalogSource('senkuro', 'Альфа');
     await tester.pumpWidget(MaterialApp(home: MainShell(
-      repository: CatalogRepository(sources: sources), library: LibraryStore(),
+      repository: CatalogRepository(sources: {source.key: source}),
+      library: LibraryStore(),
       alerts: ChapterAlertController(
         preferences: MemoryAlertPreferences()..shown = true),
     )));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Каталог').first);
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Сортировка каталога'));
+    expect(find.byTooltip('Сортировка каталога'), findsNothing);
+    expect(find.byKey(const Key('catalog-tag-filters')), findsOneWidget);
+  });
+
+  testWidgets('catalog search never destroys home popular results', (tester) async {
+    final source = _SearchCatalogSource();
+    await tester.pumpWidget(MaterialApp(home: MainShell(
+      repository: CatalogRepository(sources: {source.key: source}),
+      library: LibraryStore(),
+      alerts: ChapterAlertController(
+        preferences: MemoryAlertPreferences()..shown = true),
+    )));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Название Я-А').last);
+    expect(find.text('Популярная манга'), findsWidgets);
+    await tester.tap(find.text('Каталог').first);
     await tester.pumpAndSettle();
-    expect(tester.getTopLeft(find.text('Янтарь')).dx,
-      lessThan(tester.getTopLeft(find.text('Альфа')).dx));
+    await tester.enterText(find.byType(TextField).first, 'подземная');
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    expect(find.text('Подземная одиссея'), findsOneWidget);
+    await tester.tap(find.text('Главная').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Популярная манга'), findsWidgets);
+    expect(find.text('Подземная одиссея'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
   testWidgets('catalog tag filters select only source-backed matching entries',
       (tester) async {
     final sources = <String, MangaSource>{
