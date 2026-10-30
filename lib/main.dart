@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'core/models.dart';
 import 'core/chapter_identity.dart';
 import 'data/catalog_repository.dart';
+import 'data/senkuro_source.dart';
 import 'data/library_store.dart';
 import 'data/reading_suggestions.dart';
 import 'data/chapter_notification_service.dart';
@@ -71,6 +72,8 @@ class _MainShellState extends State<MainShell> {
   bool loading = false;
   int _suggestionRequest = 0;
   final Map<String, Chapter> _newChapters = {};
+  int _homeRequest = 0;
+  final Map<String, List<MangaEntry>> _senkuroSections = {};
   late final ChapterAlertController alerts = widget.alerts ?? ChapterAlertController();
   String query = '';
   Timer? debounce;
@@ -97,6 +100,31 @@ class _MainShellState extends State<MainShell> {
     if (!mounted || thisQuery != query) return;
     setState(() { result = next; loading = false; });
     unawaited(_refreshNewChapters());
+    if (thisQuery.isEmpty) unawaited(_refreshSenkuroSections());
+  }
+
+  Future<void> _refreshSenkuroSections() async {
+    final source = widget.repository.sources['senkuro'];
+    if (source is! SenkuroSource) return;
+    final request = ++_homeRequest;
+    final categories = <String, List<MangaEntry>>{};
+    final options = <(String, String?, String)>[
+      ('Последние обновления', null, 'LAST_CHAPTER_AT'),
+      ('Топ манхв', 'MANHWA', 'POPULARITY_SCORE'),
+      ('Топ маньхуа', 'MANHUA', 'POPULARITY_SCORE'),
+      ('Топ манг', 'MANGA', 'POPULARITY_SCORE'),
+    ];
+    await Future.wait(options.map((option) async {
+      try {
+        final list = await source.browseHome(
+          type: option.$2, orderField: option.$3);
+        if (list.isNotEmpty) categories[option.$1] = list;
+      } catch (_) {
+        // Category-specific failures never hide the regular catalog.
+      }
+    }));
+    if (!mounted || request != _homeRequest) return;
+    setState(() => _senkuroSections..clear()..addAll(categories));
   }
 
   Future<void> _refreshNewChapters() async {
@@ -246,6 +274,14 @@ class _MainShellState extends State<MainShell> {
       books.where((book) => book.entries.values.any(
         (entry) => entry.tags.contains(tag))).length >= 3).take(2);
     return Column(children: [
+      for (final section in const [
+        'Последние обновления', 'Топ манхв',
+        'Топ маньхуа', 'Топ манг',
+      ])
+        if (_senkuroSections[section]?.isNotEmpty == true)
+          _sourceRow(section,
+            _senkuroSections[section]!.map((entry) =>
+              UnifiedManga(title: entry.title, entries: {'senkuro': entry}))),
       _sourceRow('На ReadManga',
         books.where((book) => book.entries.containsKey('readmanga'))),
       _sourceRow('На ReManga',
