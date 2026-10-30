@@ -44,6 +44,10 @@ class _ReaderPageState extends State<ReaderPage> {
   _VisibleChapterPage? _pendingPosition;
   Future<void> _saveChain = Future<void>.value();
   final List<_ChapterSegment> _segments = [];
+  final Set<String> _loadedPageKeys = {};
+  final Set<String> _autoCompletedChapters = {};
+  bool _hasForwardScrolled = false;
+  Future<void> _autoMarkChain = Future<void>.value();
   late Chapter _activeChapter;
   bool _nextLoading = false;
   bool _nextScheduled = false;
@@ -140,6 +144,50 @@ class _ReaderPageState extends State<ReaderPage> {
     return null;
   }
 
+  /// Only actual forward reading past successfully loaded pages completes
+  /// a chapter. Simply opening its last page or an error tile does not.
+  void _autoCompletePassedChapters(Iterable<ItemPosition> items) {
+    if (!_hasForwardScrolled || _segments.isEmpty) return;
+    final visible = items.where((item) =>
+      item.itemTrailingEdge > 0 && item.itemLeadingEdge < 1).toList();
+    if (visible.isEmpty) return;
+    var endIndex = 0;
+    for (var i = 0; i < _segments.length; i++) {
+      final segment = _segments[i];
+      endIndex += segment.pages.length;
+      final passed = i < _segments.length - 1
+          ? visible.any((item) => item.index > endIndex) &&
+            !visible.any((item) => item.index < endIndex)
+          : _atSeriesEnd && visible.any((item) =>
+              item.index == _itemCount - 1) &&
+            !visible.any((item) => item.index < endIndex);
+      if (passed && segment.pages.isNotEmpty &&
+          !_autoCompletedChapters.contains(segment.chapter.id) &&
+          List.generate(segment.pages.length,
+            (page) => _VisibleChapterPage(segment.chapter, page,
+              segment.pages.length).key)
+            .every(_loadedPageKeys.contains)) {
+        _autoCompletedChapters.add(segment.chapter.id);
+        final chapter = segment.chapter;
+        _autoMarkChain = _autoMarkChain.then((_) async {
+          await _flushPosition();
+          await widget.library.markRead(widget.book, chapter, widget.sourceKey,
+            availableChapters: _chapters);
+        }).catchError((Object _) {});
+      }
+      endIndex++; // Chapter separator (or terminal footer).
+    }
+  }
+
+  void _registerLoadedPage(_VisibleChapterPage item) {
+    if (_loadedPageKeys.contains(item.key)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _loadedPageKeys.add(item.key);
+      _autoCompletePassedChapters(_positions.itemPositions.value);
+    });
+  }
+
   void _onVisiblePages() {
     if (_segments.isEmpty) return;
     final visible = _positions.itemPositions.value.where((position) =>
@@ -159,6 +207,7 @@ class _ReaderPageState extends State<ReaderPage> {
       }
     }
 
+    _autoCompletePassedChapters(visible);
     if (nearLastPartEnd && !_nextLoading && !_nextScheduled &&
         !_atSeriesEnd && _nextError == null) {
       _nextScheduled = true;
@@ -368,7 +417,19 @@ class _ReaderPageState extends State<ReaderPage> {
               child: Text('Нет доступных изображений. Возможно, глава удалена или доступ ограничен.', style: TextStyle(color: Colors.white))));
           }
           final initialIndex = _resumePage.clamp(0, pages.length - 1).toInt();
-          return ScrollablePositionedList.builder(
+          return NotificationListener<ScrollNotification>(
+            onNotification: (notice) {
+              if (notice is ScrollUpdateNotification &&
+                  (notice.scrollDelta ?? 0) > 0) {
+                _hasForwardScrolled = true;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (mounted) _autoCompletePassedChapters(
+                    _positions.itemPositions.value);
+                });
+              }
+              return false;
+            },
+            child: ScrollablePositionedList.builder(
             key: ValueKey('${widget.sourceKey}:${widget.chapter.id}'),
             itemPositionsListener: _positions,
             initialScrollIndex: initialIndex,
@@ -442,17 +503,20 @@ class _ReaderPageState extends State<ReaderPage> {
                 width: MediaQuery.sizeOf(context).width,
                 headers: image.headers,
                 fit: BoxFit.fitWidth,
-                frameBuilder: (context, child, frame, wasSync) => frame == null
-                  ? const SizedBox(height: 170,
-                      child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
-                  : child,
+                frameBuilder: (context, child, frame, wasSync) {
+                  if (frame != null) _registerLoadedPage(item);
+                  return frame == null
+                    ? const SizedBox(height: 170,
+                        child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
+                    : child;
+                },
                 errorBuilder: (context, error, stack) => Container(
                   height: 170, color: Colors.white10, alignment: Alignment.center,
                   child: Text('Страница ${item.index + 1} не загрузилась',
                     style: const TextStyle(color: Colors.white60))),
               );
             },
-          );
+          ));
         },
       ),
         ))),
