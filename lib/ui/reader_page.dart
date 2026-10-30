@@ -48,6 +48,7 @@ class _ReaderPageState extends State<ReaderPage> {
   final Set<String> _loadedPageKeys = {};
   final Set<String> _autoCompletedChapters = {};
   bool _hasForwardScrolled = false;
+  bool _reachedScrollableEnd = false;
   Future<void> _autoMarkChain = Future<void>.value();
   late Chapter _activeChapter;
   bool _nextLoading = false;
@@ -165,9 +166,9 @@ class _ReaderPageState extends State<ReaderPage> {
       final passed = i < _segments.length - 1
           ? visible.any((item) => item.index > endIndex) &&
             !visible.any((item) => item.index < endIndex)
-          : _atSeriesEnd && visible.any((item) =>
-              item.index == _itemCount - 1) &&
-            !visible.any((item) => item.index < endIndex);
+          : (_atSeriesEnd || _nextError != null) &&
+            _reachedScrollableEnd &&
+            visible.any((item) => item.index == _itemCount - 1);
       if (chapterFullyRead(
           forwardScrolled: _hasForwardScrolled,
           passedChapterBoundary: passed,
@@ -434,6 +435,11 @@ class _ReaderPageState extends State<ReaderPage> {
               if (notice is ScrollUpdateNotification &&
                   (notice.scrollDelta ?? 0) > 0) {
                 _hasForwardScrolled = true;
+                // At the absolute bottom, the last image still occupies part
+                // of the viewport above the footer. Requiring it to disappear
+                // would make last-chapter auto-read impossible.
+                _reachedScrollableEnd = notice.metrics.maxScrollExtent > 0 &&
+                    notice.metrics.extentAfter <= 4;
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   if (mounted) _autoCompletePassedChapters(
                     _positions.itemPositions.value);
