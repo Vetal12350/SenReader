@@ -169,17 +169,6 @@ class _DetailPageState extends State<DetailPage> {
             CheckedPopupMenuItem(value: source, checked: selected == source,
               child: Text(widget.repository.sources[source]?.name ?? source))],
         ),
-        AnimatedBuilder(animation: widget.library, builder: (context, _) => IconButton(
-          tooltip: widget.library.has(book) ? 'Убрать из библиотеки' : 'Добавить в библиотеку',
-          icon: Icon(widget.library.has(book) ? Icons.bookmark : Icons.bookmark_outline),
-          onPressed: () async {
-            if (widget.library.has(book)) { await widget.library.remove(book); }
-            else {
-              await widget.library.add(book, preferredSource: selected);
-              if (context.mounted) await offerChapterAlerts(context, alerts);
-            }
-          },
-        )),
       ]),
       body: ListView(padding: const EdgeInsets.all(16), children: [
         ClipRRect(borderRadius: BorderRadius.circular(16),
@@ -238,14 +227,21 @@ class _DetailPageState extends State<DetailPage> {
               PopupMenuButton<String>(
                 tooltip: 'Статус произведения',
                 onSelected: (value) async {
+                  if (value == 'remove') {
+                    await widget.library.remove(book);
+                    return;
+                  }
                   final wasSaved = widget.library.has(book);
                   await widget.library.setStatus(book, value, preferredSource: selected);
                   if (!wasSaved && context.mounted) await offerChapterAlerts(context, alerts);
                 },
-                itemBuilder: (context) => const [
-                  PopupMenuItem(value: 'reading', child: Text('Читаю')),
-                  PopupMenuItem(value: 'planned', child: Text('В планах')),
-                  PopupMenuItem(value: 'completed', child: Text('Прочитано')),
+                itemBuilder: (context) => [
+                  const PopupMenuItem(value: 'reading', child: Text('Читаю')),
+                  const PopupMenuItem(value: 'planned', child: Text('В планах')),
+                  const PopupMenuItem(value: 'completed', child: Text('Прочитано')),
+                  if (widget.library.has(book))
+                    const PopupMenuItem(value: 'remove',
+                      child: Text('Убрать из библиотеки')),
                 ],
                 child: Chip(
                   avatar: const Icon(Icons.bookmark_added_outlined, size: 18),
