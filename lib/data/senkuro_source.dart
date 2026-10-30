@@ -44,6 +44,7 @@ query fetchManga($slug: String!) {
       ... on TiptapNodeNestedBlock { content { __typename ... on TiptapNodeText { text } } }
     } }
     labels { titles { lang content } }
+    mainStaff { roles person { name } }
     cover { main: resize(width: 600, height: 850, format: WEBP) { url } }
     branches { id primaryBranch chapters }
   }
@@ -285,6 +286,15 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
       alternativeNames: _optionalList(m['alternativeNames'])
           .whereType<Map>().map((item) => _text(item['content']))
           .where((name) => name.trim().isNotEmpty).take(6).toList(),
+      creators: _optionalList(m['mainStaff']).whereType<Map>().map((staff) {
+        final person = staff['person'];
+        final name = person is Map ? _text(person['name']) : '';
+        final roles = staff['roles'] is List
+            ? (staff['roles'] as List).whereType<String>()
+                .where((role) => role.isNotEmpty).take(5).toList()
+            : <String>[];
+        return MangaCreator(name: name, roles: roles);
+      }).where((credit) => credit.name.isNotEmpty).take(12).toList(),
     );
   }
 
