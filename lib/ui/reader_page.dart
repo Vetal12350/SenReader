@@ -31,43 +31,15 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _loadingChapters = false;
   // Distraction-free by default; users reveal controls with a central tap.
   bool _controlsVisible = false;
-  Offset? _pointerStart;
-  DateTime? _pointerStartAt;
-  bool _pointerMoved = false;
-
-  void _onReaderPointerDown(PointerDownEvent event) {
-    _pointerStart = event.position;
-    _pointerStartAt = DateTime.now();
-    _pointerMoved = false;
-  }
-
-  void _onReaderPointerMove(PointerMoveEvent event) {
-    if (_pointerStart != null &&
-        (event.position - _pointerStart!).distance > 16) {
-      _pointerMoved = true;
-    }
-  }
-
-  void _onReaderPointerUp(PointerUpEvent event) {
-    final start = _pointerStart;
-    final at = _pointerStartAt;
-    _pointerStart = null;
-    _pointerStartAt = null;
-    if (start == null || at == null || _pointerMoved ||
-        (event.position - start).distance > 16 ||
-        DateTime.now().difference(at) > const Duration(milliseconds: 450)) {
-      return;
-    }
+  void _onCenterTap(TapUpDetails details) {
     final size = MediaQuery.sizeOf(context);
-    final origin = (context.findRenderObject() as RenderBox).localToGlobal(Offset.zero);
-    final local = event.position - origin;
-    if (local.dx < size.width * 0.22 || local.dx > size.width * 0.78 ||
-        local.dy < size.height * 0.2 || local.dy > size.height * 0.8) {
+    final point = details.localPosition;
+    if (point.dx < size.width * 0.22 || point.dx > size.width * 0.78 ||
+        point.dy < size.height * 0.2 || point.dy > size.height * 0.8) {
       return;
     }
     if (mounted) setState(() => _controlsVisible = !_controlsVisible);
   }
-
 
   @override void initState() {
     super.initState();
@@ -127,9 +99,8 @@ class _ReaderPageState extends State<ReaderPage> {
     if (_pendingPage != null) await _storePosition(_pendingPage!);
     await widget.library.markRead(widget.book, widget.chapter, widget.sourceKey,
       availableChapters: _chapters);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Глава отмечена прочитанной')));
+    // The eye marker updates immediately through LibraryStore listeners.
+    // A snackbar would overlap the reader's bottom actions after marking.
   }
 
   Future<void> _go(Chapter chapter) async {
@@ -226,15 +197,9 @@ class _ReaderPageState extends State<ReaderPage> {
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(children: [
-        Positioned.fill(child: Listener(
-          behavior: HitTestBehavior.opaque,
-          onPointerDown: _onReaderPointerDown,
-          onPointerMove: _onReaderPointerMove,
-          onPointerUp: _onReaderPointerUp,
-          onPointerCancel: (_) {
-            _pointerStart = null;
-            _pointerStartAt = null;
-          },
+        Positioned.fill(child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTapUp: _onCenterTap,
           child: FutureBuilder<List<PageImage>>(
         future: future,
         builder: (context, snapshot) {
