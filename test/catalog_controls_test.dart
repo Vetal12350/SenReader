@@ -10,13 +10,14 @@ import 'package:senreader/main.dart';
 import 'chapter_alert_opt_in_test.dart' show MemoryAlertPreferences;
 
 class _TestCatalogSource implements MangaSource {
-  _TestCatalogSource(this.key, this.title);
+  _TestCatalogSource(this.key, this.title, [this.tags = const []]);
   @override final String key;
   final String title;
+  final List<String> tags;
   @override String get name => key;
   @override Map<String, String> get imageHeaders => const {};
   @override Future<List<MangaEntry>> popular() async => [
-    MangaEntry(source: key, id: key, title: title),
+    MangaEntry(source: key, id: key, title: title, tags: tags),
   ];
   @override Future<List<MangaEntry>> search(String query) => popular();
   @override Future<MangaDetail> detail(MangaEntry entry) async =>
@@ -80,4 +81,30 @@ void main() {
       lessThan(tester.getTopLeft(find.text('Альфа')).dx));
     expect(tester.takeException(), isNull);
   });
+  testWidgets('catalog tag filters select only source-backed matching entries',
+      (tester) async {
+    final sources = <String, MangaSource>{
+      'senkuro': _TestCatalogSource('senkuro', 'Космос', ['Фантастика']),
+      'readmanga': _TestCatalogSource('readmanga', 'Романтика'),
+    };
+    await tester.pumpWidget(MaterialApp(home: MainShell(
+      repository: CatalogRepository(sources: sources), library: LibraryStore(),
+      alerts: ChapterAlertController(
+        preferences: MemoryAlertPreferences()..shown = true),
+    )));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Каталог').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('catalog-tag-filters')));
+    await tester.pumpAndSettle();
+    expect(find.text('Фантастика'), findsOneWidget);
+    await tester.tap(find.text('Фантастика'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('Показать'));
+    await tester.pumpAndSettle();
+    expect(find.text('Космос'), findsOneWidget);
+    expect(find.text('Романтика'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
 }
