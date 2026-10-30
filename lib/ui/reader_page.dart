@@ -326,7 +326,8 @@ class _ReaderPageState extends State<ReaderPage> {
                 return IconButton(tooltip: read ? 'Прочитано: отметить непрочитанной' : 'Отметить прочитанной',
                   onPressed: _pageCount == 0 ? null : () async {
                     if (read) {
-                      await widget.library.unmarkRead(widget.book, _activeChapter, widget.sourceKey);
+                      await widget.library.unmarkRead(widget.book, _activeChapter, widget.sourceKey,
+                        availableChapters: _chapters);
                     } else {
                       await _mark();
                     }
