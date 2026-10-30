@@ -23,7 +23,7 @@ void main() {
     }));
     final manhwa = await source.browseHome(type: 'MANHWA');
     expect(requests.first['operationName'], 'fetchMangas');
-    expect(requests.first['query'], contains('type: \\$type'));
+    expect(requests.first['query'], contains('type: \$type'));
     expect(requests.first['query'], contains('orderBy:'));
     expect(manhwa.single.title, 'Серия');
     expect(manhwa.single.tags, ['Фэнтези']);
