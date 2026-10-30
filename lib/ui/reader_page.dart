@@ -6,6 +6,22 @@ import '../core/chapter_identity.dart';
 import '../data/catalog_repository.dart';
 import '../data/library_store.dart';
 
+/// Chapter page URLs are kept as lightweight metadata; the indexed list
+/// lazily builds image widgets, so scrolling does not retain all image widgets.
+class _ChapterSegment {
+  const _ChapterSegment(this.chapter, this.pages);
+  final Chapter chapter;
+  final List<PageImage> pages;
+}
+
+class _VisibleChapterPage {
+  const _VisibleChapterPage(this.chapter, this.index, this.total);
+  final Chapter chapter;
+  final int index;
+  final int total;
+  String get key => '${chapter.id}|$index';
+}
+
 class ReaderPage extends StatefulWidget {
   const ReaderPage({super.key, required this.book, required this.chapter,
     required this.sourceKey, required this.repository, required this.library,
@@ -24,8 +40,15 @@ class _ReaderPageState extends State<ReaderPage> {
   final ItemPositionsListener _positions = ItemPositionsListener.create();
   Timer? _saveTimer;
   int _pageCount = 0;
-  int? _lastSavedPage;
-  int? _pendingPage;
+  String? _lastSavedKey;
+  _VisibleChapterPage? _pendingPosition;
+  Future<void> _saveChain = Future<void>.value();
+  final List<_ChapterSegment> _segments = [];
+  late Chapter _activeChapter;
+  bool _nextLoading = false;
+  bool _nextScheduled = false;
+  bool _atSeriesEnd = false;
+  String? _nextError;
   final ValueNotifier<int> _visiblePage = ValueNotifier(0);
   late List<Chapter> _chapters;
   bool _loadingChapters = false;
@@ -46,9 +69,15 @@ class _ReaderPageState extends State<ReaderPage> {
   @override void initState() {
     super.initState();
     _chapters = widget.chapters;
+    _activeChapter = widget.chapter;
     _visiblePage.value = _resumePage;
     future = widget.repository.sources[widget.sourceKey]!.pages(widget.chapter).then((pages) {
-      if (mounted) setState(() => _pageCount = pages.length);
+      if (mounted) {
+        setState(() {
+          _segments.add(_ChapterSegment(widget.chapter, pages));
+          _pageCount = pages.length;
+        });
+      }
       return pages;
     });
     _positions.itemPositions.addListener(_onVisiblePages);
@@ -63,52 +92,171 @@ class _ReaderPageState extends State<ReaderPage> {
     return saved.lastChapter == widget.chapter.name ? saved.lastPageIndex : 0;
   }
 
-  void _onVisiblePages() {
-    if (_pageCount == 0) return;
-    final visible = _positions.itemPositions.value.where((position) =>
-      position.index >= 0 && position.index < _pageCount &&
-      position.itemTrailingEdge > 0 && position.itemLeadingEdge < 1).toList()
-      ..sort((a, b) => a.index.compareTo(b.index));
-    if (visible.isEmpty) return;
-    final index = visible.first.index;
-    _visiblePage.value = index;
-    if (index == _lastSavedPage || index == _pendingPage) return;
-    _pendingPage = index;
-    _saveTimer?.cancel();
-    _saveTimer = Timer(const Duration(milliseconds: 600), () => _storePosition(index));
+  int get _itemCount {
+    var count = 1; // End of available chapters / loading footer.
+    for (var i = 0; i < _segments.length; i++) {
+      if (i > 0) count++; // Boundary label between chapters.
+      count += _segments[i].pages.length;
+    }
+    return count;
   }
 
-  Future<void> _storePosition(int page) async {
-    if (_pageCount == 0 || page == _lastSavedPage) return;
-    _pendingPage = null;
-    _lastSavedPage = page;
-    await widget.library.savePosition(widget.book, widget.chapter,
-      widget.sourceKey, pageIndex: page, pageCount: _pageCount);
+  /// Maps a lazily built list item to its source-specific chapter and page.
+  /// Headers and the final footer do not change reading progress.
+  _VisibleChapterPage? _pageAt(int index) {
+    var offset = 0;
+    for (var i = 0; i < _segments.length; i++) {
+      if (i > 0) offset++;
+      final part = _segments[i];
+      if (index >= offset && index < offset + part.pages.length) {
+        return _VisibleChapterPage(part.chapter, index - offset, part.pages.length);
+      }
+      offset += part.pages.length;
+    }
+    return null;
+  }
+
+  bool _isHeaderAt(int index) {
+    var offset = 0;
+    for (var i = 0; i < _segments.length; i++) {
+      if (i > 0) {
+        if (index == offset) return true;
+        offset++;
+      }
+      offset += _segments[i].pages.length;
+    }
+    return false;
+  }
+
+  Chapter? _headerChapterAt(int index) {
+    var offset = 0;
+    for (var i = 0; i < _segments.length; i++) {
+      if (i > 0) {
+        if (index == offset) return _segments[i].chapter;
+        offset++;
+      }
+      offset += _segments[i].pages.length;
+    }
+    return null;
+  }
+
+  void _onVisiblePages() {
+    if (_segments.isEmpty) return;
+    final visible = _positions.itemPositions.value.where((position) =>
+      position.itemTrailingEdge > 0 && position.itemLeadingEdge < 1).toList()
+      ..sort((a, b) => a.index.compareTo(b.index));
+
+    _VisibleChapterPage? first;
+    var nearLastPartEnd = false;
+    final last = _segments.last;
+    for (final position in visible) {
+      final page = _pageAt(position.index);
+      if (page == null) continue;
+      first ??= page;
+      if (page.chapter.id == last.chapter.id &&
+          page.index >= last.pages.length - 2) {
+        nearLastPartEnd = true;
+      }
+    }
+
+    if (nearLastPartEnd && !_nextLoading && !_nextScheduled &&
+        !_atSeriesEnd && _nextError == null) {
+      _nextScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _nextScheduled = false;
+        if (mounted) unawaited(_appendNextChapter());
+      });
+    }
+
+    if (first == null) return;
+    final progress = first;
+    if (_activeChapter.id != progress.chapter.id) {
+      _saveTimer?.cancel();
+      unawaited(_flushPosition());
+      setState(() {
+        _activeChapter = progress.chapter;
+        _pageCount = progress.total;
+      });
+    }
+    _visiblePage.value = progress.index;
+    if (progress.key == _lastSavedKey ||
+        progress.key == _pendingPosition?.key) return;
+    _pendingPosition = progress;
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 600),
+      () => unawaited(_flushPosition()));
+  }
+
+  Future<void> _flushPosition() {
+    final pending = _pendingPosition;
+    _pendingPosition = null;
+    if (pending == null || pending.key == _lastSavedKey) return _saveChain;
+    _lastSavedKey = pending.key;
+    // Sequentialize writes even when the user passes a chapter boundary
+    // before the debounce completes. Newer pages must not be overwritten
+    // by an older, slower storage operation.
+    _saveChain = _saveChain.then((_) => widget.library.savePosition(
+      widget.book, pending.chapter, widget.sourceKey,
+      pageIndex: pending.index, pageCount: pending.total,
+    )).catchError((Object _) {});
+    return _saveChain;
+  }
+
+  Future<void> _appendNextChapter() async {
+    if (_nextLoading || _atSeriesEnd || _segments.isEmpty ||
+        _nextError != null) return;
+    setState(() => _nextLoading = true);
+    try {
+      if (_chapters.isEmpty) {
+        final entry = widget.book.entries[widget.sourceKey];
+        if (entry == null) throw StateError('Источник не найден');
+        final detail = await widget.repository.sources[widget.sourceKey]!.detail(entry);
+        if (!mounted) return;
+        _chapters = detail.chapters;
+      }
+      // Only unambiguously numbered chapters can be advanced automatically.
+      final ordered = _chapters.where((c) => canonicalChapterKey(c) != null)
+          .toList()..sort((a, b) => compareChapterChronology(a, b)!);
+      final currentId = _segments.last.chapter.id;
+      final index = ordered.indexWhere((c) => c.id == currentId);
+      if (index < 0 || index >= ordered.length - 1) {
+        if (mounted) setState(() => _atSeriesEnd = true);
+        return;
+      }
+      final next = ordered[index + 1];
+      final pages = await widget.repository.sources[widget.sourceKey]!.pages(next);
+      if (!mounted) return;
+      if (pages.isEmpty) {
+        setState(() => _nextError = 'Следующая глава пока недоступна');
+        return;
+      }
+      setState(() => _segments.add(_ChapterSegment(next, pages)));
+    } catch (_) {
+      if (mounted) setState(() => _nextError = 'Не удалось загрузить следующую главу');
+    } finally {
+      if (mounted) setState(() => _nextLoading = false);
+    }
   }
 
   @override void dispose() {
     _positions.itemPositions.removeListener(_onVisiblePages);
     _saveTimer?.cancel();
-    if (_pendingPage != null) {
-      unawaited(_storePosition(_pendingPage!));
-    }
+    unawaited(_flushPosition());
     _visiblePage.dispose();
     super.dispose();
   }
 
   Future<void> _mark() async {
     _saveTimer?.cancel();
-    if (_pendingPage != null) await _storePosition(_pendingPage!);
-    await widget.library.markRead(widget.book, widget.chapter, widget.sourceKey,
+    await _flushPosition();
+    await widget.library.markRead(widget.book, _activeChapter, widget.sourceKey,
       availableChapters: _chapters);
-    // The eye marker updates immediately through LibraryStore listeners.
-    // A snackbar would overlap the reader's bottom actions after marking.
   }
 
   Future<void> _go(Chapter chapter) async {
-    if (chapter.id == widget.chapter.id) return;
+    if (chapter.id == _activeChapter.id) return;
     _saveTimer?.cancel();
-    if (_pendingPage != null) await _storePosition(_pendingPage!);
+    await _flushPosition();
     if (!mounted) return;
     await Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => ReaderPage(
       book: widget.book, chapter: chapter, sourceKey: widget.sourceKey,
@@ -145,7 +293,7 @@ class _ReaderPageState extends State<ReaderPage> {
             ? const Center(child: Text('Нет доступных глав'))
             : ListView.builder(itemCount: _chapters.length,
               itemBuilder: (context, index) => ListTile(
-                selected: _chapters[index].id == widget.chapter.id,
+                selected: _chapters[index].id == _activeChapter.id,
                 title: Text(_chapters[index].name),
                 onTap: () => Navigator.pop(context, _chapters[index]),
               ))),
@@ -157,7 +305,7 @@ class _ReaderPageState extends State<ReaderPage> {
   Widget _toolbar() {
     final ordered = _chapters.where((chapter) => canonicalChapterKey(chapter) != null)
         .toList()..sort((a, b) => compareChapterChronology(a, b)!);
-    final index = ordered.indexWhere((chapter) => chapter.id == widget.chapter.id);
+    final index = ordered.indexWhere((chapter) => chapter.id == _activeChapter.id);
     return Material(color: Theme.of(context).colorScheme.surface,
       child: SafeArea(top: false, child: Column(mainAxisSize: MainAxisSize.min, children: [
         ValueListenableBuilder<int>(valueListenable: _visiblePage,
@@ -174,11 +322,11 @@ class _ReaderPageState extends State<ReaderPage> {
                 '${page.clamp(0, _pageCount - 1) + 1}/$_pageCount',
                 maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center)),
               AnimatedBuilder(animation: widget.library, builder: (context, _) {
-                final read = widget.library.isChapterRead(widget.book, widget.chapter, widget.sourceKey);
+                final read = widget.library.isChapterRead(widget.book, _activeChapter, widget.sourceKey);
                 return IconButton(tooltip: read ? 'Прочитано: отметить непрочитанной' : 'Отметить прочитанной',
                   onPressed: _pageCount == 0 ? null : () async {
                     if (read) {
-                      await widget.library.unmarkRead(widget.book, widget.chapter, widget.sourceKey);
+                      await widget.library.unmarkRead(widget.book, _activeChapter, widget.sourceKey);
                     } else {
                       await _mark();
                     }
@@ -223,17 +371,54 @@ class _ReaderPageState extends State<ReaderPage> {
             key: ValueKey('${widget.sourceKey}:${widget.chapter.id}'),
             itemPositionsListener: _positions,
             initialScrollIndex: initialIndex,
-            itemCount: pages.length + 1,
+            itemCount: _itemCount,
             itemBuilder: (context, index) {
-              if (index == pages.length) {
-                return Padding(padding: const EdgeInsets.all(24),
-                  child: FilledButton.icon(onPressed: _mark,
-                    icon: const Icon(Icons.check), label: const Text('Глава прочитана')));
+              final heading = _headerChapterAt(index);
+              if (heading != null) {
+                return Container(
+                  key: ValueKey('chapter-boundary-${heading.id}'),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 22),
+                  child: Text(heading.name, textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white,
+                      fontWeight: FontWeight.w700, fontSize: 18)),
+                );
               }
+              final item = _pageAt(index);
+              if (item == null) {
+                return Padding(padding: const EdgeInsets.all(24),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    if (_nextLoading)
+                      const CircularProgressIndicator()
+                    else if (_nextError != null) ...[
+                      Text(_nextError!, style: const TextStyle(color: Colors.white70)),
+                      TextButton.icon(
+                        onPressed: () {
+                          setState(() => _nextError = null);
+                          _appendNextChapter();
+                        },
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Повторить загрузку'),
+                      ),
+                    ] else if (_atSeriesEnd) ...[
+                      const Text('Конец доступных глав',
+                        style: TextStyle(color: Colors.white70)),
+                      FilledButton.icon(onPressed: _mark,
+                        icon: const Icon(Icons.check),
+                        label: const Text('Отметить прочитанной')),
+                    ] else
+                      const Text('Следующая глава загружается при прокрутке',
+                        style: TextStyle(color: Colors.white70)),
+                  ]),
+                );
+              }
+              final image = _segments.firstWhere(
+                (segment) => segment.chapter.id == item.chapter.id
+              ).pages[item.index];
               return Image.network(
-                pages[index].url,
+                image.url,
                 width: MediaQuery.sizeOf(context).width,
-                headers: pages[index].headers,
+                headers: image.headers,
                 fit: BoxFit.fitWidth,
                 frameBuilder: (context, child, frame, wasSync) => frame == null
                   ? const SizedBox(height: 170,
@@ -241,7 +426,7 @@ class _ReaderPageState extends State<ReaderPage> {
                   : child,
                 errorBuilder: (context, error, stack) => Container(
                   height: 170, color: Colors.white10, alignment: Alignment.center,
-                  child: Text('Страница ${index + 1} не загрузилась',
+                  child: Text('Страница ${item.index + 1} не загрузилась',
                     style: const TextStyle(color: Colors.white60))),
               );
             },
@@ -260,7 +445,7 @@ class _ReaderPageState extends State<ReaderPage> {
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () => Navigator.maybePop(context),
               ),
-              title: Text(widget.chapter.name,
+              title: Text(_activeChapter.name,
                 maxLines: 1, overflow: TextOverflow.ellipsis),
             )),
         if (_controlsVisible)
