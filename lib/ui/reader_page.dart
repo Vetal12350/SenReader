@@ -29,6 +29,45 @@ class _ReaderPageState extends State<ReaderPage> {
   final ValueNotifier<int> _visiblePage = ValueNotifier(0);
   late List<Chapter> _chapters;
   bool _loadingChapters = false;
+  // Distraction-free by default; users reveal controls with a central tap.
+  bool _controlsVisible = false;
+  Offset? _pointerStart;
+  DateTime? _pointerStartAt;
+  bool _pointerMoved = false;
+
+  void _onReaderPointerDown(PointerDownEvent event) {
+    _pointerStart = event.position;
+    _pointerStartAt = DateTime.now();
+    _pointerMoved = false;
+  }
+
+  void _onReaderPointerMove(PointerMoveEvent event) {
+    if (_pointerStart != null &&
+        (event.position - _pointerStart!).distance > 16) {
+      _pointerMoved = true;
+    }
+  }
+
+  void _onReaderPointerUp(PointerUpEvent event) {
+    final start = _pointerStart;
+    final at = _pointerStartAt;
+    _pointerStart = null;
+    _pointerStartAt = null;
+    if (start == null || at == null || _pointerMoved ||
+        (event.position - start).distance > 16 ||
+        DateTime.now().difference(at) > const Duration(milliseconds: 450)) {
+      return;
+    }
+    final size = MediaQuery.sizeOf(context);
+    final origin = (context.findRenderObject() as RenderBox).localToGlobal(Offset.zero);
+    final local = event.position - origin;
+    if (local.dx < size.width * 0.22 || local.dx > size.width * 0.78 ||
+        local.dy < size.height * 0.2 || local.dy > size.height * 0.8) {
+      return;
+    }
+    if (mounted) setState(() => _controlsVisible = !_controlsVisible);
+  }
+
 
   @override void initState() {
     super.initState();
@@ -185,11 +224,18 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.chapter.name,
-        maxLines: 1, overflow: TextOverflow.ellipsis)),
-      bottomNavigationBar: _toolbar(),
       backgroundColor: Colors.black,
-      body: FutureBuilder<List<PageImage>>(
+      body: Stack(children: [
+        Positioned.fill(child: Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerDown: _onReaderPointerDown,
+          onPointerMove: _onReaderPointerMove,
+          onPointerUp: _onReaderPointerUp,
+          onPointerCancel: (_) {
+            _pointerStart = null;
+            _pointerStartAt = null;
+          },
+          child: FutureBuilder<List<PageImage>>(
         future: future,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
@@ -234,6 +280,24 @@ class _ReaderPageState extends State<ReaderPage> {
           );
         },
       ),
+        )),
+        if (_controlsVisible)
+          Positioned(top: 0, left: 0, right: 0,
+            height: kToolbarHeight + MediaQuery.paddingOf(context).top,
+            child: AppBar(
+              backgroundColor: const Color(0xEE151317),
+              foregroundColor: Colors.white,
+              leading: IconButton(
+                tooltip: 'Назад к произведению',
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => Navigator.maybePop(context),
+              ),
+              title: Text(widget.chapter.name,
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            )),
+        if (_controlsVisible)
+          Positioned(bottom: 0, left: 0, right: 0, child: _toolbar()),
+      ]),
     );
   }
 }
