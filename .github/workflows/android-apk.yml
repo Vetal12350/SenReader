@@ -39,3 +39,35 @@ jobs:
           path: build/app/outputs/flutter-apk/app-debug.apk
           if-no-files-found: error
           retention-days: 7
+
+  # Run with elevated permissions ONLY after the build+tests succeed on main.
+  # Pull-request code never receives a write-capable token.
+  publish-direct-apk:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified APK from this workflow
+        uses: actions/download-artifact@v4
+        with:
+          name: SenReader-debug-APK
+          path: apk
+      - name: Publish direct APK link (no ZIP required)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s apk/app-debug.apk
+          cp apk/app-debug.apk SenReader-latest-debug.apk
+          if ! gh release view qa-latest >/dev/null 2>&1; then
+            gh release create qa-latest --target "$GITHUB_SHA" \
+              --title "SenReader Android QA (прямая загрузка)" \
+              --notes "Тестовая Android-сборка. Подпись debug-APK может отличаться между запусками. Не удаляйте установленное приложение без резервной копии данных." \
+              --prerelease
+          fi
+          gh release upload qa-latest SenReader-latest-debug.apk --clobber
+          gh release edit qa-latest --notes "Проверенная сборка main, commit: ${GITHUB_SHA}. Устанавливайте поверх имеющейся версии только при совпадающей подписи. Не удаляйте старую версию без резервного копирования."
