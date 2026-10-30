@@ -317,6 +317,30 @@ class _DetailPageState extends State<DetailPage> {
                 children: detail!.genres.toSet().map((g) => Chip(
                   label: Text(g, style: const TextStyle(fontSize: 11)))).toList()),
             ],
+            if (detail!.creators.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              const Text('Создатели', style: TextStyle(fontSize: 18,
+                fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              for (final creator in detail!.creators)
+                Padding(padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.person_outline, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(creator.name,
+                            style: const TextStyle(fontWeight: FontWeight.w600)),
+                          if (creator.roles.isNotEmpty)
+                            Text(creator.roles.join(', '),
+                              style: TextStyle(fontSize: 12,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                        ],
+                      )),
+                    ])),
+            ],
           ],
           if (showChapters) ...[
           const SizedBox(height: 24),

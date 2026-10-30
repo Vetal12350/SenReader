@@ -35,10 +35,16 @@ class PageImage {
   final Map<String, String> headers;
 }
 
+class MangaCreator {
+  const MangaCreator({required this.name, this.roles = const []});
+  final String name;
+  final List<String> roles;
+}
+
 class MangaDetail {
   const MangaDetail({required this.entry, required this.chapters,
     this.description = '', this.genres = const [], this.rating,
-    this.alternativeNames = const []});
+    this.alternativeNames = const [], this.creators = const []});
   final MangaEntry entry;
   final List<Chapter> chapters;
   final String description;
@@ -46,6 +52,8 @@ class MangaDetail {
   /// Verified source rating converted to a 0–10 scale. Null = unknown.
   final double? rating;
   final List<String> alternativeNames;
+  /// Verified creator credits supplied by the selected source, if present.
+  final List<MangaCreator> creators;
 }
 
 class UnifiedManga {
