@@ -1,9 +1,11 @@
 import 'dart:ui';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../core/models.dart';
 import '../data/catalog_repository.dart';
 import '../data/library_store.dart';
 import '../core/title_metadata.dart';
+import '../data/similar_titles.dart';
 import '../data/chapter_alert_controller.dart';
 import 'chapter_alert_offer.dart';
 import 'reader_page.dart';
@@ -22,6 +24,7 @@ class _DetailPageState extends State<DetailPage> {
   late UnifiedManga book;
   late String selected;
   MangaDetail? detail;
+  Future<List<MangaEntry>>? _similarFuture;
   bool loading = true;
   String? error;
   bool showChapters = true;
@@ -59,7 +62,7 @@ class _DetailPageState extends State<DetailPage> {
     final request = ++_request;
     final sourceKey = selected;
     _attempted.add(sourceKey);
-    setState(() { loading = true; error = null; detail = null; });
+    setState(() { loading = true; error = null; detail = null; _similarFuture = null; });
     try {
       final source = widget.repository.sources[sourceKey];
       if (source == null) throw StateError('Источник $sourceKey недоступен');
@@ -103,6 +106,65 @@ class _DetailPageState extends State<DetailPage> {
     final pending = _load();
     await widget.library.setPreferredSource(book, value);
     await pending;
+  }
+
+  /// An optional, label-based discovery block from real Senkuro catalog data.
+  /// A shared label is not an official franchise/series relation.
+  Future<List<MangaEntry>> _findSimilar(MangaDetail current) async {
+    if (current.genres.isEmpty) return const [];
+    final source = widget.repository.sources['senkuro'];
+    if (source == null) return const [];
+    try {
+      return similarBySourceTags(book.title, current.genres, await source.popular());
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  Widget _similarSection(MangaDetail current) {
+    _similarFuture ??= _findSimilar(current);
+    return FutureBuilder<List<MangaEntry>>(future: _similarFuture,
+      builder: (context, snapshot) {
+        final entries = snapshot.data ?? const <MangaEntry>[];
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const SizedBox(height: 20),
+          const Text('Похожие по тегам', style: TextStyle(
+            fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 5),
+          Text('Подборка из доступного каталога Senkuro, не официальные связи',
+            style: TextStyle(fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant)),
+          const SizedBox(height: 12),
+          if (snapshot.connectionState != ConnectionState.done)
+            const LinearProgressIndicator()
+          else if (entries.isEmpty)
+            Text('Совпадений по меткам пока нет',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant))
+          else
+            SingleChildScrollView(scrollDirection: Axis.horizontal,
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final entry in entries) ...[
+                    SizedBox(width: 116, child: MangaTile(
+                      book: UnifiedManga(title: entry.title,
+                        entries: {'senkuro': entry}),
+                      onTap: () {
+                        final recommendation = UnifiedManga(
+                          title: entry.title, entries: {'senkuro': entry});
+                        unawaited(widget.library.markViewed(recommendation));
+                        Navigator.push(context, MaterialPageRoute(
+                          builder: (_) => DetailPage(
+                            book: recommendation,
+                            repository: widget.repository,
+                            library: widget.library, alerts: alerts)));
+                      },
+                    )),
+                    const SizedBox(width: 10),
+                  ],
+                ])),
+        ]);
+      });
   }
 
   void _retry() {
@@ -317,6 +379,7 @@ class _DetailPageState extends State<DetailPage> {
                 children: detail!.genres.toSet().map((g) => Chip(
                   label: Text(g, style: const TextStyle(fontSize: 11)))).toList()),
             ],
+            _similarSection(detail!),
             if (detail!.creators.isNotEmpty) ...[
               const SizedBox(height: 18),
               const Text('Создатели', style: TextStyle(fontSize: 18,
