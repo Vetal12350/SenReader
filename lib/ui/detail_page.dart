@@ -220,9 +220,12 @@ class _DetailPageState extends State<DetailPage> {
           animation: widget.library,
           builder: (context, _) {
             final saved = widget.library.get(book);
-            final status = saved?.status ?? 'planned';
+            final status = saved?.status ?? 'viewed';
             final label = status == 'reading' ? 'Читаю' :
-                status == 'completed' ? 'Прочитано' : 'В планах';
+                status == 'completed' ? 'Прочитано' :
+                status == 'planned' ? 'В планах' :
+                status == 'dropped' ? 'Заброшено' :
+                saved == null ? 'Не в списках' : 'Открыто';
             return Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
               PopupMenuButton<String>(
                 tooltip: 'Статус произведения',
@@ -239,6 +242,8 @@ class _DetailPageState extends State<DetailPage> {
                   const PopupMenuItem(value: 'reading', child: Text('Читаю')),
                   const PopupMenuItem(value: 'planned', child: Text('В планах')),
                   const PopupMenuItem(value: 'completed', child: Text('Прочитано')),
+                  const PopupMenuItem(value: 'dropped', child: Text('Заброшено')),
+                  const PopupMenuItem(value: 'viewed', child: Text('Открыто')),
                   if (widget.library.has(book))
                     const PopupMenuItem(value: 'remove',
                       child: Text('Убрать из библиотеки')),
@@ -252,8 +257,15 @@ class _DetailPageState extends State<DetailPage> {
                   ]),
                 ),
               ),
-              const SizedBox(width: 8),
-              Text(saved == null ? 'Нажми, чтобы добавить в библиотеку' : 'В библиотеке',
+              ActionChip(
+                avatar: Icon(saved?.favorite == true
+                    ? Icons.favorite : Icons.favorite_border, size: 18),
+                label: Text(saved?.favorite == true ? 'Любимое ♥' : 'В любимое'),
+                onPressed: () => widget.library.setFavorite(book,
+                  saved?.favorite != true, preferredSource: selected),
+              ),
+              Text(saved == null ? 'Нажми, чтобы добавить в библиотеку' :
+                  status == 'viewed' ? 'Недавно открыто' : 'В библиотеке',
                 style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11)),
             ]);
           },
@@ -332,7 +344,8 @@ class _DetailPageState extends State<DetailPage> {
                             Theme.of(context).colorScheme.onSurfaceVariant),
                       onPressed: () async {
                         if (read) {
-                          await widget.library.unmarkRead(book, chapter, selected);
+                          await widget.library.unmarkRead(book, chapter, selected,
+                            availableChapters: detail!.chapters);
                         } else {
                           await widget.library.markRead(book, chapter, selected,
                             availableChapters: detail!.chapters);
