@@ -65,6 +65,7 @@ class _MainShellState extends State<MainShell> {
   String libraryFilter = 'all';
   String catalogSourceFilter = 'all';
   String catalogSort = 'default';
+  String? catalogTagFilter;
   CatalogResult? result;
   bool loading = false;
   late final ChapterAlertController alerts = widget.alerts ?? ChapterAlertController();
@@ -104,8 +105,10 @@ class _MainShellState extends State<MainShell> {
   /// they are not a claim of server-wide filtered or chronological ranking.
   List<UnifiedManga> _visibleCatalogBooks() {
     final books = (result?.books ?? const <UnifiedManga>[])
-        .where((book) => catalogSourceFilter == 'all' ||
-            book.entries.containsKey(catalogSourceFilter))
+        .where((book) => (catalogSourceFilter == 'all' ||
+            book.entries.containsKey(catalogSourceFilter)) &&
+          (catalogTagFilter == null || book.entries.values.any(
+            (entry) => entry.tags.contains(catalogTagFilter))))
         .toList();
     if (catalogSort == 'titleAsc') {
       books.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
@@ -113,6 +116,106 @@ class _MainShellState extends State<MainShell> {
       books.sort((a, b) => b.title.toLowerCase().compareTo(a.title.toLowerCase()));
     }
     return books;
+  }
+
+  List<String> get _catalogTags {
+    final counts = <String, int>{};
+    for (final book in result?.books ?? const <UnifiedManga>[]) {
+      for (final tag in book.entries.values.expand((e) => e.tags).toSet()) {
+        counts.update(tag, (value) => value + 1, ifAbsent: () => 1);
+      }
+    }
+    final tags = counts.keys.toList()
+      ..sort((a, b) {
+        final byCount = counts[b]!.compareTo(counts[a]!);
+        return byCount == 0 ? a.compareTo(b) : byCount;
+      });
+    return tags;
+  }
+
+  void _openCatalogTags() {
+    var search = '';
+    showModalBottomSheet<void>(context: context, isScrollControlled: true,
+      useSafeArea: true, builder: (sheetContext) =>
+        StatefulBuilder(builder: (sheetContext, setSheet) {
+          final tags = _catalogTags.where((tag) =>
+            tag.toLowerCase().contains(search.toLowerCase())).toList();
+          return FractionallySizedBox(heightFactor: .78,
+            child: Padding(padding: const EdgeInsets.all(16),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(children: [
+                  const Expanded(child: Text('Фильтры по тегам',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold))),
+                  TextButton(onPressed: () {
+                    setState(() => catalogTagFilter = null);
+                    setSheet(() {});
+                  }, child: const Text('Сбросить')),
+                ]),
+                const Text('Применяются к загруженному каталогу. '
+                  'Метки доступны только для произведений, '
+                  'которые передал источник.'),
+                const SizedBox(height: 12),
+                TextField(onChanged: (v) => setSheet(() => search = v),
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search),
+                    hintText: 'Поиск жанра или тега')),
+                const SizedBox(height: 12),
+                Expanded(child: tags.isEmpty
+                  ? const Center(child: Text('Сейчас у загруженных произведений нет меток'))
+                  : ListView(children: [
+                      Wrap(spacing: 6, runSpacing: 3,
+                        children: tags.map((tag) => FilterChip(
+                          label: Text(tag),
+                          selected: catalogTagFilter == tag,
+                          onSelected: (selected) {
+                            setState(() => catalogTagFilter = selected ? tag : null);
+                            setSheet(() {});
+                          },
+                        )).toList()),
+                    ])),
+                SizedBox(width: double.infinity,
+                  child: FilledButton(onPressed: () => Navigator.pop(sheetContext),
+                    child: Text('Показать ${_visibleCatalogBooks().length} результатов'))),
+              ])),
+          );
+        }),
+    );
+  }
+
+  Widget _sourceRow(String title, Iterable<UnifiedManga> books) {
+    final items = books.take(12).toList();
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Padding(padding: const EdgeInsets.only(top: 25, bottom: 8),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SectionTitle(title, subtitle: 'Подборка из доступного каталога'),
+        const SizedBox(height: 12),
+        SingleChildScrollView(scrollDirection: Axis.horizontal,
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final book in items) ...[
+                SizedBox(width: 116, child: MangaTile(
+                  book: book, onTap: () => _open(book))),
+                const SizedBox(width: 10),
+              ],
+            ])),
+      ]));
+  }
+
+  Widget _homeCollections() {
+    final books = result?.books ?? const <UnifiedManga>[];
+    final topTags = _catalogTags.where((tag) =>
+      books.where((book) => book.entries.values.any(
+        (entry) => entry.tags.contains(tag))).length >= 3).take(2);
+    return Column(children: [
+      _sourceRow('На ReadManga',
+        books.where((book) => book.entries.containsKey('readmanga'))),
+      _sourceRow('На ReManga',
+        books.where((book) => book.entries.containsKey('remanga'))),
+      for (final tag in topTags)
+        _sourceRow('По тегу: $tag',
+          books.where((book) => book.entries.values.any(
+            (entry) => entry.tags.contains(tag)))),
+    ]);
   }
 
   Widget _catalogControls() => Column(
@@ -135,6 +238,13 @@ class _MainShellState extends State<MainShell> {
               catalogSourceFilter == 'senkuro' ? 'Senkuro' :
               catalogSourceFilter == 'readmanga' ? 'ReadManga' : 'ReManga'),
           ),
+        ),
+        ActionChip(
+          key: const Key('catalog-tag-filters'),
+          avatar: const Icon(Icons.tune, size: 18),
+          label: Text(catalogTagFilter == null ?
+            'Фильтры' : 'Тег: $catalogTagFilter'),
+          onPressed: _openCatalogTags,
         ),
         PopupMenuButton<String>(
           tooltip: 'Сортировка каталога',
@@ -422,6 +532,7 @@ class _MainShellState extends State<MainShell> {
                   ]),
                 ),
               _continueReading(),
+              if (!loading && result != null) _homeCollections(),
               const SizedBox(height: 30),
             ] else ...[
               TextField(
