@@ -68,6 +68,8 @@ class _MainShellState extends State<MainShell> {
   String? catalogType;
   String? catalogStatus;
   String? catalogTranslationStatus;
+  String? catalogLabelSlug;
+  String? catalogLabelTitle;
   String? catalogTagFilter;
   String catalogSort = 'popularity';
   CatalogResult? result;
@@ -102,15 +104,18 @@ class _MainShellState extends State<MainShell> {
     final type = catalogType;
     final status = catalogStatus;
     final translation = catalogTranslationStatus;
+    final label = catalogLabelSlug;
     final sort = catalogSort;
     setState(() => loading = true);
     CatalogResult next;
     final senkuro = widget.repository.sources['senkuro'];
     if (isCatalog && senkuro is SenkuroSource &&
-        (status != null || translation != null)) {
+        (status != null || translation != null || label != null ||
+            (type != null && thisQuery.isNotEmpty))) {
       try {
         final entries = await senkuro.filteredCatalog(query: thisQuery,
-          type: type, status: status, translationStatus: translation);
+          type: type, status: status, translationStatus: translation,
+          label: label);
         next = CatalogResult(
           books: [for (final entry in entries)
             UnifiedManga(title: entry.title, entries: {'senkuro': entry})],
@@ -137,7 +142,8 @@ class _MainShellState extends State<MainShell> {
     }
     if (!mounted || thisQuery != query || isCatalog != (tab == 1) ||
         (isCatalog && (type != catalogType || status != catalogStatus ||
-            translation != catalogTranslationStatus || sort != catalogSort))) return;
+            translation != catalogTranslationStatus ||
+            label != catalogLabelSlug || sort != catalogSort))) return;
     setState(() {
       result = next;
       if (!isCatalog && thisQuery.isEmpty) _homeResult = next;
@@ -250,6 +256,10 @@ class _MainShellState extends State<MainShell> {
 
   void _openCatalogTags() {
     var search = '';
+    final source = widget.repository.sources['senkuro'];
+    final labelsFuture = source is SenkuroSource
+        ? source.catalogLabels().catchError((Object _) => <SenkuroCatalogLabel>[])
+        : null;
     showModalBottomSheet<void>(context: context, useSafeArea: true,
       isScrollControlled: true, builder: (sheetContext) =>
         StatefulBuilder(builder: (sheetContext, setSheet) {
@@ -268,6 +278,7 @@ class _MainShellState extends State<MainShell> {
                 TextButton(onPressed: () => select(() {
                   catalogType = null; catalogStatus = null;
                   catalogTranslationStatus = null; catalogTagFilter = null;
+                  catalogLabelSlug = null; catalogLabelTitle = null;
                 }), child: const Text('Сбросить')),
               ]),
               const SizedBox(height: 12),
@@ -307,7 +318,38 @@ class _MainShellState extends State<MainShell> {
                       catalogTranslationStatus = option.$1)),
               ]),
               const SizedBox(height: 12),
-              const Text('Жанры и метки (из загруженных результатов)'),
+              const Text('Жанры Senkuro'),
+              TextField(onChanged: (v) => setSheet(() => search = v),
+                decoration: const InputDecoration(prefixIcon: Icon(Icons.search),
+                  hintText: 'Поиск жанра, темы или тега')),
+              if (labelsFuture != null)
+                FutureBuilder<List<SenkuroCatalogLabel>>(future: labelsFuture,
+                  builder: (context, snapshot) {
+                    if (!snapshot.hasData) {
+                      return const Padding(padding: EdgeInsets.all(12),
+                        child: Center(child: CircularProgressIndicator()));
+                    }
+                    final found = snapshot.data!.where((entry) =>
+                      search.isNotEmpty && entry.title.toLowerCase()
+                        .contains(search.toLowerCase())).take(35).toList();
+                    return Wrap(spacing: 5, children: [
+                      if (catalogLabelSlug != null)
+                        InputChip(label: Text(catalogLabelTitle ?? catalogLabelSlug!),
+                          onDeleted: () => select(() {
+                            catalogLabelSlug = null; catalogLabelTitle = null;
+                          })),
+                      for (final entry in found)
+                        FilterChip(label: Text(entry.title),
+                          selected: catalogLabelSlug == entry.slug,
+                          onSelected: (yes) => select(() {
+                            catalogLabelSlug = yes ? entry.slug : null;
+                            catalogLabelTitle = yes ? entry.title : null;
+                            catalogTagFilter = null;
+                          })),
+                    ]);
+                  }),
+              const SizedBox(height: 12),
+              const Text('Метки загруженных произведений (локально)'),
               TextField(onChanged: (v) => setSheet(() => search = v),
                 decoration: const InputDecoration(prefixIcon: Icon(Icons.search),
                   hintText: 'Поиск жанра или тега')),
@@ -387,7 +429,8 @@ class _MainShellState extends State<MainShell> {
           key: const Key('catalog-tag-filters'),
           avatar: const Icon(Icons.tune, size: 18),
           label: Text(catalogTagFilter == null && catalogType == null &&
-              catalogStatus == null && catalogTranslationStatus == null ?
+              catalogStatus == null && catalogTranslationStatus == null &&
+              catalogLabelSlug == null ?
             'Фильтры' : 'Тег: $catalogTagFilter'),
           onPressed: _openCatalogTags,
         ),
