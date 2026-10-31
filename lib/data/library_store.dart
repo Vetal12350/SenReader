@@ -15,6 +15,8 @@ class SavedBook {
     Set<String>? initializedSources,
     this.favorite = false,
     this.lastMarkedChapter = '',
+    this.latestKnownChapterId = '',
+    this.latestKnownSource = '',
     String preferredSource = '',
     int readHistoryVersion = 2,
   })  : readChapterKeys = readChapterKeys ?? <String>{},
@@ -57,6 +59,9 @@ class SavedBook {
   String lastChapter;
   /// Manual eye taps may mark a chapter without moving the reader position.
   String lastMarkedChapter;
+  /// Last confirmed chapter of this source, not inferred from user progress.
+  String latestKnownChapterId;
+  String latestKnownSource;
   String lastSource;
   String preferredSource;
   String status; // viewed, planned, reading, completed, dropped
@@ -76,6 +81,8 @@ class SavedBook {
     'entries': entries.map((k, v) => MapEntry(k, v.toJson())),
     'lastChapter': lastChapter, 'lastSource': lastSource, 'status': status,
     'lastMarkedChapter': lastMarkedChapter,
+    'latestKnownChapterId': latestKnownChapterId,
+    'latestKnownSource': latestKnownSource,
     'favorite': favorite,
     'preferredSource': preferredSource,
     'readHistoryVersion': 2,
@@ -92,6 +99,8 @@ class SavedBook {
       entries: raw.map((k, v) => MapEntry(k.toString(), MangaEntry.fromJson(Map<String, dynamic>.from(v as Map)))),
       lastChapter: json['lastChapter'] as String? ?? '',
       lastMarkedChapter: json['lastMarkedChapter'] as String? ?? '',
+      latestKnownChapterId: json['latestKnownChapterId'] as String? ?? '',
+      latestKnownSource: json['latestKnownSource'] as String? ?? '',
       lastSource: json['lastSource'] as String? ?? '',
       preferredSource: json['preferredSource'] as String? ?? '',
       readHistoryVersion: (json['readHistoryVersion'] as num?)?.toInt() ?? 1,
@@ -273,6 +282,25 @@ class LibraryStore extends ChangeNotifier {
     if (item == null || item.preferredSource != source) return;
     item.seenChapterKeys.addAll(seenKeys);
     item.initializedSources.add(source);
+    await _save();
+  }
+
+  /// Record the newest VERIFIED chapter after a successful source detail load.
+  /// A simple view must never add a title to bookmarks.
+  Future<void> recordLatestChapter(UnifiedManga book, String source,
+      Iterable<Chapter> chapters) async {
+    final numbered = chapters.where((c) => canonicalChapterKey(c) != null)
+        .toList();
+    if (numbered.isEmpty) return;
+    numbered.sort((a, b) => compareChapterChronology(a, b)!);
+    final newest = numbered.last;
+    await _reload();
+    final item = get(book);
+    if (item == null || item.preferredSource != source) return;
+    if (item.latestKnownChapterId == newest.id &&
+        item.latestKnownSource == source) return;
+    item.latestKnownChapterId = newest.id;
+    item.latestKnownSource = source;
     await _save();
   }
 
