@@ -244,6 +244,9 @@ class _ReaderPageState extends State<ReaderPage> {
 
     if (first == null) return;
     final progress = first;
+    // Prefetching the next chapter can shift visible items while a resumed
+    // reader is opening. Never treat layout-only movement as user navigation.
+    if (_activeChapter.id != progress.chapter.id && !_hasForwardScrolled) return;
     if (_activeChapter.id != progress.chapter.id) {
       _saveTimer?.cancel();
       unawaited(_flushPosition());
