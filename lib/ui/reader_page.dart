@@ -362,6 +362,19 @@ class _ReaderPageState extends State<ReaderPage> {
       availableChapters: _chapters);
   }
 
+  Future<void> _toggleRead() async {
+    final chapter = _activeChapter;
+    if (widget.library.isChapterRead(widget.book, chapter, widget.sourceKey)) {
+      _manuallyUnreadChapters.add(chapter.id);
+      await _autoMarkChain;
+      await widget.library.unmarkRead(widget.book, chapter, widget.sourceKey,
+        availableChapters: _chapters);
+    } else {
+      _manuallyUnreadChapters.remove(chapter.id);
+      await _mark();
+    }
+  }
+
   Future<void> _go(Chapter chapter) async {
     if (chapter.id == _activeChapter.id) return;
     _saveTimer?.cancel();
@@ -805,7 +818,7 @@ class _ReaderPageState extends State<ReaderPage> {
                   final read = widget.library.isChapterRead(widget.book,
                     _activeChapter, widget.sourceKey);
                   return IconButton(tooltip: read ? 'Прочитано' : 'Отметить прочитанной',
-                    onPressed: _mark, icon: Icon(read
+                    onPressed: _toggleRead, icon: Icon(read
                       ? Icons.bookmark_added_outlined : Icons.bookmark_add_outlined));
                 }),
                 IconButton(tooltip: 'Страница тайтла',
