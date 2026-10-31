@@ -223,7 +223,7 @@ class _DetailPageState extends State<DetailPage> {
           onPressed: target == null ? null : () => _openChapter(target!),
           icon: const Icon(Icons.menu_book_rounded),
           label: Text(saved?.lastChapter.isNotEmpty == true
-            ? 'Продолжить ${RegExp(r'[0-9]+(?:[.,][0-9]+)?').firstMatch(target.name)?.group(0) ?? target.name} главу' : 'Читать'),
+            ? 'Продолжить ${RegExp(r'[0-9]+(?:[.,][0-9]+)?').firstMatch(target!.name)?.group(0) ?? target.name} главу' : 'Читать'),
         )),
       );
     },
