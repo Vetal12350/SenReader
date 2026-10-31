@@ -1,8 +1,9 @@
 class MangaEntry {
   const MangaEntry({required this.source, required this.id, required this.title,
-    this.coverUrl = '', this.tags = const [], this.rating});
+    this.coverUrl = '', this.tags = const [], this.rating, this.remoteId = ''});
   final String source;
   final String id;
+  final String remoteId; // Source's stable API ID if different from slug.
   final String title;
   final String coverUrl;
   final List<String> tags; // Public source labels, empty when not provided.
@@ -12,11 +13,13 @@ class MangaEntry {
         'source': source, 'id': id, 'title': title, 'coverUrl': coverUrl,
         if (tags.isNotEmpty) 'tags': tags,
         if (rating != null) 'rating': rating,
+        if (remoteId.isNotEmpty) 'remoteId': remoteId,
       };
 
   factory MangaEntry.fromJson(Map<String, dynamic> json) => MangaEntry(
         source: json['source'] as String? ?? '',
         id: json['id'] as String? ?? '',
+        remoteId: json['remoteId'] as String? ?? '',
         title: json['title'] as String? ?? '',
         coverUrl: json['coverUrl'] as String? ?? '',
         rating: tenPointScore(json['rating']),
@@ -47,10 +50,13 @@ class MangaCreator {
 class MangaDetail {
   const MangaDetail({required this.entry, required this.chapters,
     this.description = '', this.genres = const [], this.rating,
-    this.alternativeNames = const [], this.creators = const []});
+    this.alternativeNames = const [], this.creators = const [],
+    this.publicationStatus, this.translationStatus});
   final MangaEntry entry;
   final List<Chapter> chapters;
   final String description;
+  final String? publicationStatus;
+  final String? translationStatus;
   final List<String> genres;
   /// Verified source rating converted to a 0–10 scale. Null = unknown.
   final double? rating;
