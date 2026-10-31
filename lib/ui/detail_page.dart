@@ -154,8 +154,7 @@ class _DetailPageState extends State<DetailPage> {
                       onTap: () {
                         final recommendation = UnifiedManga(
                           title: entry.title, entries: {'senkuro': entry});
-                        unawaited(widget.library.markViewed(recommendation));
-                        Navigator.push(context, MaterialPageRoute(
+                         Navigator.push(context, MaterialPageRoute(
                           builder: (_) => DetailPage(
                             book: recommendation,
                             repository: widget.repository,
