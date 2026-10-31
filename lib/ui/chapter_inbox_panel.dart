@@ -112,7 +112,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
               leading: ClipRRect(borderRadius: BorderRadius.circular(7),
                 child: CoverImage(entry.coverUrl, width: 48, height: 64)),
               title: Text(entry.title, maxLines: 2),
-              subtitle: Text(displayChapterName(entry.chapterName)),
+              subtitle: Text(entry.chapterName),
               trailing: hidden ? const Icon(Icons.visibility_off_outlined)
                 : IconButton(tooltip: 'Скрыть обновление',
                     onPressed: () async {
