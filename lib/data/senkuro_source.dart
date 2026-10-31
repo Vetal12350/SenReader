@@ -91,6 +91,50 @@ query fetchTachiyomiSearchFilters {
     return labels;
   }
 
+  static const _scoreBatchQuery = r'''
+query batchMangaScores($slug0: String!, $slug1: String!, $slug2: String!, $slug3: String!, $slug4: String!, $slug5: String!, $slug6: String!, $slug7: String!, $slug8: String!, $slug9: String!) {
+  a0: manga(slug: $slug0) { score }
+  a1: manga(slug: $slug1) { score }
+  a2: manga(slug: $slug2) { score }
+  a3: manga(slug: $slug3) { score }
+  a4: manga(slug: $slug4) { score }
+  a5: manga(slug: $slug5) { score }
+  a6: manga(slug: $slug6) { score }
+  a7: manga(slug: $slug7) { score }
+  a8: manga(slug: $slug8) { score }
+  a9: manga(slug: $slug9) { score }
+}''';
+
+  /// Optional real aggregate Senkuro scores for filtered catalog cards.
+  /// A missing or rejected score remains absent, never fabricated.
+  Future<List<MangaEntry>> _withVerifiedScores(List<MangaEntry> entries) async {
+    final scored = <MangaEntry>[];
+    for (var start = 0; start < entries.length; start += 10) {
+      final batch = entries.skip(start).take(10).toList();
+      // GraphQL requires ten non-null variables; pad with a valid existing
+      // slug and only use aliases corresponding to real entries.
+      if (batch.isEmpty) continue;
+      Map<String, dynamic> scores = const {};
+      try {
+        final vars = <String, dynamic>{
+          for (var i = 0; i < 10; i++)
+            'slug$i': batch[i < batch.length ? i : 0].id,
+        };
+        scores = await _gql('batchMangaScores', _scoreBatchQuery, vars);
+      } catch (_) { /* Keep the source-backed results without a badge. */ }
+      for (var i = 0; i < batch.length; i++) {
+        final entry = batch[i];
+        final raw = scores['a$i'];
+        final score = raw is Map ? tenPointScore(raw['score']) : null;
+        scored.add(MangaEntry(source: entry.source, id: entry.id,
+          remoteId: entry.remoteId, title: entry.title,
+          coverUrl: entry.coverUrl, tags: entry.tags,
+          rating: score ?? entry.rating));
+      }
+    }
+    return scored;
+  }
+
   static const _filteredQuery = r'''
 query searchTachiyomiManga(
   $query: String,
@@ -112,7 +156,7 @@ query searchTachiyomiManga(
   Future<List<MangaEntry>> filteredCatalog({
       String query = '', String? type, String? status,
       String? translationStatus, String? label, int offset = 0,
-      String orderField = 'POPULARITY_SCORE'}) async {
+      String orderField = 'POPULARITY_SCORE', bool withRatings = false}) async {
     if (type != null && !const {'MANGA', 'MANHWA', 'MANHUA',
         'COMICS', 'OEL_MANGA', 'RU_MANGA'}.contains(type)) {
       throw ArgumentError.value(type, 'type');
@@ -157,7 +201,8 @@ query searchTachiyomiManga(
       allEdges.addAll(pageNodes.map((node) => {'node': node}));
       if (pageNodes.length < 10) break;
     }
-    return _parseNodes(allEdges);
+    final entries = _parseNodes(allEdges);
+    return withRatings ? _withVerifiedScores(entries) : entries;
   }
 
   static const _searchQuery = r'''
@@ -388,8 +433,17 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
 
   @override Future<List<MangaEntry>> search(String query) async {
     if (query.isEmpty) return popular();
-    final data = await _gql('search', _searchQuery, {'query': query, 'first': 30});
-    return _parseNodes(_edges(data['search']));
+    List<MangaEntry> direct = const [];
+    try {
+      final data = await _gql('search', _searchQuery,
+        {'query': query, 'first': 30});
+      direct = _parseNodes(_edges(data['search']));
+      if (direct.isNotEmpty) return direct;
+    } catch (_) {
+      // Fallback uses Senkuro's other public search backend, including
+      // its original/alternative-name index.
+    }
+    return filteredCatalog(query: query, withRatings: true);
   }
 
   static String _flatten(dynamic input) {

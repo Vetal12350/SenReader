@@ -38,6 +38,38 @@ class CatalogRepository {
     );
   }
 
+  /// Choose only among verified chapter lists; never overwrite a user's
+  /// explicitly saved preferred source. A tie keeps the current source.
+  Future<String> mostCompleteSource(UnifiedManga book, String current,
+      {int? currentChapterCount}) async {
+    if (book.entries.length < 2) return current;
+    final counts = await Future.wait(book.entries.entries.map((entry) async {
+      if (entry.key == current && currentChapterCount != null) {
+        return (entry.key, currentChapterCount);
+      }
+      final source = sources[entry.key];
+      if (source == null) return (entry.key, -1);
+      try {
+        final detail = await source.detail(entry.value)
+          .timeout(const Duration(seconds: 12));
+        return (entry.key, detail.chapters.length);
+      } catch (_) {
+        return (entry.key, -1);
+      }
+    }));
+    final currentCount = counts.where((item) => item.$1 == current)
+      .map((item) => item.$2).firstOrNull ?? -1;
+    var winner = current;
+    var maxCount = currentCount;
+    for (final item in counts) {
+      if (item.$2 > maxCount && item.$2 > 0) {
+        maxCount = item.$2;
+        winner = item.$1;
+      }
+    }
+    return winner;
+  }
+
   // A matching title can come from multiple sites, but never assume localization
   // equivalence when labels differ. Later versions will add user-approved links.
   Future<UnifiedManga> findOtherSources(UnifiedManga book) async {

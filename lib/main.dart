@@ -4,6 +4,7 @@ import 'core/models.dart';
 import 'core/chapter_identity.dart';
 import 'data/catalog_repository.dart';
 import 'data/senkuro_source.dart';
+import 'data/senkuro_home_cache.dart';
 import 'data/library_store.dart';
 import 'data/reading_suggestions.dart';
 import 'data/chapter_notification_service.dart';
@@ -98,6 +99,7 @@ class _MainShellState extends State<MainShell> {
   final Map<String, Chapter> _newChapters = {};
   int _homeRequest = 0;
   final Map<String, List<MangaEntry>> _senkuroSections = {};
+  final SenkuroHomeCache _homeCache = SenkuroHomeCache();
   late final ChapterAlertController alerts = widget.alerts ?? ChapterAlertController();
   String query = '';
   Timer? debounce;
@@ -142,7 +144,7 @@ class _MainShellState extends State<MainShell> {
         type: catalogType, status: catalogStatus,
         translationStatus: catalogTranslationStatus, label: catalogLabelSlug,
         offset: offset, orderField: catalogSort == 'rating'
-          ? 'SCORE' : 'POPULARITY_SCORE');
+          ? 'SCORE' : 'POPULARITY_SCORE', withRatings: true);
       if (!mounted || version != _catalogGeneration || tab != 1) return;
       final seen = current.map((item) => item.primary.id).toSet();
       final fresh = matches.where((item) => seen.add(item.id)).toList();
@@ -164,7 +166,7 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
-  Future<void> _fetch() async {
+  Future<void> _fetch({bool forceHome = false}) async {
     final thisQuery = query;
     final isCatalog = tab == 1;
     final type = catalogType;
@@ -183,7 +185,8 @@ class _MainShellState extends State<MainShell> {
       try {
         final entries = await senkuro.filteredCatalog(query: thisQuery,
           type: type, status: status, translationStatus: translation,
-          label: label, orderField: sort == 'rating' ? 'SCORE' : 'POPULARITY_SCORE');
+          label: label, orderField: sort == 'rating' ? 'SCORE' : 'POPULARITY_SCORE',
+          withRatings: true);
         next = CatalogResult(
           books: [for (final entry in entries)
             UnifiedManga(title: entry.title, entries: {'senkuro': entry})],
@@ -200,6 +203,22 @@ class _MainShellState extends State<MainShell> {
         next = CatalogResult(
           books: [for (final entry in entries)
             UnifiedManga(title: entry.title, entries: {'senkuro': entry})],
+          warnings: const []);
+      } catch (e) {
+        next = CatalogResult(books: const [], warnings: ['Senkuro: $e']);
+      }
+
+    } else if (!isCatalog && thisQuery.isEmpty && senkuro is SenkuroSource) {
+      try {
+        var entries = forceHome ? null : await _homeCache.load('popular');
+        if (entries == null) {
+          entries = await senkuro.popular();
+          unawaited(_homeCache.save('popular', entries));
+        }
+        next = CatalogResult(
+          books: [for (final entry in entries)
+            UnifiedManga(title: entry.title, entries: {'senkuro': entry})],
+          senkuroPopular: entries,
           warnings: const []);
       } catch (e) {
         next = CatalogResult(books: const [], warnings: ['Senkuro: $e']);
@@ -223,10 +242,10 @@ class _MainShellState extends State<MainShell> {
           translation != null || label != null);
     });
     unawaited(_refreshNewChapters());
-    if (!isCatalog && thisQuery.isEmpty) unawaited(_refreshSenkuroSections());
+    if (!isCatalog && thisQuery.isEmpty) unawaited(_refreshSenkuroSections(force: forceHome));
   }
 
-  Future<void> _refreshSenkuroSections() async {
+  Future<void> _refreshSenkuroSections({bool force = false}) async {
     final source = widget.repository.sources['senkuro'];
     if (source is! SenkuroSource) return;
     final request = ++_homeRequest;
@@ -239,8 +258,12 @@ class _MainShellState extends State<MainShell> {
     ];
     await Future.wait(options.map((option) async {
       try {
-        final list = await source.browseHome(
-          type: option.$2, orderField: option.$3);
+        var list = force ? null : await _homeCache.load(option.$1);
+        if (list == null) {
+          list = await source.browseHome(
+            type: option.$2, orderField: option.$3);
+          if (list.isNotEmpty) unawaited(_homeCache.save(option.$1, list));
+        }
         if (list.isNotEmpty) categories[option.$1] = list;
       } catch (_) {
         // Category-specific failures never hide the regular catalog.
@@ -506,9 +529,8 @@ class _MainShellState extends State<MainShell> {
               enabled: catalogStatus == null && catalogTranslationStatus == null &&
                   catalogLabelSlug == null && query.isEmpty,
               child: const Text('По дате создания')),
-            PopupMenuItem<String>(enabled: false, value: 'chapters', child: Text('По количеству глав · нет данных')),
-            PopupMenuItem<String>(enabled: false, value: 'views', child: Text('По просмотрам · нет данных')),
-            PopupMenuItem<String>(enabled: false, value: 'uploaded', child: Text('По дате залива · нет данных')),
+            // Senkuro exposes SCORE, POPULARITY_SCORE and date-based browse.
+            // There are no verified global sort fields for views/chapter count.
           ],
           child: Chip(avatar: const Icon(Icons.swap_vert, size: 18),
             label: Text(catalogSort == 'rating' ? 'По рейтингу' :
@@ -521,14 +543,19 @@ class _MainShellState extends State<MainShell> {
           label: Text(catalogTagFilter == null && catalogType == null &&
               catalogStatus == null && catalogTranslationStatus == null &&
               catalogLabelSlug == null ?
-            'Фильтры' : 'Тег: $catalogTagFilter'),
+            'Фильтры' : catalogTagFilter != null ?
+              'Тег: $catalogTagFilter' : 'Фильтры активны'),
           onPressed: _openCatalogTags,
         ),
 
       ]),
       Padding(
         padding: const EdgeInsets.only(top: 4, bottom: 12),
-        child: Text('Senkuro · серверная сортировка по рейтингу',
+        child: Text(catalogSort == 'rating'
+          ? 'Senkuro · сортировка по рейтингу'
+          : catalogSort == 'popularity'
+            ? 'Senkuro · сортировка по популярности'
+            : 'Senkuro · сортировка по дате',
           style: TextStyle(fontSize: 11,
             color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ),
@@ -713,7 +740,8 @@ class _MainShellState extends State<MainShell> {
         ]),
         actions: [
           if (tab == 0 || tab == 1)
-            IconButton(tooltip: 'Обновить', icon: const Icon(Icons.refresh), onPressed: _fetch),
+            IconButton(tooltip: 'Обновить', icon: const Icon(Icons.refresh),
+              onPressed: () => _fetch(forceHome: true)),
           IconButton(tooltip: 'Настройки', icon: const Icon(Icons.settings_outlined),
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsPage(
               repository: widget.repository, library: widget.library, alerts: alerts,
@@ -786,7 +814,7 @@ class _MainShellState extends State<MainShell> {
               ]);
         },
       ) : RefreshIndicator(
-        onRefresh: _fetch,
+        onRefresh: () => _fetch(forceHome: true),
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
           children: [
