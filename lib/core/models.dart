@@ -1,15 +1,17 @@
 class MangaEntry {
   const MangaEntry({required this.source, required this.id, required this.title,
-    this.coverUrl = '', this.tags = const []});
+    this.coverUrl = '', this.tags = const [], this.rating});
   final String source;
   final String id;
   final String title;
   final String coverUrl;
   final List<String> tags; // Public source labels, empty when not provided.
+  final double? rating; // Verified 0–10 source rating; null if unavailable.
 
   Map<String, dynamic> toJson() => {
         'source': source, 'id': id, 'title': title, 'coverUrl': coverUrl,
         if (tags.isNotEmpty) 'tags': tags,
+        if (rating != null) 'rating': rating,
       };
 
   factory MangaEntry.fromJson(Map<String, dynamic> json) => MangaEntry(
@@ -17,6 +19,7 @@ class MangaEntry {
         id: json['id'] as String? ?? '',
         title: json['title'] as String? ?? '',
         coverUrl: json['coverUrl'] as String? ?? '',
+        rating: tenPointScore(json['rating']),
         tags: (json['tags'] is List ? (json['tags'] as List) : const [])
             .whereType<String>().where((s) => s.isNotEmpty && s.length <= 80)
             .take(32).toList(),
