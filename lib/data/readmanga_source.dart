@@ -10,6 +10,8 @@ import '../core/source.dart';
 class ReadMangaSource implements MangaSource {
   ReadMangaSource({http.Client? client}) : _client = client;
   final http.Client? _client;
+  // Keep a connection pool for repeated HTML fetches within one session.
+  late final http.Client _session = _client ?? http.Client();
 
   // ReadManga currently links to the ZazaZa host from the GroupLe hub.
   // Keep only this public source as the canonical HTML origin.
@@ -66,10 +68,8 @@ class ReadMangaSource implements MangaSource {
         'Accept-Language': 'ru-RU,ru;q=0.9',
         'Referer': '$baseUrl/',
       };
-      response = await (_client == null
-          ? http.get(uri, headers: headers)
-          : _client.get(uri, headers: headers)
-      ).timeout(const Duration(seconds: 18));
+      response = await _session.get(uri, headers: headers)
+          .timeout(const Duration(seconds: 18));
     } catch (e) {
       throw SourceException('Нет соединения с ReadManga ($e)');
     }
