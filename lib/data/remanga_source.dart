@@ -8,6 +8,8 @@ import '../core/source.dart';
 class ReMangaSource implements MangaSource {
   ReMangaSource({http.Client? client}) : _client = client;
   final http.Client? _client;
+  // Reuse connections during multi-page chapter and catalog requests.
+  late final http.Client _session = _client ?? http.Client();
   static const _api = 'https://api.remanga.org/api/v2/';
   static const _site = 'https://remanga.org/';
   static const maxChapterPages = 5;
@@ -50,8 +52,8 @@ class ReMangaSource implements MangaSource {
     late http.Response response;
     try {
       final headers = {'Accept': 'application/json', ...imageHeaders};
-      response = await (_client == null ? http.get(uri, headers: headers) :
-          _client.get(uri, headers: headers)).timeout(const Duration(seconds: 18));
+      response = await _session.get(uri, headers: headers)
+          .timeout(const Duration(seconds: 18));
     } catch (_) {
       throw SourceException('ReManga: нет соединения или время ожидания истекло.');
     }
