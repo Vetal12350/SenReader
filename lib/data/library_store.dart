@@ -110,10 +110,74 @@ class SavedBook {
   }
 }
 
+/// Validated, non-destructive library transfer for a one-time signing change.
+class LibraryBackupPreview {
+  const LibraryBackupPreview(this.books);
+  final int books;
+}
+
 class LibraryStore extends ChangeNotifier {
   static const storageKey = 'senreader.library.v1';
   final Map<String, SavedBook> _books = {};
   List<SavedBook> get items => _books.values.toList();
+
+  static const _backupFormat = 'senreader.library.backup.v1';
+
+  static List<SavedBook> _decodeBackup(String raw) {
+    // A pasted backup is untrusted input; never import arbitrary prefs or keys.
+    if (raw.length > 2000000) throw const FormatException('Копия слишком большая');
+    final decoded = jsonDecode(raw);
+    if (decoded is! Map || decoded['format'] != _backupFormat ||
+        decoded['books'] is! List) {
+      throw const FormatException('Неверный формат резервной копии');
+    }
+    final list = decoded['books'] as List;
+    if (list.length > 10000) throw const FormatException('Слишком много произведений');
+    final keys = <String>{};
+    final restored = <SavedBook>[];
+    for (final value in list) {
+      if (value is! Map) throw const FormatException('Неверная запись произведения');
+      final book = SavedBook.fromJson(Map<String, dynamic>.from(value));
+      if (book.key.isEmpty || book.entries.isEmpty ||
+          book.entries.entries.any((entry) =>
+            entry.key.isEmpty || entry.value.id.isEmpty ||
+            entry.value.source != entry.key) || !keys.add(book.key)) {
+        throw const FormatException('Повреждена запись произведения');
+      }
+      restored.add(book);
+    }
+    return restored;
+  }
+
+  LibraryBackupPreview previewBackup(String raw) =>
+      LibraryBackupPreview(_decodeBackup(raw).length);
+
+  Future<String> exportBackup() async {
+    await _reload();
+    return jsonEncode({
+      'format': _backupFormat,
+      'books': _books.values.map((book) => book.toJson()).toList(),
+    });
+  }
+
+  /// Existing on-device titles always win; no deletion or overwrite.
+  Future<({int added, int skipped})> importBackup(String raw) async {
+    final incoming = _decodeBackup(raw);
+    await _reload();
+    var added = 0;
+    var skipped = 0;
+    for (final book in incoming) {
+      if (_books.containsKey(book.key)) {
+        skipped++;
+      } else {
+        _books[book.key] = book;
+        added++;
+      }
+    }
+    if (added > 0) await _save();
+    return (added: added, skipped: skipped);
+  }
+
 
   Future<void> load() async {
     await _reload();
