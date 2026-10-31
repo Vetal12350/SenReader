@@ -84,3 +84,41 @@ requirement for future signed updates.
 inaccessible by this method without an existing app export. Do not attempt
 uninstall/reinstall if the backup extraction failed. No private data is sent to
 ChatGPT or GitHub Actions; keep the local JSON out of commits and messages.
+
+
+## Windows one-time setup (trusted local shell, never inside Codex Worker)
+
+The universal Codex Worker creates PRs from GitHub issues and its coding
+subprocess is NOT a secure credential broker. Do not give it the keystore,
+passwords, signing secrets, or authority to rotate a signing identity.
+
+On your own Windows PC, **stop the worker before creating or handling
+credentials**. Install GitHub CLI, JDK 17+ (keytool) and authenticate with
+\`gh auth login\` as the repository owner.
+
+From a trusted clone of SenReader, check only public secret names:
+
+\`\`\`powershell
+powershell -NoProfile -File .\scripts\setup_stable_signing.ps1 -CheckOnly
+\`\`\`
+
+If **none** of the four secrets exist, choose an offline-backed-up private
+folder outside any Git checkout and cloud-synced folder. Create that folder
+first, then run:
+
+\`\`\`powershell
+powershell -NoProfile -File .\scripts\setup_stable_signing.ps1 -Configure -KeystorePath "D:\PrivateKeys\SenReader\senreader-upload.p12"
+\`\`\`
+
+The script prompts for key generation and passwords locally. It sends encrypted
+secret values using GitHub CLI standard input; it neither prints nor commits
+secrets. It refuses to replace any existing GitHub signing secrets, to avoid
+accidental certificate rotation. A **partial** upload requires owner review
+before retry; do not overwrite an active release key.
+
+After setting all four secrets, trigger an ordinary **main** Build Android APK
+workflow and inspect the successful release run and published
+\`SenReader-latest.apk\`. The listing of four names alone does NOT prove a
+valid signature, nor that an already-installed debug APK can update in place.
+The first switch from a different debug certificate still needs a verified
+library export and one-time migration. Never uninstall before backup.
