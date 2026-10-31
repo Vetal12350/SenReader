@@ -1,6 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
+import '../main.dart' show mainTabRequest;
 import '../core/models.dart';
 import '../core/chapter_identity.dart';
 import '../data/catalog_repository.dart';
@@ -64,6 +67,34 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _loadingChapters = false;
   // Distraction-free by default; users reveal controls with a central tap.
   bool _controlsVisible = false;
+  bool _continuous = true;
+  bool _fullScreen = false;
+  bool _pageNumbers = true;
+  bool _fitHeight = false;
+  bool _lightTheme = false;
+  double _brightness = 100;
+  double _autoScrollSeconds = 5;
+  Timer? _autoScrollTimer;
+
+  Future<void> _restoreReaderSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _continuous = prefs.getBool('senreader.reader.continuous') ?? true;
+      _pageNumbers = prefs.getBool('senreader.reader.page_numbers') ?? true;
+      _fitHeight = prefs.getBool('senreader.reader.fit_height') ?? false;
+      _lightTheme = prefs.getBool('senreader.reader.light_theme') ?? false;
+      _brightness = (prefs.getDouble('senreader.reader.brightness') ?? 100).clamp(30.0, 100.0).toDouble();
+      _autoScrollSeconds = (prefs.getDouble('senreader.reader.autoscroll') ?? 5).clamp(1.0, 12.0).toDouble();
+    });
+  }
+
+  Future<void> _setReaderPref(String key, Object value) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (value is bool) await prefs.setBool('senreader.reader.' + key, value);
+    if (value is double) await prefs.setDouble('senreader.reader.' + key, value);
+  }
+
   void _onCenterTap(TapUpDetails details, Size viewport) {
     // The real reader viewport may differ from MediaQuery's logical size
     // (tests, split-screen, inset/resized windows).
@@ -78,6 +109,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override void initState() {
     super.initState();
+    unawaited(_restoreReaderSettings());
     _chapters = widget.chapters;
     _activeChapter = widget.chapter;
     _visiblePage.value = _resumePage;
@@ -277,6 +309,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _appendNextChapter() async {
+    if (!_continuous) { if (mounted) setState(() => _atSeriesEnd = true); return; }
     if (_nextLoading || _atSeriesEnd || _segments.isEmpty ||
         _nextError != null) return;
     setState(() => _nextLoading = true);
@@ -314,6 +347,8 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override void dispose() {
     _positions.itemPositions.removeListener(_onVisiblePages);
+    _autoScrollTimer?.cancel();
+    if (_fullScreen) unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     _saveTimer?.cancel();
     unawaited(_flushPosition());
     _visiblePage.dispose();
@@ -325,6 +360,19 @@ class _ReaderPageState extends State<ReaderPage> {
     await _flushPosition();
     await widget.library.markRead(widget.book, _activeChapter, widget.sourceKey,
       availableChapters: _chapters);
+  }
+
+  Future<void> _toggleRead() async {
+    final chapter = _activeChapter;
+    if (widget.library.isChapterRead(widget.book, chapter, widget.sourceKey)) {
+      _manuallyUnreadChapters.add(chapter.id);
+      await _autoMarkChain;
+      await widget.library.unmarkRead(widget.book, chapter, widget.sourceKey,
+        availableChapters: _chapters);
+    } else {
+      _manuallyUnreadChapters.remove(chapter.id);
+      await _mark();
+    }
   }
 
   Future<void> _go(Chapter chapter) async {
@@ -368,7 +416,7 @@ class _ReaderPageState extends State<ReaderPage> {
             : ListView.builder(itemCount: _chapters.length,
               itemBuilder: (context, index) => ListTile(
                 selected: _chapters[index].id == _activeChapter.id,
-                title: Text(_chapters[index].name),
+                title: Text(displayChapterName(_chapters[index].name)),
                 onTap: () => Navigator.pop(context, _chapters[index]),
               ))),
         ]),
@@ -409,53 +457,204 @@ class _ReaderPageState extends State<ReaderPage> {
     )));
   }
 
+
+  Future<void> _stepChapter(int delta) async {
+    if (_chapters.isEmpty) {
+      try {
+        final entry = widget.book.entries[widget.sourceKey];
+        if (entry == null) return;
+        final info = await widget.repository.sources[widget.sourceKey]!.detail(entry);
+        if (!mounted) return;
+        _chapters = info.chapters;
+      } catch (_) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось загрузить главы')));
+        return;
+      }
+    }
+    final ordered = _chapters.where((e) => canonicalChapterKey(e) != null)
+      .toList()..sort((a, b) => compareChapterChronology(a, b)!);
+    final at = ordered.indexWhere((e) => e.id == _activeChapter.id);
+    if (at < 0 || at + delta < 0 || at + delta >= ordered.length) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Других доступных глав нет')));
+      return;
+    }
+    await _go(ordered[at + delta]);
+  }
+
+  void _jumpPage(int index) {
+    final itemIndex = _itemIndexForPage(_activeChapter, index);
+    if (itemIndex != null && _itemScroll.isAttached) {
+      _itemScroll.jumpTo(index: itemIndex);
+    }
+  }
+
+  void _goToRoot(int destination) {
+    _saveTimer?.cancel();
+    unawaited(_flushPosition());
+    mainTabRequest.value = destination;
+    Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
+  void _exitMenu() {
+    showModalBottomSheet<void>(context: context, useSafeArea: true,
+      builder: (sheet) => SafeArea(child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const ListTile(title: Text('Куда выйти?')),
+          ListTile(leading: const Icon(Icons.menu_book_outlined),
+            title: const Text('К тайтлу'),
+            onTap: () { Navigator.pop(sheet); _openTitle(); }),
+          ListTile(leading: const Icon(Icons.home_outlined),
+            title: const Text('На главную'),
+            onTap: () { Navigator.pop(sheet); _goToRoot(0); }),
+          ListTile(leading: const Icon(Icons.notifications_outlined),
+            title: const Text('В уведомления'),
+            onTap: () { Navigator.pop(sheet); _goToRoot(3); }),
+          ListTile(leading: const Icon(Icons.bookmarks_outlined),
+            title: const Text('В библиотеку'),
+            onTap: () { Navigator.pop(sheet); _goToRoot(2); }),
+          TextButton(onPressed: () => Navigator.pop(sheet),
+            child: const Text('Отмена')),
+        ]),
+      )));
+  }
+
+  void _toggleAutoscroll() {
+    if (_autoScrollTimer != null) {
+      _autoScrollTimer!.cancel();
+      setState(() => _autoScrollTimer = null);
+    } else {
+      setState(() => _autoScrollTimer = Timer.periodic(
+        Duration(milliseconds: (_autoScrollSeconds * 1000).round()),
+        (timer) {
+          if (!mounted || _visiblePage.value >= _pageCount - 1) {
+            timer.cancel();
+            if (mounted) setState(() => _autoScrollTimer = null);
+            return;
+          }
+          _stepPage(1);
+        }));
+    }
+  }
+
+  void _readerSettings() {
+    showModalBottomSheet<void>(context: context, isScrollControlled: true,
+      useSafeArea: true, builder: (sheet) => StatefulBuilder(
+        builder: (sheet, localSet) {
+          void update(void Function() change, String key, Object value) {
+            setState(change);
+            localSet(() {});
+            unawaited(_setReaderPref(key, value));
+          }
+          return FractionallySizedBox(heightFactor: 0.83,
+            child: ListView(padding: const EdgeInsets.all(18), children: [
+              Row(children: [
+                const Expanded(child: Text('Настройки читалки',
+                    style: TextStyle(fontSize: 21, fontWeight: FontWeight.bold))),
+                IconButton(tooltip: 'Закрыть', onPressed: () => Navigator.pop(sheet),
+                  icon: const Icon(Icons.close)),
+              ]),
+              const SizedBox(height: 10),
+              SwitchListTile(title: const Text('Все главы подряд'),
+                value: _continuous, onChanged: (v) => update(
+                  () => _continuous = v, 'continuous', v)),
+              SwitchListTile(title: const Text('Нумерация страниц'),
+                value: _pageNumbers, onChanged: (v) => update(
+                  () => _pageNumbers = v, 'page_numbers', v)),
+              SwitchListTile(title: const Text('Полноэкранный режим'),
+                value: _fullScreen, onChanged: (v) {
+                  setState(() => _fullScreen = v);
+                  localSet(() {});
+                  unawaited(SystemChrome.setEnabledSystemUIMode(
+                    v ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge));
+                }),
+              const ListTile(title: Text('Тема')),
+              SegmentedButton<bool>(segments: const [
+                ButtonSegment(value: false, label: Text('Тёмная')),
+                ButtonSegment(value: true, label: Text('Светлая'))],
+                selected: {_lightTheme},
+                onSelectionChanged: (v) => update(() => _lightTheme = v.first,
+                  'light_theme', v.first)),
+              const ListTile(title: Text('Вмещать изображения')),
+              SegmentedButton<bool>(segments: const [
+                ButtonSegment(value: false, label: Text('По ширине')),
+                ButtonSegment(value: true, label: Text('По высоте'))],
+                selected: {_fitHeight},
+                onSelectionChanged: (v) => update(() => _fitHeight = v.first,
+                  'fit_height', v.first)),
+              ListTile(title: Text('Яркость изображений: ' +
+                  _brightness.round().toString() + '%')),
+              Slider(min: 30, max: 100, divisions: 14, value: _brightness,
+                onChanged: (v) => update(() => _brightness = v, 'brightness', v)),
+              ListTile(title: Text('Скорость автопрокрутки: ' +
+                  _autoScrollSeconds.round().toString() + ' сек./стр.')),
+              Slider(min: 1, max: 12, divisions: 11, value: _autoScrollSeconds,
+                onChanged: (v) => update(() => _autoScrollSeconds = v,
+                  'autoscroll', v)),
+              const ListTile(
+                title: Text('Показать оригинал'),
+                subtitle: Text('Недоступно: источник не предоставляет альтернативное изображение'),
+                enabled: false),
+            ]));
+        }));
+  }
+
+
   Widget _toolbar() {
-    return Material(color: Theme.of(context).colorScheme.surface,
-      child: SafeArea(top: false, child: Column(mainAxisSize: MainAxisSize.min, children: [
+    return Material(color: const Color(0xEE19171A),
+      child: SafeArea(top: false, child: Column(
+        mainAxisSize: MainAxisSize.min, children: [
         ValueListenableBuilder<int>(valueListenable: _visiblePage,
-          builder: (context, page, _) => Column(mainAxisSize: MainAxisSize.min, children: [
-            if (_pageCount > 0) LinearProgressIndicator(
-              value: (page.clamp(0, _pageCount - 1) + 1) / _pageCount),
-            Row(children: [
-              IconButton(tooltip: 'Список глав', onPressed: _loadingChapters ? null : _chapterList,
-                icon: const Icon(Icons.format_list_bulleted)),
-              IconButton(tooltip: 'Предыдущая страница',
-                onPressed: page > 0 ? () => _stepPage(-1) : null,
-                icon: const Icon(Icons.chevron_left_rounded)),
-              Expanded(child: Text(_pageCount == 0 ? '—' :
-                '${page.clamp(0, _pageCount - 1) + 1}/$_pageCount',
-                maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center)),
-              AnimatedBuilder(animation: widget.library, builder: (context, _) {
-                final read = widget.library.isChapterRead(widget.book, _activeChapter, widget.sourceKey);
-                return IconButton(tooltip: read ? 'Прочитано: отметить непрочитанной' : 'Отметить прочитанной',
-                  onPressed: _pageCount == 0 ? null : () async {
-                    if (read) {
-                      final chapter = _activeChapter;
-                      _manuallyUnreadChapters.add(chapter.id);
-                      // Finish any queued automatic write before user's unread.
-                      await _autoMarkChain;
-                      await widget.library.unmarkRead(widget.book, chapter, widget.sourceKey,
-                        availableChapters: _chapters);
-                    } else {
-                      _manuallyUnreadChapters.remove(_activeChapter.id);
-                      await _mark();
-                    }
-                  },
-                  icon: Icon(read ? Icons.visibility_outlined : Icons.visibility_off_outlined));
-              }),
-              IconButton(tooltip: 'Следующая страница',
-                onPressed: _pageCount > 0 && page < _pageCount - 1
-                    ? () => _stepPage(1) : null,
-                icon: const Icon(Icons.chevron_right_rounded)),
-            ]),
-          ])),
+          builder: (context, page, _) => Column(mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_pageCount > 0) LinearProgressIndicator(
+                value: (page.clamp(0, _pageCount - 1) + 1) / _pageCount),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                IconButton(tooltip: 'Предыдущая глава',
+                  onPressed: () => _stepChapter(-1),
+                  icon: const Icon(Icons.chevron_left_rounded)),
+                IconButton(tooltip: 'Список глав',
+                  onPressed: _loadingChapters ? null : _chapterList,
+                  icon: const Icon(Icons.format_list_bulleted)),
+                IconButton(tooltip: 'Настройки читалки',
+                  onPressed: _readerSettings,
+                  icon: const Icon(Icons.settings_outlined)),
+                if (_pageCount > 0 && _pageNumbers)
+                  PopupMenuButton<int>(tooltip: 'Выбрать страницу',
+                    key: const Key('reader-page-picker'),
+                    initialValue: page.clamp(0, _pageCount - 1),
+                    onSelected: _jumpPage,
+                    itemBuilder: (_) => [
+                      for (var i = 0; i < _pageCount; i++)
+                        PopupMenuItem(value: i,
+                          child: Text('Страница ' + (i + 1).toString())),
+                    ],
+                    child: Padding(padding: const EdgeInsets.all(8),
+                      child: Text((page.clamp(0, _pageCount - 1) + 1).toString()
+                            + '/' + _pageCount.toString(),
+                        style: const TextStyle(fontWeight: FontWeight.bold,
+                          color: Colors.white))),
+                  )
+                else const SizedBox(width: 8),
+                IconButton(tooltip: _autoScrollTimer == null
+                    ? 'Автопрокрутка' : 'Остановить автопрокрутку',
+                  onPressed: _pageCount > 0 ? _toggleAutoscroll : null,
+                  icon: Icon(_autoScrollTimer == null
+                    ? Icons.play_circle_outline : Icons.pause_circle_outline)),
+                IconButton(tooltip: 'Следующая глава',
+                  onPressed: () => _stepChapter(1),
+                  icon: const Icon(Icons.chevron_right_rounded)),
+              ]),
+            ])),
       ])),
     );
   }
 
   @override Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: _lightTheme ? Colors.white : Colors.black,
       body: Stack(children: [
         Positioned.fill(child: LayoutBuilder(builder: (context, constraints) =>
           GestureDetector(
@@ -524,7 +723,7 @@ class _ReaderPageState extends State<ReaderPage> {
                         fontWeight: FontWeight.w800,
                         letterSpacing: 1.5, fontSize: 12)),
                     const SizedBox(height: 8),
-                    Text(heading.name, textAlign: TextAlign.center,
+                    Text(displayChapterName(heading.name), textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white,
                         fontWeight: FontWeight.w700, fontSize: 21)),
                     const SizedBox(height: 10),
@@ -564,11 +763,14 @@ class _ReaderPageState extends State<ReaderPage> {
               final image = _segments.firstWhere(
                 (segment) => segment.chapter.id == item.chapter.id
               ).pages[item.index];
-              return Image.network(
+              return ColorFiltered(colorFilter: ColorFilter.mode(
+                Colors.black.withValues(alpha: (100 - _brightness) / 100),
+                BlendMode.srcATop), child: Image.network(
                 image.url,
                 width: MediaQuery.sizeOf(context).width,
                 headers: image.headers,
-                fit: BoxFit.fitWidth,
+                fit: _fitHeight ? BoxFit.contain : BoxFit.fitWidth,
+                height: _fitHeight ? MediaQuery.sizeOf(context).height : null,
                 frameBuilder: (context, child, frame, wasSync) {
                   if (frame != null) _registerLoadedPage(item);
                   return frame == null
@@ -580,7 +782,7 @@ class _ReaderPageState extends State<ReaderPage> {
                   height: 170, color: Colors.white10, alignment: Alignment.center,
                   child: Text('Страница ${item.index + 1} не загрузилась',
                     style: const TextStyle(color: Colors.white60))),
-              );
+              ));
             },
           ));
         },
@@ -593,9 +795,9 @@ class _ReaderPageState extends State<ReaderPage> {
               backgroundColor: const Color(0xEE151317),
               foregroundColor: Colors.white,
               leading: IconButton(
-                tooltip: 'Назад к произведению',
+                tooltip: 'Выход из главы',
                 icon: const Icon(Icons.arrow_back),
-                onPressed: () => Navigator.maybePop(context),
+                onPressed: _exitMenu,
               ),
               title: InkWell(
                 key: const Key('reader-open-title'),
@@ -606,12 +808,19 @@ class _ReaderPageState extends State<ReaderPage> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 16,
                         fontWeight: FontWeight.w700)),
-                    Text(_activeChapter.name, maxLines: 1,
+                    Text(displayChapterName(_activeChapter.name), maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 12)),
                   ]),
               ),
               actions: [
+                AnimatedBuilder(animation: widget.library, builder: (context, _) {
+                  final read = widget.library.isChapterRead(widget.book,
+                    _activeChapter, widget.sourceKey);
+                  return IconButton(tooltip: read ? 'Прочитано' : 'Отметить прочитанной',
+                    onPressed: _toggleRead, icon: Icon(read
+                      ? Icons.bookmark_added_outlined : Icons.bookmark_add_outlined));
+                }),
                 IconButton(tooltip: 'Страница тайтла',
                   onPressed: _openTitle,
                   icon: const Icon(Icons.info_outline_rounded)),
