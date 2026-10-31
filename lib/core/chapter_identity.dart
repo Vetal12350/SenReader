@@ -54,6 +54,6 @@ String sourceChapterKey(Chapter chapter, String source) =>
 /// persistence, chapter ordering, and notification deduplication.
 String displayChapterName(String name) {
   final withoutVolume = name.replaceAll(
-    RegExp(r'\s*\(\s*(?:(?:т(?:ом)?|vol(?:ume)?)\.?\s*\.?\s*[0-9]+(?:[.,][0-9]+)?)\s*\)', caseSensitive: false), '');
+    RegExp(r'\s*\(\s*(?:(?:т(?:ом)?|vol(?:ume)?)\.?\s*[0-9]+(?:[.,][0-9]+)?|[0-9]+(?:[.,][0-9]+)?\s*(?:т(?:ом)?|vol(?:ume)?)\.?)\s*\)', caseSensitive: false), '');
   return withoutVolume.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
 }
