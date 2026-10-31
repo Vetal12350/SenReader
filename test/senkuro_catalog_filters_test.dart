@@ -14,7 +14,7 @@ void main() {
         'mangas': [{'id': 'mid-1', 'slug': 'book', 'titles': [
           {'lang': 'RU', 'content': 'Книга'}],
           'cover': {'original': {'url': 'https://cdn.example/cover.webp'}}}]
-      }}}), 200);
+      }}}), 200, headers: {'content-type': 'application/json; charset=utf-8'});
     }));
     final books = await source.filteredCatalog(query: 'книга',
       type: 'MANHWA', status: 'ONGOING', translationStatus: 'ABANDONED');
