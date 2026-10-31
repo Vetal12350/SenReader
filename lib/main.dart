@@ -214,6 +214,10 @@ class _MainShellState extends State<MainShell> {
 
   void _onSearch(String value) {
     query = value;
+    if (value.isNotEmpty && (catalogSort == 'updated' ||
+        catalogSort == 'created')) {
+      setState(() => catalogSort = 'popularity');
+    }
     debounce?.cancel();
     debounce = Timer(const Duration(milliseconds: 450), _fetch);
   }
@@ -270,7 +274,7 @@ class _MainShellState extends State<MainShell> {
               update();
               if ((catalogStatus != null || catalogTranslationStatus != null ||
                    catalogLabelSlug != null) &&
-                  (catalogSort == 'created' || catalogSort == 'updated')) {
+                  (catalogSort != 'popularity')) {
                 catalogSort = 'popularity';
               }
             });
@@ -420,14 +424,16 @@ class _MainShellState extends State<MainShell> {
           onSelected: (value) { setState(() => catalogSort = value); _fetch(); },
           itemBuilder: (context) => [
             PopupMenuItem(value: 'popularity', child: Text('По популярности')),
-            PopupMenuItem(value: 'rating', child: Text('По рейтингу (загруженные)')),
+            PopupMenuItem(value: 'rating', enabled: catalogStatus == null &&
+                catalogTranslationStatus == null && catalogLabelSlug == null,
+              child: const Text('По рейтингу (загруженные)')),
             PopupMenuItem(value: 'updated',
               enabled: catalogStatus == null && catalogTranslationStatus == null &&
-                  catalogLabelSlug == null,
+                  catalogLabelSlug == null && query.isEmpty,
               child: const Text('По дате обновления')),
             PopupMenuItem(value: 'created',
               enabled: catalogStatus == null && catalogTranslationStatus == null &&
-                  catalogLabelSlug == null,
+                  catalogLabelSlug == null && query.isEmpty,
               child: const Text('По дате создания')),
             PopupMenuItem<String>(enabled: false, value: 'chapters', child: Text('По количеству глав · нет данных')),
             PopupMenuItem<String>(enabled: false, value: 'views', child: Text('По просмотрам · нет данных')),
