@@ -111,7 +111,8 @@ class _MainShellState extends State<MainShell> {
     final senkuro = widget.repository.sources['senkuro'];
     if (isCatalog && senkuro is SenkuroSource &&
         (status != null || translation != null || label != null ||
-            (type != null && thisQuery.isNotEmpty))) {
+            (type != null && (thisQuery.isNotEmpty ||
+              !const {'MANGA', 'MANHWA', 'MANHUA'}.contains(type))))) {
       try {
         final entries = await senkuro.filteredCatalog(query: thisQuery,
           type: type, status: status, translationStatus: translation,
