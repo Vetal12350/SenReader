@@ -14,8 +14,9 @@ String? readingStatusBadge(SavedBook? saved) {
     _ => null,
   };
   if (label == null) return null;
-  final chapterName = saved.lastSource == saved.preferredSource
-      ? saved.lastChapter : '';
+  final chapterName = saved.lastMarkedChapter.isNotEmpty
+      ? saved.lastMarkedChapter
+      : saved.lastSource == saved.preferredSource ? saved.lastChapter : '';
   final chapter = RegExp(
     r'(?:глава|chapter|ch\.?)\s*([0-9]+(?:[.,][0-9]+)?)',
     caseSensitive: false,
