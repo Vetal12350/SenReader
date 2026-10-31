@@ -137,6 +137,8 @@ class _ReaderPageState extends State<ReaderPage> {
                 widget.sourceKey, pageIndex: page, pageCount: pages.length);
               await widget.library.markRead(widget.book, widget.chapter,
                 widget.sourceKey, availableChapters: _chapters);
+              await widget.library.recordLatestChapter(
+                widget.book, widget.sourceKey, _chapters);
             }).catchError((Object _) {});
           } else {
             unawaited(widget.library.markRead(widget.book, widget.chapter,

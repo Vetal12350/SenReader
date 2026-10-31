@@ -54,6 +54,11 @@ bool showContinueCard(SavedBook saved, {Chapter? newlyAvailable}) {
       saved.status == 'completed' || saved.status == 'dropped' ||
       (saved.status == 'viewed' && saved.lastChapter.isEmpty)) return false;
   if (newlyAvailable != null) return true;
+  // Even when partially read, the current LAST available chapter should
+  // not appear in Continue: it is not a remaining chapter to catch up on.
+  if (saved.latestKnownSource == saved.lastSource &&
+      saved.latestKnownChapterId.isNotEmpty &&
+      saved.latestKnownChapterId == saved.lastChapterId) return false;
   if (!shouldResumeCurrentChapter(saved)) return false;
   if (saved.lastPageCount > 0 &&
       saved.lastPageIndex >= saved.lastPageCount - 1) return false;
