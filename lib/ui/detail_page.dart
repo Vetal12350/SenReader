@@ -490,7 +490,7 @@ class _DetailPageState extends State<DetailPage> {
                         }
                       },
                     ),
-                    title: Text(chapter.name,
+                    title: Text(displayChapterName(chapter.name),
                       style: TextStyle(color: read ? Theme.of(context).colorScheme.onSurfaceVariant : null)),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => _openChapter(chapter),
