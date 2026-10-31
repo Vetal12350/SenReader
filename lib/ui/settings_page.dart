@@ -152,7 +152,7 @@ class _SettingsPageState extends State<SettingsPage> {
             'Первая проверка источника сохраняет исходное состояние.'),
         for (final discovery in report!.discoveries)
           ListTile(title: Text(discovery.book.title),
-            subtitle: Text('${displayChapterName(discovery.chapter.name)} · ${discovery.sourceKey}'),
+            subtitle: Text('${discovery.chapter.name} · ${discovery.sourceKey}'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _open(discovery)),
         for (final warning in report!.warnings.take(8))
