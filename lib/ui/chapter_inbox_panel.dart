@@ -11,10 +11,11 @@ import 'widgets.dart';
 
 class ChapterInboxPanel extends StatefulWidget {
   const ChapterInboxPanel({super.key, required this.library, required this.repository,
-    required this.alerts});
+    required this.alerts, this.onChanged});
   final LibraryStore library;
   final CatalogRepository repository;
   final ChapterAlertController alerts;
+  final VoidCallback? onChanged;
   @override State<ChapterInboxPanel> createState() => _ChapterInboxPanelState();
 }
 
@@ -28,7 +29,10 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
   @override void initState() { super.initState(); _refresh(); }
   Future<void> _refresh() async {
     final next = await _store.load();
-    if (mounted) setState(() { entries = next; loading = false; });
+    if (mounted) {
+      setState(() { entries = next; loading = false; });
+      widget.onChanged?.call();
+    }
   }
 
   Future<void> _check() async {
