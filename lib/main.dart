@@ -125,6 +125,7 @@ class _MainShellState extends State<MainShell> {
   CatalogResult? _homeResult; // Never replaced by catalog search results.
   bool loading = false;
   int _suggestionRequest = 0;
+  DateTime? _lastSuggestionsRefreshAt;
   final Map<String, Chapter> _newChapters = {};
   int _homeRequest = 0;
   final Map<String, List<MangaEntry>> _senkuroSections = {};
@@ -273,8 +274,12 @@ class _MainShellState extends State<MainShell> {
           next.books.length == 30 && (sort == 'rating' || status != null ||
           translation != null || label != null);
     });
-    unawaited(_refreshNewChapters());
-    if (!isCatalog && thisQuery.isEmpty) unawaited(_refreshSenkuroSections(force: forceHome));
+    // Scanning every saved title on each catalogue search made Senkuro
+    // sluggish. Do it only on Home, at most once per 15 minutes.
+    if (!isCatalog && thisQuery.isEmpty) {
+      unawaited(_refreshNewChapters(force: forceHome));
+      unawaited(_refreshSenkuroSections(force: forceHome));
+    }
   }
 
   Future<void> _refreshSenkuroSections({bool force = false}) async {
@@ -305,7 +310,12 @@ class _MainShellState extends State<MainShell> {
     setState(() => _senkuroSections..clear()..addAll(categories));
   }
 
-  Future<void> _refreshNewChapters() async {
+  Future<void> _refreshNewChapters({bool force = false}) async {
+    final now = DateTime.now();
+    if (!force && _lastSuggestionsRefreshAt != null &&
+        now.difference(_lastSuggestionsRefreshAt!) <
+            const Duration(minutes: 15)) return;
+    _lastSuggestionsRefreshAt = now;
     final request = ++_suggestionRequest;
     final saved = widget.library.items
       .where((item) => item.lastChapter.isNotEmpty &&
@@ -313,16 +323,16 @@ class _MainShellState extends State<MainShell> {
         (item.status != 'viewed' || item.lastChapter.isNotEmpty)).toList()
       ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
     final suggestions = <String, Chapter>{};
-    // Bound parallel calls and avoid bogus update indicators when offline.
-    for (var i = 0; i < saved.length && i < 12; i += 3) {
-      await Future.wait(saved.skip(i).take(3).map((item) async {
+    // Two parallel source scans instead of bursts on every user gesture.
+    for (var i = 0; i < saved.length && i < 12; i += 2) {
+      final verified = <(SavedBook, List<Chapter>)>[];
+      await Future.wait(saved.skip(i).take(2).map((item) async {
         final entry = item.entries[item.preferredSource];
         final source = widget.repository.sources[item.preferredSource];
         if (entry == null || source == null) return;
         try {
           final detail = await source.detail(entry);
-          await widget.library.recordLatestChapter(item.toUnified(),
-              item.preferredSource, detail.chapters);
+          verified.add((item, detail.chapters));
           final fresh = nextAvailableChapter(item, detail.chapters);
           final current = widget.library.get(item.toUnified());
           if (fresh != null && current != null &&
@@ -336,6 +346,11 @@ class _MainShellState extends State<MainShell> {
         }
       }));
       if (!mounted || request != _suggestionRequest) return;
+      // Serialize local SharedPreferences writes to protect progress.
+      for (final (item, chapters) in verified) {
+        await widget.library.recordLatestChapter(
+            item.toUnified(), item.preferredSource, chapters);
+      }
     }
     if (mounted && request == _suggestionRequest) {
       setState(() { _newChapters..clear()..addAll(suggestions); });
@@ -663,13 +678,13 @@ class _MainShellState extends State<MainShell> {
         const SizedBox(height: 28),
         SectionTitle('Продолжить чтение',
           subtitle: 'Вернуться к сохранённой странице'),
-        SizedBox(height: 180, child: ListView.separated(
+        SizedBox(height: 186, child: ListView.separated(
           scrollDirection: Axis.horizontal,
           itemCount: saved.take(12).length,
           separatorBuilder: (context, index) => const SizedBox(width: 10),
           itemBuilder: (context, index) {
             final item = saved[index];
-            return SizedBox(width: 225, child: InkWell(
+            return SizedBox(width: 258, child: InkWell(
               onTap: () => _resume(item, _newChapters[item.key]),
               borderRadius: BorderRadius.circular(14),
               child: Container(
@@ -680,20 +695,20 @@ class _MainShellState extends State<MainShell> {
                 child: Row(children: [
                   ClipRRect(borderRadius: BorderRadius.circular(9),
                     child: CoverImage(item.toUnified().coverUrl,
-                      width: 86, height: 130)),
+                      width: 82, height: 124)),
                   const SizedBox(width: 9),
                   Expanded(child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center, children: [
-                      Flexible(child: Text(item.title, maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700))),
-                      const SizedBox(height: 8),
-                      Flexible(child: Text((_newChapters.containsKey(item.key) && !shouldResumeCurrentChapter(item)
+                      Text(item.title, maxLines: 2,
+                        overflow: TextOverflow.ellipsis, softWrap: true,
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 7),
+                      Text((_newChapters.containsKey(item.key) && !shouldResumeCurrentChapter(item)
                              ? 'Новая: ${displayChapterName(_newChapters[item.key]!.name)}'
                              : 'Сохранено: ${displayChapterName(item.lastChapter)}'),
                         maxLines: 2, overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11))),
+                        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11)),
                       if (item.lastPageCount > 0) ...[
                         const SizedBox(height: 8),
                         LinearProgressIndicator(
