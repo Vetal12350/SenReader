@@ -58,6 +58,60 @@ query fetchMangas($first: Int = 18, $type: MangaTypeFilter,
     return _parseNodes(_edges(data['mangas']));
   }
 
+  // Public search/filter operation used by the Senkuro extensions.
+  // Never interpolate untrusted values directly into the GraphQL document.
+  static const _filteredQuery = r'''
+query searchTachiyomiManga(
+  $query: String,
+  $type: MangaTachiyomiSearchTypeFilter,
+  $status: MangaTachiyomiSearchStatusFilter,
+  $translationStatus: MangaTachiyomiSearchTranslationStatusFilter,
+  $orderBy: MangaTachiyomiOrder,
+  $offset: Int
+) {
+  mangaTachiyomiSearch(query: $query, type: $type, status: $status,
+      translationStatus: $translationStatus, orderBy: $orderBy,
+      offset: $offset) {
+    mangas { id slug originalName { lang content } titles { lang content }
+      cover { original { url } } }
+  }
+}''';
+
+  Future<List<MangaEntry>> filteredCatalog({
+      String query = '', String? type, String? status,
+      String? translationStatus, int offset = 0}) async {
+    if (type != null && !const {'MANGA', 'MANHWA', 'MANHUA',
+        'COMICS', 'OEL_MANGA', 'RU_MANGA'}.contains(type)) {
+      throw ArgumentError.value(type, 'type');
+    }
+    if (status != null && !const {'ANNOUNCE', 'ONGOING', 'FINISHED',
+        'HIATUS', 'CANCELLED'}.contains(status)) {
+      throw ArgumentError.value(status, 'status');
+    }
+    if (translationStatus != null && !const {'IN_PROGRESS', 'FINISHED',
+        'FROZEN', 'ABANDONED'}.contains(translationStatus)) {
+      throw ArgumentError.value(translationStatus, 'translationStatus');
+    }
+    if (offset < 0 || offset > 990 || offset % 10 != 0) {
+      throw ArgumentError.value(offset, 'offset');
+    }
+    final data = await _gql('searchTachiyomiManga', _filteredQuery, {
+      'query': query.trim().isEmpty ? null : query.trim(),
+      'type': type == null ? null : {'include': [type]},
+      'status': status == null ? null : {'include': [status]},
+      'translationStatus': translationStatus == null
+          ? null : {'include': [translationStatus]},
+      'orderBy': {'field': 'POPULARITY_SCORE', 'direction': 'DESC'},
+      'offset': offset,
+    });
+    final connection = data['mangaTachiyomiSearch'];
+    if (connection is! Map || connection['mangas'] is! List) {
+      throw _invalidResponse();
+    }
+    return _parseNodes(_list(connection['mangas'])
+        .map((node) => {'node': node}).toList());
+  }
+
   static const _searchQuery = r'''
 query search($query: String!, $first: Int = 30) {
   search(query: $query, type: MANGA, first: $first) {
@@ -219,7 +273,9 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
   }
 
   static String _cover(dynamic json) =>
-      json is Map && json['main'] is Map ? _image(json['main']['url']) : '';
+      json is Map && json['main'] is Map ? _image(json['main']['url'])
+        : json is Map && json['original'] is Map
+          ? _image(json['original']['url']) : '';
 
   List<MangaEntry> _parseNodes(dynamic edges) {
     final seenSlugs = <String>{};
