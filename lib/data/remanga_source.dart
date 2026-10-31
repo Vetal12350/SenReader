@@ -130,7 +130,10 @@ class ReMangaSource implements MangaSource {
           final tome = item['tome'];
           final volumeSuffix = tome == null || '$tome' == '0' ? '' : ' (т. $tome)';
           chapters.add(Chapter(id: id,
-              name: 'Глава ${number.isEmpty ? '?' : number}${subtitle.isEmpty ? '' : ': $subtitle'}$volumeSuffix'));
+              name: 'Глава ${number.isEmpty ? '?' : number}${subtitle.isEmpty ? '' : ': $subtitle'}$volumeSuffix',
+              publishedAt: sourceChapterDate(item['publish_date'] ??
+                  item['published_at'] ?? item['created_at'] ??
+                  item['createdAt'] ?? item['date'])));
         }
         if (!added || items.isEmpty || data['next'] == null || data['next'] == false || data['next'] == '') break;
       }
