@@ -47,6 +47,21 @@ void main() {
     expect(labels.single.title, 'Фэнтези');
   });
 
+  test('real rating order goes to Senkuro server as SCORE, not locally sorted', () async {
+    String? field;
+    final source = SenkuroSource(client: MockClient((request) async {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      final vars = body['variables'] as Map<String, dynamic>;
+      field = (vars['orderBy'] as Map<String, dynamic>)['field'] as String?;
+      return http.Response(jsonEncode({'data': {'mangaTachiyomiSearch': {
+        'mangas': []}}}), 200);
+    }));
+    await source.filteredCatalog(orderField: 'SCORE');
+    expect(field, 'SCORE');
+    await expectLater(source.filteredCatalog(orderField: 'UNKNOWN'),
+      throwsArgumentError);
+  });
+
   test('unknown filters are rejected without network access', () async {
     var requests = 0;
     final source = SenkuroSource(client: MockClient((_) async {
