@@ -65,7 +65,7 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int tab = 0;
   String libraryFilter = 'all';
-  String catalogSourceFilter = 'all';
+  String? catalogType;
   String? catalogTagFilter;
   String catalogSort = 'popularity';
   CatalogResult? result;
@@ -96,16 +96,38 @@ class _MainShellState extends State<MainShell> {
 
   Future<void> _fetch() async {
     final thisQuery = query;
+    final isCatalog = tab == 1;
+    final type = catalogType;
+    final sort = catalogSort;
     setState(() => loading = true);
-    final next = await widget.repository.getCatalog(query: thisQuery);
-    if (!mounted || thisQuery != query) return;
+    CatalogResult next;
+    final senkuro = widget.repository.sources['senkuro'];
+    if (isCatalog && thisQuery.isEmpty && senkuro is SenkuroSource &&
+        (type != null || sort == 'updated' || sort == 'created')) {
+      try {
+        final entries = await senkuro.browseHome(type: type, first: 30,
+          orderField: sort == 'updated' ? 'LAST_CHAPTER_AT'
+            : sort == 'created' ? 'CREATED_AT' : 'POPULARITY_SCORE');
+        next = CatalogResult(
+          books: [for (final entry in entries)
+            UnifiedManga(title: entry.title, entries: {'senkuro': entry})],
+          warnings: const []);
+      } catch (e) {
+        next = CatalogResult(books: const [], warnings: ['Senkuro: $e']);
+      }
+    } else {
+      next = await widget.repository.getCatalog(query: thisQuery,
+        sourceKey: isCatalog ? 'senkuro' : null);
+    }
+    if (!mounted || thisQuery != query || isCatalog != (tab == 1) ||
+        (isCatalog && (type != catalogType || sort != catalogSort))) return;
     setState(() {
       result = next;
-      if (thisQuery.isEmpty) _homeResult = next;
+      if (!isCatalog && thisQuery.isEmpty) _homeResult = next;
       loading = false;
     });
     unawaited(_refreshNewChapters());
-    if (thisQuery.isEmpty) unawaited(_refreshSenkuroSections());
+    if (!isCatalog && thisQuery.isEmpty) unawaited(_refreshSenkuroSections());
   }
 
   Future<void> _refreshSenkuroSections() async {
@@ -177,10 +199,9 @@ class _MainShellState extends State<MainShell> {
   /// they are not a claim of server-wide filtered or chronological ranking.
   List<UnifiedManga> _visibleCatalogBooks() {
     final books = (result?.books ?? const <UnifiedManga>[])
-        .where((book) => (catalogSourceFilter == 'all' ||
-            book.entries.containsKey(catalogSourceFilter)) &&
-          (catalogTagFilter == null || book.entries.values.any(
-            (entry) => entry.tags.contains(catalogTagFilter))))
+        .where((book) => book.entries.containsKey('senkuro') &&
+          (catalogTagFilter == null ||
+            book.entries['senkuro']!.tags.contains(catalogTagFilter)))
         .toList();
     if (catalogSort == 'rating') {
       // Preserve source order for unknown scores; never invent zero ratings.
@@ -264,7 +285,7 @@ class _MainShellState extends State<MainShell> {
     if (items.isEmpty) return const SizedBox.shrink();
     return Padding(padding: const EdgeInsets.only(top: 25, bottom: 8),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        SectionTitle(title, subtitle: 'Подборка из доступного каталога'),
+        SectionTitle(title),
         const SizedBox(height: 12),
         SingleChildScrollView(scrollDirection: Axis.horizontal,
           child: Row(crossAxisAlignment: CrossAxisAlignment.start,
@@ -296,37 +317,23 @@ class _MainShellState extends State<MainShell> {
     children: [
       Wrap(spacing: 8, runSpacing: 6, children: [
         PopupMenuButton<String>(
-          tooltip: 'Фильтр по источнику',
-          initialValue: catalogSourceFilter,
-          onSelected: (value) => setState(() => catalogSourceFilter = value),
-          itemBuilder: (context) => const [
-            PopupMenuItem(value: 'all', child: Text('Все источники')),
-            PopupMenuItem(value: 'senkuro', child: Text('Senkuro')),
-            PopupMenuItem(value: 'readmanga', child: Text('ReadManga')),
-            PopupMenuItem(value: 'remanga', child: Text('ReManga')),
-          ],
-          child: Chip(
-            avatar: const Icon(Icons.filter_list, size: 18),
-            label: Text(catalogSourceFilter == 'all' ? 'Все источники' :
-              catalogSourceFilter == 'senkuro' ? 'Senkuro' :
-              catalogSourceFilter == 'readmanga' ? 'ReadManga' : 'ReManga'),
-          ),
-        ),
-        PopupMenuButton<String>(
           key: const Key('catalog-sort'),
-          tooltip: 'Сортировка загруженного каталога',
+          tooltip: 'Сортировка каталога Senkuro',
           initialValue: catalogSort,
-          onSelected: (value) => setState(() => catalogSort = value),
+          onSelected: (value) { setState(() => catalogSort = value); _fetch(); },
           itemBuilder: (context) => const [
             PopupMenuItem(value: 'popularity', child: Text('По популярности')),
-            PopupMenuItem(value: 'rating', child: Text('По рейтингу')),
+            PopupMenuItem(value: 'rating', child: Text('По рейтингу (загруженные)')),
+            PopupMenuItem(value: 'updated', child: Text('По дате обновления')),
+            PopupMenuItem(value: 'created', child: Text('По дате создания')),
             PopupMenuItem<String>(enabled: false, value: 'chapters', child: Text('По количеству глав · нет данных')),
             PopupMenuItem<String>(enabled: false, value: 'views', child: Text('По просмотрам · нет данных')),
-            PopupMenuItem<String>(enabled: false, value: 'created', child: Text('По дате создания · нет данных')),
             PopupMenuItem<String>(enabled: false, value: 'uploaded', child: Text('По дате залива · нет данных')),
           ],
           child: Chip(avatar: const Icon(Icons.swap_vert, size: 18),
-            label: Text(catalogSort == 'rating' ? 'По рейтингу' : 'Сортировка')),
+            label: Text(catalogSort == 'rating' ? 'По рейтингу' :
+              catalogSort == 'updated' ? 'По обновлению' :
+              catalogSort == 'created' ? 'По созданию' : 'По популярности')),
         ),
         ActionChip(
           key: const Key('catalog-tag-filters'),
@@ -339,7 +346,7 @@ class _MainShellState extends State<MainShell> {
       ]),
       Padding(
         padding: const EdgeInsets.only(top: 4, bottom: 12),
-        child: Text('Фильтры действуют на загруженные результаты',
+        child: Text('Senkuro · жанры фильтруются по загруженным результатам',
           style: TextStyle(fontSize: 11,
             color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ),
@@ -641,7 +648,7 @@ class _MainShellState extends State<MainShell> {
             ],
             if (tab == 1) ...[
             SectionTitle(query.isEmpty ? 'Каталог' : 'Результаты поиска',
-              subtitle: 'Senkuro · ReadManga · ReManga'),
+              subtitle: 'Senkuro'),
             if (loading)
               const Padding(padding: EdgeInsets.all(32),
                 child: Center(child: CircularProgressIndicator())),
@@ -669,6 +676,7 @@ class _MainShellState extends State<MainShell> {
         selectedIndex: tab,
         onDestinationSelected: (index) {
           setState(() => tab = index);
+          if (index == 1) unawaited(_fetch());
           if (index == 2 && widget.library.items.isNotEmpty) {
             unawaited(offerChapterAlerts(context, alerts));
           }
