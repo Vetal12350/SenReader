@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../core/chapter_identity.dart';
+import '../core/title_matching.dart';
 import '../data/catalog_repository.dart';
 import '../data/chapter_checker.dart';
 import '../data/chapter_inbox_store.dart';
@@ -38,7 +39,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
       final report = await ChapterChecker(repository: widget.repository,
         library: widget.library).check();
       for (final discovery in report.discoveries) {
-        await _store.add(discovery.book.title.toLowerCase().trim(),
+        await _store.add(normalizedTitle(discovery.book.title),
           discovery.book.title, discovery.book.coverUrl,
           discovery.sourceKey, discovery.chapter);
       }
