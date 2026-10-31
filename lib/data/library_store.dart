@@ -230,6 +230,34 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Upgrade only the verified source rating on already-saved titles.
+  /// Match source + stable slug exactly: never overwrite reading progress,
+  /// saved status, chosen translation or other source metadata.
+  Future<int> updateVerifiedRatings(Iterable<MangaEntry> entries) async {
+    final ratings = <String, double>{};
+    for (final entry in entries) {
+      if (entry.source != 'senkuro' || entry.id.isEmpty) continue;
+      final score = tenPointScore(entry.rating);
+      if (score != null) ratings[entry.id] = score;
+    }
+    if (ratings.isEmpty) return 0;
+    await _reload();
+    var changed = 0;
+    for (final saved in _books.values) {
+      final original = saved.entries['senkuro'];
+      if (original == null) continue;
+      final score = ratings[original.id];
+      if (score == null || score == original.rating) continue;
+      saved.entries['senkuro'] = MangaEntry(
+        source: original.source, id: original.id, title: original.title,
+        remoteId: original.remoteId, coverUrl: original.coverUrl,
+        tags: original.tags, rating: score);
+      changed++;
+    }
+    if (changed != 0) await _save();
+    return changed;
+  }
+
   Future<void> add(UnifiedManga book, {String preferredSource = ''}) async {
     await _reload();
     final key = normalizedTitle(book.title);

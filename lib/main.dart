@@ -104,6 +104,7 @@ class _MainShellState extends State<MainShell> {
     if (next == 3) unawaited(_refreshInboxCount());
     if (next == 2 && widget.library.items.isNotEmpty) {
       unawaited(offerChapterAlerts(context, alerts));
+      unawaited(_refreshLibraryRatings());
     }
   }
 
@@ -130,6 +131,44 @@ class _MainShellState extends State<MainShell> {
   int _homeRequest = 0;
   final Map<String, List<MangaEntry>> _senkuroSections = {};
   final SenkuroHomeCache _homeCache = SenkuroHomeCache();
+  DateTime? _lastLibraryRatingsAttempt;
+  bool _libraryRatingsLoading = false;
+
+  /// Repair old saved entries that did not store a Senkuro score. Use the
+  /// lightweight score-only GraphQL query in batches, never fetch chapters.
+  /// Results arrive gradually without blocking the bookmark grid.
+  Future<void> _refreshLibraryRatings() async {
+    final source = widget.repository.sources['senkuro'];
+    if (source is! SenkuroSource || _libraryRatingsLoading) return;
+    final now = DateTime.now();
+    if (_lastLibraryRatingsAttempt != null &&
+        now.difference(_lastLibraryRatingsAttempt!) <
+            const Duration(minutes: 30)) return;
+    final unrated = widget.library.items
+        .where((saved) => saved.status != 'viewed' || saved.favorite)
+        .map((saved) => saved.entries['senkuro'])
+        .whereType<MangaEntry>()
+        .where((entry) => entry.id.isNotEmpty && entry.rating == null)
+        .toList();
+    if (unrated.isEmpty) return;
+    _lastLibraryRatingsAttempt = now;
+    _libraryRatingsLoading = true;
+    try {
+      // Seven small requests for a library of 70 titles; run sequentially
+      // and stop when user leaves the tab to avoid background network bursts.
+      for (var i = 0; i < unrated.length; i += 10) {
+        if (!mounted || tab != 2) break;
+        final batch = unrated.skip(i).take(10).toList();
+        final verified = await source.verifiedRatings(batch);
+        if (!mounted) break;
+        await widget.library.updateVerifiedRatings(verified);
+      }
+    } catch (_) {
+      // Missing or temporarily unavailable score is not a zero rating.
+    } finally {
+      _libraryRatingsLoading = false;
+    }
+  }
   late final ChapterAlertController alerts = widget.alerts ?? ChapterAlertController();
   String query = '';
   Timer? debounce;
@@ -140,6 +179,7 @@ class _MainShellState extends State<MainShell> {
     tab = mainTabRequest.value;
     mainTabRequest.addListener(_onMainTabRequest);
     _fetch();
+    if (tab == 2) unawaited(_refreshLibraryRatings());
     unawaited(_refreshInboxCount());
     ChapterNotificationService.instance.openedPayload.addListener(_onNotificationTap);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onNotificationTap());

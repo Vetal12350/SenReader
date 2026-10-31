@@ -93,7 +93,18 @@ class _DetailPageState extends State<DetailPage> {
       final next = await source.detail(book.entries[sourceKey]!);
       if (!mounted || request != _request) return;
       setState(() { loading = false; detail = next; });
-      unawaited(widget.library.recordLatestChapter(book, sourceKey, next.chapters));
+      // Preserve source-backed score on previously saved cards. Serialize
+      // these metadata writes so they cannot overwrite reading progress.
+      unawaited(() async {
+        try {
+          if (sourceKey == 'senkuro') {
+            await widget.library.updateVerifiedRatings([next.entry]);
+          }
+          await widget.library.recordLatestChapter(book, sourceKey, next.chapters);
+        } catch (_) {
+          // Metadata refresh must not prevent the title from opening.
+        }
+      }());
       if (next.chapters.isEmpty) {
         _warnings.add('${source.name}: публичные главы недоступны.');
         _fallback();
