@@ -32,6 +32,12 @@ class LayoutSource implements MangaSource {
   UnifiedManga get book => UnifiedManga(title: entry.title, entries: {key: entry});
 }
 
+class _TitleStatusSource extends LayoutSource {
+  @override Future<MangaDetail> detail(MangaEntry record) async =>
+    MangaDetail(entry: record, chapters: chapters,
+      publicationStatus: 'Онгоинг', translationStatus: 'Переводится');
+}
+
 class ReaderImageSource extends LayoutSource {
   // Flutter's widget-test HTTP client returns 400 without contacting this URL.
   @override Future<List<PageImage>> pages(Chapter chapter) async =>
@@ -102,6 +108,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('Проверено произведений: 1.'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('title shows real statuses and saved chapter number', (tester) async {
+    final source = _TitleStatusSource();
+    final library = LibraryStore();
+    await library.savePosition(source.book, source.chapters[1], source.key,
+      pageIndex: 0, pageCount: 14);
+    await tester.pumpWidget(scaledApp(DetailPage(book: source.book,
+      repository: CatalogRepository(sources: {source.key: source}),
+      library: library), 1));
+    await tester.pumpAndSettle();
+    expect(find.text('Продолжить 2 главу'), findsOneWidget);
+    expect(find.text('Статус: Онгоинг'), findsOneWidget);
+    expect(find.text('Перевод: Переводится'), findsOneWidget);
   });
 
   testWidgets('left eye marks older chapters without opening reader; unread reverses only target', (tester) async {
