@@ -207,7 +207,7 @@ void main() {
     expect(library.isChapterRead(source.book, source.chapters[0], source.key), false);
     expect(library.items.single.lastChapterId, '2');
     expect(library.items.single.lastPageIndex, 0);
-    expect(find.widgetWithIcon(IconButton, Icons.visibility_outlined), findsOneWidget);
+    expect(find.widgetWithIcon(IconButton, Icons.bookmark_added_outlined), findsOneWidget);
     await tester.tap(find.byTooltip('Прочитано'));
     await tester.pumpAndSettle();
     expect(library.isChapterRead(source.book, source.chapters[1], source.key), false);
