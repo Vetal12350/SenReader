@@ -43,3 +43,17 @@ Chapter? chapterToResume(SavedBook saved, Iterable<Chapter> available,
   }
   return match.isNotEmpty ? match.first : null;
 }
+
+ 
+/// A title with its last known page completed is not an active resume card
+/// unless the source confirmed a genuinely new unread chapter.
+bool showContinueCard(SavedBook saved, {Chapter? newlyAvailable}) {
+  if (saved.lastChapter.isEmpty || saved.lastSource != saved.preferredSource ||
+      saved.status == 'completed' || saved.status == 'dropped' ||
+      saved.status == 'viewed') return false;
+  if (newlyAvailable != null) return true;
+  if (!shouldResumeCurrentChapter(saved)) return false;
+  if (saved.lastPageCount > 0 &&
+      saved.lastPageIndex >= saved.lastPageCount - 1) return false;
+  return true;
+}
