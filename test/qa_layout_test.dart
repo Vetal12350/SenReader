@@ -159,7 +159,7 @@ void main() {
     expect(find.byTooltip('Предыдущая страница'), findsOneWidget);
     expect(find.byTooltip('Следующая страница'), findsOneWidget);
     final next = tester.widget<IconButton>(
-      find.byTooltip('Следующая страница'));
+      find.widgetWithIcon(IconButton, Icons.chevron_right_rounded));
     expect(next.onPressed, isNull); // Empty source cannot navigate.
     await tester.tap(find.byTooltip('Страница тайтла'));
     await tester.pumpAndSettle();
