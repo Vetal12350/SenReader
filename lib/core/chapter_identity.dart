@@ -48,3 +48,12 @@ int? compareChapterChronology(Chapter a, Chapter b) {
 
 String sourceChapterKey(Chapter chapter, String source) =>
     '$source|${canonicalChapterKey(chapter) ?? 'id:${chapter.id}'}';
+
+
+/// UI-only label: preserve the source name/id for canonical identity,
+/// persistence, chapter ordering, and notification deduplication.
+String displayChapterName(String name) {
+  final withoutVolume = name.replaceAll(
+    RegExp(r'\s*\(\s*(?:(?:т(?:ом)?|vol(?:ume)?)\.?\s*\.?\s*[0-9]+(?:[.,][0-9]+)?)\s*\)', caseSensitive: false), '');
+  return withoutVolume.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+}
