@@ -321,6 +321,8 @@ class _MainShellState extends State<MainShell> {
         if (entry == null || source == null) return;
         try {
           final detail = await source.detail(entry);
+          await widget.library.recordLatestChapter(item.toUnified(),
+              item.preferredSource, detail.chapters);
           final fresh = nextAvailableChapter(item, detail.chapters);
           final current = widget.library.get(item.toUnified());
           if (fresh != null && current != null &&
