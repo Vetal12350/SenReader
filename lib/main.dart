@@ -264,7 +264,7 @@ class _MainShellState extends State<MainShell> {
     if (items.isEmpty) return const SizedBox.shrink();
     return Padding(padding: const EdgeInsets.only(top: 25, bottom: 8),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        SectionTitle(title, subtitle: 'Подборка из доступного каталога'),
+        SectionTitle(title),
         const SizedBox(height: 12),
         SingleChildScrollView(scrollDirection: Axis.horizontal,
           child: Row(crossAxisAlignment: CrossAxisAlignment.start,
