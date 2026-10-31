@@ -69,7 +69,7 @@ query search($query: String!, $first: Int = 30) {
   static const _detailQuery = r'''
 query fetchManga($slug: String!) {
   manga(slug: $slug) {
-    slug score titles { lang content } originalName { lang content }
+    id slug score titles { lang content } originalName { lang content }
     alternativeNames { lang content }
     localizations { lang description { __typename
       ... on TiptapNodeText { text }
@@ -340,10 +340,11 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
       }
     }
     Map<dynamic, dynamic> metadata = const {};
-    if (entry.remoteId.isNotEmpty) {
+    final metadataId = entry.remoteId.isNotEmpty ? entry.remoteId : _id(m['id']);
+    if (metadataId.isNotEmpty) {
       try {
         final statusInfo = await _gql('fetchTachiyomiManga',
-          _statusQuery, {'mangaId': entry.remoteId});
+          _statusQuery, {'mangaId': metadataId});
         if (statusInfo['mangaTachiyomiInfo'] is Map) {
           metadata = statusInfo['mangaTachiyomiInfo'] as Map;
         }
@@ -354,7 +355,7 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
     return MangaDetail(
       publicationStatus: _publicationLabel(metadata['status']),
       translationStatus: _translationLabel(metadata['translationStatus']),
-      entry: MangaEntry(source: key, id: entry.id, remoteId: entry.remoteId,
+      entry: MangaEntry(source: key, id: entry.id, remoteId: metadataId,
         title: _title(m['titles'], m['originalName']),
         coverUrl: _cover(m['cover']).isNotEmpty ? _cover(m['cover']) : _image(entry.coverUrl)),
       chapters: chapters,
