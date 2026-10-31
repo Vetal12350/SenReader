@@ -47,7 +47,8 @@ class MangaCreator {
 class MangaDetail {
   const MangaDetail({required this.entry, required this.chapters,
     this.description = '', this.genres = const [], this.rating,
-    this.alternativeNames = const [], this.creators = const []});
+    this.alternativeNames = const [], this.creators = const [],
+    this.publicationStatus, this.translationStatus});
   final MangaEntry entry;
   final List<Chapter> chapters;
   final String description;
@@ -57,6 +58,9 @@ class MangaDetail {
   final List<String> alternativeNames;
   /// Verified creator credits supplied by the selected source, if present.
   final List<MangaCreator> creators;
+  /// Source-backed status labels; null when the source does not provide them.
+  final String? publicationStatus;
+  final String? translationStatus;
 }
 
 class UnifiedManga {
