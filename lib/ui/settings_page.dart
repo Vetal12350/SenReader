@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 import '../data/catalog_repository.dart';
 import '../data/chapter_alert_controller.dart';
 import '../data/chapter_checker.dart';
+import '../data/chapter_inbox_store.dart';
+import '../core/title_matching.dart';
+import '../core/chapter_identity.dart';
 import '../data/library_store.dart';
 import 'chapter_notifications_panel.dart';
 import 'reader_page.dart';
@@ -73,6 +76,10 @@ class _SettingsPageState extends State<SettingsPage> {
       await widget.library.load();
       final next = await ChapterChecker(repository: widget.repository,
           library: widget.library).check();
+      for (final item in next.discoveries) {
+        await ChapterInboxStore().add(normalizedTitle(item.book.title),
+          item.book.title, item.book.coverUrl, item.sourceKey, item.chapter);
+      }
       if (mounted) setState(() { report = next; checking = false; });
     } catch (_) {
       if (mounted) setState(() {
@@ -145,7 +152,7 @@ class _SettingsPageState extends State<SettingsPage> {
             'Первая проверка источника сохраняет исходное состояние.'),
         for (final discovery in report!.discoveries)
           ListTile(title: Text(discovery.book.title),
-            subtitle: Text('${discovery.chapter.name} · ${discovery.sourceKey}'),
+            subtitle: Text('${displayChapterName(discovery.chapter.name)} · ${discovery.sourceKey}'),
             trailing: const Icon(Icons.chevron_right),
             onTap: () => _open(discovery)),
         for (final warning in report!.warnings.take(8))
