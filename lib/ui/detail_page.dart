@@ -350,6 +350,19 @@ class _DetailPageState extends State<DetailPage> {
           OutlinedButton.icon(onPressed: _retry, icon: const Icon(Icons.refresh), label: const Text('Повторить')),
         ],
         if (detail != null) ...[
+          if (detail!.publicationStatus != null || detail!.translationStatus != null) ...[
+            Wrap(spacing: 8, runSpacing: 6, children: [
+              if (detail!.publicationStatus != null)
+                Chip(
+                  avatar: const Icon(Icons.auto_stories_outlined, size: 17),
+                  label: Text('Статус: ${detail!.publicationStatus}')),
+              if (detail!.translationStatus != null)
+                Chip(
+                  avatar: const Icon(Icons.translate, size: 17),
+                  label: Text('Перевод: ${detail!.translationStatus}')),
+            ]),
+            const SizedBox(height: 12),
+          ],
           SizedBox(width: double.infinity, child: SegmentedButton<bool>(
             showSelectedIcon: false,
             segments: const [
