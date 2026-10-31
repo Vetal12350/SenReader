@@ -80,18 +80,19 @@ void main() {
     final reader = tester.widget<ScrollablePositionedList>(
         find.byType(ScrollablePositionedList));
     expect(reader.scrollOffsetController, isNotNull);
-    final listener = reader.itemPositionsListener!;
-    final before = listener.itemPositions.value
-        .firstWhere((p) => p.index == 0).itemLeadingEdge;
+    // Observe actual movement of the first image error tile. No dependency
+    // on package-private position listeners.
+    final firstImage = find.text('Страница 1 не загрузилась');
+    expect(firstImage, findsOneWidget);
+    final before = tester.getTopLeft(firstImage).dy;
     await tester.tap(find.byTooltip('Автопрокрутка'));
     for (var tick = 0; tick < 4; tick++) {
       await tester.pump(const Duration(milliseconds: 160));
     }
-    final now = listener.itemPositions.value
-        .firstWhere((p) => p.index == 0).itemLeadingEdge;
+    final now = tester.getTopLeft(firstImage).dy;
     expect(now, lessThan(before));
     // At 5 seconds per viewport, 640ms should not skip the first image.
-    expect(now, greaterThan(-0.6));
+    expect(now, greaterThan(before - 400));
     expect(find.byTooltip('Остановить автопрокрутку'), findsOneWidget);
     await tester.tap(find.byTooltip('Остановить автопрокрутку'));
     await tester.pumpAndSettle();
