@@ -15,3 +15,24 @@ bool chapterFullyRead({
   }
   return true;
 }
+
+/// The last loaded chapter can be completed at the genuine scroll end even
+/// while the reader is still trying to fetch the next chapter. The next
+/// chapter's network state does not determine whether this one was read.
+bool terminalChapterBoundaryReached({
+  required bool forwardScrolled,
+  required bool reachedScrollableEnd,
+  required bool footerVisible,
+}) => forwardScrolled && reachedScrollableEnd && footerVisible;
+
+/// After a continuous-chapter transition, the previous chapter is past the
+/// viewport once the separator is the first visible item. The next chapter's
+/// first image need not have loaded or entered the screen yet.
+bool previousChapterBoundaryReached({
+  required int boundaryIndex,
+  required Iterable<int> visibleItemIndexes,
+}) {
+  final visible = visibleItemIndexes.toList();
+  return visible.isNotEmpty &&
+      visible.every((index) => index >= boundaryIndex);
+}

@@ -47,6 +47,8 @@ class _ReaderPageState extends State<ReaderPage> {
   final List<_ChapterSegment> _segments = [];
   final Set<String> _loadedPageKeys = {};
   final Set<String> _autoCompletedChapters = {};
+  // Explicit unread actions take precedence over automatic completion.
+  final Set<String> _manuallyUnreadChapters = {};
   bool _hasForwardScrolled = false;
   bool _reachedScrollableEnd = false;
   Future<void> _autoMarkChain = Future<void>.value();
@@ -164,16 +166,19 @@ class _ReaderPageState extends State<ReaderPage> {
       final segment = _segments[i];
       endIndex += segment.pages.length;
       final passed = i < _segments.length - 1
-          ? visible.any((item) => item.index > endIndex) &&
-            !visible.any((item) => item.index < endIndex)
-          : (_atSeriesEnd || _nextError != null) &&
-            _reachedScrollableEnd &&
-            visible.any((item) => item.index == _itemCount - 1);
+          ? previousChapterBoundaryReached(
+              boundaryIndex: endIndex,
+              visibleItemIndexes: visible.map((item) => item.index))
+          : terminalChapterBoundaryReached(
+              forwardScrolled: _hasForwardScrolled,
+              reachedScrollableEnd: _reachedScrollableEnd,
+              footerVisible: visible.any((item) => item.index == _itemCount - 1));
       if (chapterFullyRead(
           forwardScrolled: _hasForwardScrolled,
           passedChapterBoundary: passed,
           pageCount: segment.pages.length,
-          alreadyCompleted: _autoCompletedChapters.contains(segment.chapter.id),
+          alreadyCompleted: _autoCompletedChapters.contains(segment.chapter.id) ||
+            _manuallyUnreadChapters.contains(segment.chapter.id),
           loadedPages: [
             for (var page = 0; page < segment.pages.length; page++)
               if (_loadedPageKeys.contains(
@@ -183,10 +188,15 @@ class _ReaderPageState extends State<ReaderPage> {
         _autoCompletedChapters.add(segment.chapter.id);
         final chapter = segment.chapter;
         _autoMarkChain = _autoMarkChain.then((_) async {
+          if (_manuallyUnreadChapters.contains(chapter.id)) return;
           await _flushPosition();
+          if (_manuallyUnreadChapters.contains(chapter.id)) return;
           await widget.library.markRead(widget.book, chapter, widget.sourceKey,
             availableChapters: _chapters);
-        }).catchError((Object _) {});
+        }).catchError((Object _) {
+          // A failed persistence write must not permanently suppress a retry.
+          _autoCompletedChapters.remove(chapter.id);
+        });
       }
       endIndex++; // Chapter separator (or terminal footer).
     }
@@ -388,9 +398,14 @@ class _ReaderPageState extends State<ReaderPage> {
                 return IconButton(tooltip: read ? 'Прочитано: отметить непрочитанной' : 'Отметить прочитанной',
                   onPressed: _pageCount == 0 ? null : () async {
                     if (read) {
-                      await widget.library.unmarkRead(widget.book, _activeChapter, widget.sourceKey,
+                      final chapter = _activeChapter;
+                      _manuallyUnreadChapters.add(chapter.id);
+                      // Finish any queued automatic write before user's unread.
+                      await _autoMarkChain;
+                      await widget.library.unmarkRead(widget.book, chapter, widget.sourceKey,
                         availableChapters: _chapters);
                     } else {
+                      _manuallyUnreadChapters.remove(_activeChapter.id);
                       await _mark();
                     }
                   },
