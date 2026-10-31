@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:senreader/core/models.dart';
+import 'package:senreader/core/chapter_identity.dart';
 import 'package:senreader/core/source.dart';
 import 'package:senreader/data/catalog_repository.dart';
 import 'package:senreader/data/chapter_alert_controller.dart';
@@ -131,7 +132,7 @@ void main() {
     await tester.pumpWidget(scaledApp(DetailPage(book: source.book,
       repository: CatalogRepository(sources: {source.key: source}), library: library), 1));
     await tester.pumpAndSettle();
-    final row = find.widgetWithText(ListTile, source.chapters[1].name);
+    final row = find.widgetWithText(ListTile, displayChapterName(source.chapters[1].name));
     await tester.scrollUntilVisible(row, 220, scrollable: find.byType(Scrollable).first);
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(of: row, matching: find.byType(IconButton)));
@@ -149,7 +150,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('reader header opens title and footer has page navigation', (tester) async {
+  testWidgets('reader header opens title and footer navigates chapters', (tester) async {
     await tester.binding.setSurfaceSize(const Size(320, 760));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final source = LayoutSource();
@@ -164,23 +165,23 @@ void main() {
     expect(find.byTooltip('Список глав'), findsNothing);
     await tester.tapAt(const Offset(160, 350));
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(AppBar, source.chapters[1].name), findsOneWidget);
+    expect(find.widgetWithText(AppBar, displayChapterName(source.chapters[1].name)), findsOneWidget);
     expect(find.byTooltip('Список глав'), findsOneWidget);
     expect(find.byType(SafeArea), findsWidgets);
     await tester.tap(find.byTooltip('Список глав'));
     await tester.pumpAndSettle();
     expect(find.byType(ListTile), findsNWidgets(3));
-    await tester.tap(find.widgetWithText(ListTile, source.chapters[0].name));
+    await tester.tap(find.widgetWithText(ListTile, displayChapterName(source.chapters[0].name)));
     await tester.pumpAndSettle();
     expect(find.byType(AppBar), findsNothing);
     await tester.tapAt(const Offset(160, 350));
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(AppBar, source.chapters[0].name), findsOneWidget);
-    expect(find.byTooltip('Предыдущая страница'), findsOneWidget);
-    expect(find.byTooltip('Следующая страница'), findsOneWidget);
+    expect(find.widgetWithText(AppBar, displayChapterName(source.chapters[0].name)), findsOneWidget);
+    expect(find.byTooltip('Предыдущая глава'), findsOneWidget);
+    expect(find.byTooltip('Следующая глава'), findsOneWidget);
     final next = tester.widget<IconButton>(
       find.widgetWithIcon(IconButton, Icons.chevron_right_rounded));
-    expect(next.onPressed, isNull); // Empty source cannot navigate.
+    expect(next.onPressed, isNotNull); // Chapter switching is available.
     await tester.tap(find.byTooltip('Страница тайтла'));
     await tester.pumpAndSettle();
     expect(find.byType(DetailPage), findsOneWidget);
@@ -199,15 +200,15 @@ void main() {
     expect(find.widgetWithIcon(IconButton, Icons.visibility_off_outlined), findsNothing);
     await tester.tapAt(const Offset(400, 300));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithIcon(IconButton, Icons.visibility_off_outlined));
+    await tester.tap(find.byTooltip('Отметить прочитанной'));
     await tester.pumpAndSettle();
     expect(library.isChapterRead(source.book, source.chapters[1], source.key), true);
     expect(library.isChapterRead(source.book, source.chapters[2], source.key), true);
     expect(library.isChapterRead(source.book, source.chapters[0], source.key), false);
     expect(library.items.single.lastChapterId, '2');
     expect(library.items.single.lastPageIndex, 0);
-    expect(find.widgetWithIcon(IconButton, Icons.visibility_outlined), findsOneWidget);
-    await tester.tap(find.widgetWithIcon(IconButton, Icons.visibility_outlined));
+    expect(find.widgetWithIcon(IconButton, Icons.bookmark_added_outlined), findsOneWidget);
+    await tester.tap(find.byTooltip('Прочитано'));
     await tester.pumpAndSettle();
     expect(library.isChapterRead(source.book, source.chapters[1], source.key), false);
     expect(library.isChapterRead(source.book, source.chapters[2], source.key), true);

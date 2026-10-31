@@ -455,16 +455,6 @@ class _DetailPageState extends State<DetailPage> {
             icon: const Icon(Icons.swap_vert_rounded),
           )),
           for (var index = 0; index < chapterResults.length; index++) ...[
-            if (index == 0 || chapterVolume(
-                  chapterResults[newestFirst ? index : chapterResults.length - 1 - index])
-                != chapterVolume(chapterResults[
-                  newestFirst ? index - 1 : chapterResults.length - index]))
-              Align(alignment: Alignment.centerLeft, child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Text(chapterVolume(
-                  chapterResults[newestFirst ? index : chapterResults.length - 1 - index]),
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-              )),
             Builder(builder: (context) {
               final chapter = chapterResults[
                 newestFirst ? index : chapterResults.length - 1 - index];
@@ -490,7 +480,7 @@ class _DetailPageState extends State<DetailPage> {
                         }
                       },
                     ),
-                    title: Text(chapter.name,
+                    title: Text(displayChapterName(chapter.name),
                       style: TextStyle(color: read ? Theme.of(context).colorScheme.onSurfaceVariant : null)),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () => _openChapter(chapter),
