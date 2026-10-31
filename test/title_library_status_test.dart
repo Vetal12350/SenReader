@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:senreader/core/models.dart';
+import 'package:senreader/core/chapter_identity.dart';
 import 'package:senreader/core/source.dart';
 import 'package:senreader/data/catalog_repository.dart';
 import 'package:senreader/data/library_store.dart';
@@ -71,8 +72,8 @@ void main() {
       160, scrollable: find.byType(Scrollable).first);
     await tester.enterText(find.byKey(const Key('chapter-search')), '3');
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(ListTile, 'Глава 3 (т. 1)'), findsOneWidget);
-    expect(find.widgetWithText(ListTile, 'Глава 1 (т. 1)'), findsNothing);
+    expect(find.widgetWithText(ListTile, 'Глава 3'), findsOneWidget);
+    expect(find.widgetWithText(ListTile, 'Глава 1'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
