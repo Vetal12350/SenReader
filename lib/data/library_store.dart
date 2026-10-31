@@ -292,7 +292,7 @@ class LibraryStore extends ChangeNotifier {
     item.lastChapter = chapter.name;
     item.lastChapterId = chapter.id;
     item.lastSource = source;
-    if (item.status == 'planned' || item.status == 'viewed') item.status = 'reading';
+    // Reading does not imply an explicit library subscription.
     item.lastPageCount = pageCount < 0 ? 0 : pageCount;
     item.lastPageIndex = pageIndex.clamp(0,
         item.lastPageCount > 0 ? item.lastPageCount - 1 : 0).toInt();
@@ -310,7 +310,7 @@ class LibraryStore extends ChangeNotifier {
     for (final entry in book.entries.entries) {
       item.entries.putIfAbsent(entry.key, () => entry.value);
     }
-    if (item.status == 'planned' || item.status == 'viewed') item.status = 'reading';
+    // Opened chapters are tracked separately from library subscriptions.
     item.readChapterKeys.add(sourceChapterKey(chapter, source));
     for (final candidate in availableChapters) {
       final order = compareChapterChronology(candidate, chapter);
@@ -355,6 +355,13 @@ class LibraryStore extends ChangeNotifier {
       item.readChapterKeys.remove(canonicalChapterKey(current));
       item.readChapterKeys.remove('$source:${current.id}');
     }
+    // Explicit unread resets both the resume chapter and its saved page.
+    item.lastChapter = chapter.name;
+    item.lastChapterId = chapter.id;
+    item.lastSource = source;
+    item.lastPageIndex = 0;
+    item.lastPageCount = 0;
+    item.lastUpdatedAt = DateTime.now().millisecondsSinceEpoch;
     // Historical canonical completions can outlive the currently loaded
     // chapter page. Clear newer scoped canonical keys too; never alter other
     // sources and never infer ordering for unparseable specials.
