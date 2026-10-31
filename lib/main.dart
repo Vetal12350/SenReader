@@ -68,6 +68,10 @@ class _MainShellState extends State<MainShell> {
   String catalogSourceFilter = 'all';
   String? catalogTagFilter;
   String catalogSort = 'popularity';
+  String? catalogType;
+  List<MangaEntry>? _nativeBrowse;
+  bool _nativeBrowseLoading = false;
+  String? _nativeBrowseError;
   CatalogResult? result;
   CatalogResult? _homeResult; // Never replaced by catalog search results.
   bool loading = false;
@@ -83,6 +87,7 @@ class _MainShellState extends State<MainShell> {
   @override void initState() {
     super.initState();
     _fetch();
+    unawaited(_refreshNativeBrowse());
     ChapterNotificationService.instance.openedPayload.addListener(_onNotificationTap);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onNotificationTap());
   }
@@ -106,6 +111,28 @@ class _MainShellState extends State<MainShell> {
     });
     unawaited(_refreshNewChapters());
     if (thisQuery.isEmpty) unawaited(_refreshSenkuroSections());
+  }
+
+  Future<void> _refreshNativeBrowse() async {
+    final source = widget.repository.sources['senkuro'];
+    if (source is! SenkuroSource) return;
+    final type = catalogType;
+    final order = catalogSort == 'created'
+        ? 'CREATED_AT'
+        : catalogSort == 'updated'
+            ? 'LAST_CHAPTER_AT' : 'POPULARITY_SCORE';
+    setState(() { _nativeBrowseLoading = true; _nativeBrowseError = null; });
+    try {
+      final entries = await source.browseHome(type: type, orderField: order);
+      if (!mounted || type != catalogType) return;
+      setState(() { _nativeBrowse = entries; _nativeBrowseLoading = false; });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _nativeBrowseError = 'Не удалось загрузить каталог Senkuro: $error';
+        _nativeBrowseLoading = false;
+      });
+    }
   }
 
   Future<void> _refreshSenkuroSections() async {
@@ -176,7 +203,14 @@ class _MainShellState extends State<MainShell> {
   /// Local controls apply to the results returned by the available sources;
   /// they are not a claim of server-wide filtered or chronological ranking.
   List<UnifiedManga> _visibleCatalogBooks() {
-    final books = (result?.books ?? const <UnifiedManga>[])
+    final native = widget.repository.sources['senkuro'] is SenkuroSource;
+    final selection = native && query.trim().isEmpty && _nativeBrowse != null
+        ? _nativeBrowse!.map((entry) =>
+            UnifiedManga(title: entry.title, entries: {'senkuro': entry})).toList()
+        : (result?.books ?? const <UnifiedManga>[])
+            .where((book) => !native || book.entries.containsKey('senkuro'))
+            .toList();
+    final books = selection
         .where((book) => (catalogSourceFilter == 'all' ||
             book.entries.containsKey(catalogSourceFilter)) &&
           (catalogTagFilter == null || book.entries.values.any(
@@ -197,7 +231,7 @@ class _MainShellState extends State<MainShell> {
 
   List<String> get _catalogTags {
     final counts = <String, int>{};
-    for (final book in result?.books ?? const <UnifiedManga>[]) {
+    for (final book in _visibleCatalogBooks()) {
       for (final tag in book.entries.values.expand((e) => e.tags).toSet()) {
         counts.update(tag, (value) => value + 1, ifAbsent: () => 1);
       }
@@ -295,6 +329,25 @@ class _MainShellState extends State<MainShell> {
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       Wrap(spacing: 8, runSpacing: 6, children: [
+        if (widget.repository.sources['senkuro'] is SenkuroSource)
+          PopupMenuButton<String>(
+            tooltip: 'Тип произведения Senkuro',
+            onSelected: (value) {
+              setState(() => catalogType = value == 'all' ? null : value);
+              unawaited(_refreshNativeBrowse());
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'all', child: Text('Все типы')),
+              PopupMenuItem(value: 'MANGA', child: Text('Манга')),
+              PopupMenuItem(value: 'MANHWA', child: Text('Манхва')),
+              PopupMenuItem(value: 'MANHUA', child: Text('Маньхуа')),
+            ],
+            child: Chip(avatar: const Icon(Icons.tune, size: 18),
+              label: Text(catalogType == 'MANGA' ? 'Манга' :
+                  catalogType == 'MANHWA' ? 'Манхва' :
+                  catalogType == 'MANHUA' ? 'Маньхуа' : 'Все типы')),
+          ),
+        if (widget.repository.sources['senkuro'] is! SenkuroSource)
         PopupMenuButton<String>(
           tooltip: 'Фильтр по источнику',
           initialValue: catalogSourceFilter,
@@ -316,17 +369,24 @@ class _MainShellState extends State<MainShell> {
           key: const Key('catalog-sort'),
           tooltip: 'Сортировка загруженного каталога',
           initialValue: catalogSort,
-          onSelected: (value) => setState(() => catalogSort = value),
+          onSelected: (value) {
+            setState(() => catalogSort = value);
+            if (widget.repository.sources['senkuro'] is SenkuroSource) {
+              unawaited(_refreshNativeBrowse());
+            }
+          },
           itemBuilder: (context) => const [
             PopupMenuItem(value: 'popularity', child: Text('По популярности')),
             PopupMenuItem(value: 'rating', child: Text('По рейтингу')),
             PopupMenuItem<String>(enabled: false, value: 'chapters', child: Text('По количеству глав · нет данных')),
             PopupMenuItem<String>(enabled: false, value: 'views', child: Text('По просмотрам · нет данных')),
-            PopupMenuItem<String>(enabled: false, value: 'created', child: Text('По дате создания · нет данных')),
-            PopupMenuItem<String>(enabled: false, value: 'uploaded', child: Text('По дате залива · нет данных')),
+            PopupMenuItem<String>(value: 'created', child: Text('По дате создания')),
+            PopupMenuItem<String>(value: 'updated', child: Text('Последние обновления')),
           ],
           child: Chip(avatar: const Icon(Icons.swap_vert, size: 18),
-            label: Text(catalogSort == 'rating' ? 'По рейтингу' : 'Сортировка')),
+            label: Text(catalogSort == 'rating' ? 'По рейтингу' :
+              catalogSort == 'created' ? 'По дате создания' :
+              catalogSort == 'updated' ? 'Последние обновления' : 'Сортировка')),
         ),
         ActionChip(
           key: const Key('catalog-tag-filters'),
@@ -339,7 +399,7 @@ class _MainShellState extends State<MainShell> {
       ]),
       Padding(
         padding: const EdgeInsets.only(top: 4, bottom: 12),
-        child: Text('Фильтры действуют на загруженные результаты',
+        child: Text('Теги и рейтинги фильтруют загруженные результаты',
           style: TextStyle(fontSize: 11,
             color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ),
@@ -518,7 +578,11 @@ class _MainShellState extends State<MainShell> {
         ]),
         actions: [
           if (tab != 2)
-            IconButton(tooltip: 'Обновить', icon: const Icon(Icons.refresh), onPressed: _fetch),
+            IconButton(tooltip: 'Обновить', icon: const Icon(Icons.refresh),
+              onPressed: () {
+                unawaited(_fetch());
+                if (tab == 1) unawaited(_refreshNativeBrowse());
+              }),
           IconButton(tooltip: 'Настройки', icon: const Icon(Icons.settings_outlined),
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsPage(
               repository: widget.repository, library: widget.library, alerts: alerts,
@@ -638,10 +702,13 @@ class _MainShellState extends State<MainShell> {
             ],
             if (tab == 1) ...[
             SectionTitle(query.isEmpty ? 'Каталог' : 'Результаты поиска',
-              subtitle: 'Senkuro · ReadManga · ReManga'),
-            if (loading)
+              subtitle: widget.repository.sources['senkuro'] is SenkuroSource
+                  ? 'Senkuro' : 'Доступные источники'),
+            if (loading || (query.isEmpty && _nativeBrowseLoading))
               const Padding(padding: EdgeInsets.all(32),
                 child: Center(child: CircularProgressIndicator())),
+            if (query.isEmpty && _nativeBrowseError != null)
+              Text(_nativeBrowseError!, style: const TextStyle(color: Color(0xFFFFBE80))),
             if (activeResult != null && activeResult.warnings.isNotEmpty)
               ...activeResult!.warnings.map((w) => Padding(
                 padding: const EdgeInsets.only(bottom: 8),
