@@ -7,6 +7,7 @@ import '../main.dart' show mainTabRequest;
 import '../core/models.dart';
 import '../core/chapter_identity.dart';
 import '../data/catalog_repository.dart';
+import '../data/page_load_retry.dart';
 import '../data/library_store.dart';
 import '../data/reading_completion.dart';
 import 'detail_page.dart';
@@ -27,6 +28,98 @@ class _VisibleChapterPage {
   String get key => '${chapter.id}|$index';
 }
 
+
+/// A failed CDN image is retried in place rather than requiring route
+/// navigation. Keep its state tied to the chapter/page, not viewport rebuilds.
+class _RetryableReaderImage extends StatefulWidget {
+  const _RetryableReaderImage({super.key, required this.page,
+    required this.pageIndex, required this.width,
+    required this.height, required this.fit, required this.onLoaded,
+    required this.onRefreshLinks});
+  final PageImage page;
+  final int pageIndex;
+  final double width;
+  final double? height;
+  final BoxFit fit;
+  final VoidCallback onLoaded;
+  final Future<void> Function() onRefreshLinks;
+
+  @override State<_RetryableReaderImage> createState() =>
+      _RetryableReaderImageState();
+}
+
+class _RetryableReaderImageState extends State<_RetryableReaderImage> {
+  int _attempt = 0;
+  Timer? _retryTimer;
+
+  void _retry(NetworkImage image) {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    // Evict any failed network image from Flutter's image cache.
+    unawaited(() async {
+      await image.evict();
+      if (mounted) setState(() => _attempt++);
+    }());
+  }
+
+  void _scheduleRetry(NetworkImage image) {
+    if (_attempt >= 2 || _retryTimer != null) return;
+    _retryTimer = Timer(
+      Duration(milliseconds: _attempt == 0 ? 450 : 1100),
+      () => _retry(image),
+    );
+  }
+
+  @override void didUpdateWidget(_RetryableReaderImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.page.url != widget.page.url) {
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      _attempt = 0;
+    }
+  }
+
+  @override void dispose() {
+    _retryTimer?.cancel();
+    super.dispose();
+  }
+
+  @override Widget build(BuildContext context) {
+    final provider = NetworkImage(widget.page.url,
+      headers: widget.page.headers);
+    return Image(
+      key: ValueKey('reader-image-attempt-$_attempt'),
+      image: provider, width: widget.width, height: widget.height,
+      fit: widget.fit,
+      frameBuilder: (context, child, frame, wasSync) {
+        if (frame != null) widget.onLoaded();
+        return frame == null
+          ? const SizedBox(height: 170,
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
+          : child;
+      },
+      errorBuilder: (context, error, stack) {
+        _scheduleRetry(provider);
+        return Container(
+          height: 170, color: Colors.white10,
+          alignment: Alignment.center,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('Страница ${widget.pageIndex + 1} не загрузилась',
+              style: const TextStyle(color: Colors.white60)),
+            const SizedBox(height: 8),
+            TextButton.icon(onPressed: () => _retry(provider),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Повторить')),
+            if (_attempt >= 2)
+              TextButton(onPressed: () => unawaited(widget.onRefreshLinks()),
+                child: const Text('Обновить ссылки главы')),
+          ]),
+        );
+      },
+    );
+  }
+}
+
 class ReaderPage extends StatefulWidget {
   const ReaderPage({super.key, required this.book, required this.chapter,
     required this.sourceKey, required this.repository, required this.library,
@@ -41,9 +134,11 @@ class ReaderPage extends StatefulWidget {
 }
 
 class _ReaderPageState extends State<ReaderPage> {
-  late final Future<List<PageImage>> future;
+  late Future<List<PageImage>> future;
   final ItemPositionsListener _positions = ItemPositionsListener.create();
   final ItemScrollController _itemScroll = ItemScrollController();
+  // Pixel-relative scrolling keeps movement smooth across tall webtoon images.
+  final ScrollOffsetController _scrollOffset = ScrollOffsetController();
   Timer? _saveTimer;
   int _pageCount = 0;
   String? _lastSavedKey;
@@ -51,6 +146,8 @@ class _ReaderPageState extends State<ReaderPage> {
   Future<void> _saveChain = Future<void>.value();
   final List<_ChapterSegment> _segments = [];
   final Set<String> _loadedPageKeys = {};
+  final Map<String, int> _chapterReloads = {};
+  final Set<String> _refreshingChapterLinks = {};
   final Set<String> _autoCompletedChapters = {};
   // Explicit unread actions take precedence over automatic completion.
   final Set<String> _manuallyUnreadChapters = {};
@@ -74,7 +171,9 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _lightTheme = false;
   double _brightness = 100;
   double _autoScrollSeconds = 5;
-  Timer? _autoScrollTimer;
+  bool _autoScrolling = false;
+  int _autoScrollRun = 0;
+  bool _autoAtBottom = false;
 
   Future<void> _restoreReaderSettings() async {
     final prefs = await SharedPreferences.getInstance();
@@ -113,7 +212,13 @@ class _ReaderPageState extends State<ReaderPage> {
     _chapters = widget.chapters;
     _activeChapter = widget.chapter;
     _visiblePage.value = _resumePage;
-    future = widget.repository.sources[widget.sourceKey]!.pages(widget.chapter).then((pages) {
+    future = _loadInitialChapter();
+    _positions.itemPositions.addListener(_onVisiblePages);
+  }
+
+  Future<List<PageImage>> _loadInitialChapter() async {
+    final pages = await loadChapterPagesWithRetry(
+      widget.repository.sources[widget.sourceKey]!, widget.chapter);
       if (mounted) {
         setState(() {
           _segments.add(_ChapterSegment(widget.chapter, pages));
@@ -146,9 +251,20 @@ class _ReaderPageState extends State<ReaderPage> {
           }
         }
       }
-      return pages;
+    return pages;
+  }
+
+  void _retryInitialChapter() {
+    if (!mounted) return;
+    _stopAutoScroll();
+    setState(() {
+      // The failed future is never reused; no need to reopen the route.
+      _segments.clear();
+      _loadedPageKeys.clear();
+      _atSeriesEnd = false;
+      _nextError = null;
+      future = _loadInitialChapter();
     });
-    _positions.itemPositions.addListener(_onVisiblePages);
   }
 
   int get _resumePage {
@@ -339,6 +455,32 @@ class _ReaderPageState extends State<ReaderPage> {
     return _saveChain;
   }
 
+  /// Refresh potentially expired image URLs without leaving the chapter or
+  /// rewriting the reader's saved position, manual eyes, or chapter status.
+  Future<void> _refreshChapterImages(Chapter chapter) async {
+    if (!_refreshingChapterLinks.add(chapter.id)) return;
+    try {
+      final pages = await loadChapterPagesWithRetry(
+        widget.repository.sources[widget.sourceKey]!, chapter);
+      if (!mounted || pages.isEmpty) return;
+      final index = _segments.indexWhere((part) => part.chapter.id == chapter.id);
+      if (index < 0) return;
+      setState(() {
+        _segments[index] = _ChapterSegment(chapter, pages);
+        _chapterReloads[chapter.id] = (_chapterReloads[chapter.id] ?? 0) + 1;
+        if (_activeChapter.id == chapter.id) _pageCount = pages.length;
+        _loadedPageKeys.removeWhere((key) => key.startsWith('${chapter.id}|'));
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+          content: Text('Не удалось обновить ссылки. Попробуйте ещё раз.')));
+      }
+    } finally {
+      _refreshingChapterLinks.remove(chapter.id);
+    }
+  }
+
   Future<void> _appendNextChapter() async {
     if (!_continuous) { if (mounted) setState(() => _atSeriesEnd = true); return; }
     if (_nextLoading || _atSeriesEnd || _segments.isEmpty ||
@@ -362,7 +504,8 @@ class _ReaderPageState extends State<ReaderPage> {
         return;
       }
       final next = ordered[index + 1];
-      final pages = await widget.repository.sources[widget.sourceKey]!.pages(next);
+      final pages = await loadChapterPagesWithRetry(
+        widget.repository.sources[widget.sourceKey]!, next);
       if (!mounted) return;
       if (pages.isEmpty) {
         setState(() => _nextError = 'Следующая глава пока недоступна');
@@ -378,7 +521,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override void dispose() {
     _positions.itemPositions.removeListener(_onVisiblePages);
-    _autoScrollTimer?.cancel();
+    _stopAutoScroll(updateUi: false);
     if (_fullScreen) unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     _saveTimer?.cancel();
     unawaited(_flushPosition());
@@ -407,6 +550,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _go(Chapter chapter) async {
+    _stopAutoScroll();
     if (chapter.id == _activeChapter.id) return;
     _saveTimer?.cancel();
     await _flushPosition();
@@ -419,6 +563,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Future<void> _chapterList() async {
     if (_loadingChapters) return;
+    _stopAutoScroll();
     if (_chapters.isEmpty) {
       setState(() => _loadingChapters = true);
       try {
@@ -436,6 +581,10 @@ class _ReaderPageState extends State<ReaderPage> {
       }
     }
     if (!mounted) return;
+    // Match the chapter currently visible in the continuous reader, not
+    // the first chapter with which ReaderPage was initially opened.
+    final activeIndex = _chapters.indexWhere((ch) => ch.id == _activeChapter.id);
+    final initialIndex = activeIndex >= 0 ? activeIndex : 0;
     final chapter = await showModalBottomSheet<Chapter>(context: context,
       useSafeArea: true, isScrollControlled: true,
       builder: (context) => SafeArea(child: SizedBox(
@@ -444,8 +593,13 @@ class _ReaderPageState extends State<ReaderPage> {
           const Padding(padding: EdgeInsets.all(16), child: Text('Главы')),
           Expanded(child: _chapters.isEmpty
             ? const Center(child: Text('Нет доступных глав'))
-            : ListView.builder(itemCount: _chapters.length,
+            : ScrollablePositionedList.builder(
+              key: const Key('reader-chapter-picker'),
+              itemCount: _chapters.length,
+              initialScrollIndex: initialIndex,
+              initialAlignment: 0.4,
               itemBuilder: (context, index) => ListTile(
+                key: Key('reader-chapter-${_chapters[index].id}'),
                 selected: _chapters[index].id == _activeChapter.id,
                 title: Text(displayChapterName(_chapters[index].name)),
                 onTap: () => Navigator.pop(context, _chapters[index]),
@@ -470,6 +624,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _stepPage(int delta) {
+    _stopAutoScroll();
     if (!_itemScroll.isAttached || _pageCount == 0) return;
     final next = _visiblePage.value + delta;
     if (next < 0 || next >= _pageCount) return;
@@ -481,6 +636,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _openTitle() {
+    _stopAutoScroll();
     _saveTimer?.cancel();
     unawaited(_flushPosition());
     Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage(
@@ -515,6 +671,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _jumpPage(int index) {
+    _stopAutoScroll();
     final itemIndex = _itemIndexForPage(_activeChapter, index);
     if (itemIndex != null && _itemScroll.isAttached) {
       _itemScroll.jumpTo(index: itemIndex);
@@ -522,6 +679,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _goToRoot(int destination) {
+    _stopAutoScroll();
     _saveTimer?.cancel();
     unawaited(_flushPosition());
     mainTabRequest.value = destination;
@@ -551,22 +709,58 @@ class _ReaderPageState extends State<ReaderPage> {
     });
   }
 
-  void _toggleAutoscroll() {
-    if (_autoScrollTimer != null) {
-      _autoScrollTimer!.cancel();
-      setState(() => _autoScrollTimer = null);
-    } else {
-      setState(() => _autoScrollTimer = Timer.periodic(
-        Duration(milliseconds: (_autoScrollSeconds * 1000).round()),
-        (timer) {
-          if (!mounted || _visiblePage.value >= _pageCount - 1) {
-            timer.cancel();
-            if (mounted) setState(() => _autoScrollTimer = null);
-            return;
-          }
-          _stepPage(1);
-        }));
+  void _stopAutoScroll({bool updateUi = true}) {
+    // Invalidate any in-flight animation continuation on pause or dispose.
+    _autoScrollRun++;
+    if (!_autoScrolling) return;
+    _autoScrolling = false;
+    if (mounted && updateUi) setState(() {});
+  }
+
+  Future<void> _runAutoScroll(int run) async {
+    // Each animation moves a small, fixed number of physical pixels. Unlike
+    // jumping by image index, this never skips the middle of tall webtoon pages.
+    const frame = Duration(milliseconds: 160);
+    while (mounted && _autoScrolling && run == _autoScrollRun) {
+      if (!_itemScroll.isAttached || _segments.isEmpty) {
+        _stopAutoScroll();
+        break;
+      }
+      if (_autoAtBottom && _atSeriesEnd) {
+        _stopAutoScroll();
+        break;
+      }
+      if (_autoAtBottom && (_nextLoading || _nextScheduled)) {
+        // Do not spin against the footer while the next chapter is loading.
+        await Future<void>.delayed(frame);
+        continue;
+      }
+      // The existing slider remains valid: N seconds per *viewport*, not per
+      // source image. Thus a 5-screen-high image scrolls for ~5N seconds.
+      final pixels = MediaQuery.sizeOf(context).height /
+          _autoScrollSeconds * (frame.inMilliseconds / 1000);
+      try {
+        await _scrollOffset.animateScroll(
+          offset: pixels, duration: frame, curve: Curves.linear);
+      } catch (_) {
+        if (mounted && run == _autoScrollRun) _stopAutoScroll();
+        return;
+      }
+      if (_autoAtBottom && mounted && run == _autoScrollRun) {
+        await Future<void>.delayed(frame);
+      }
     }
+  }
+
+  void _toggleAutoscroll() {
+    if (_autoScrolling) {
+      _stopAutoScroll();
+      return;
+    }
+    if (!_itemScroll.isAttached || _segments.isEmpty) return;
+    setState(() => _autoScrolling = true);
+    final run = ++_autoScrollRun;
+    unawaited(_runAutoScroll(run));
   }
 
   void _readerSettings() {
@@ -619,7 +813,7 @@ class _ReaderPageState extends State<ReaderPage> {
               Slider(min: 30, max: 100, divisions: 14, value: _brightness,
                 onChanged: (v) => update(() => _brightness = v, 'brightness', v)),
               ListTile(title: Text('Скорость автопрокрутки: ' +
-                  _autoScrollSeconds.round().toString() + ' сек./стр.')),
+                  _autoScrollSeconds.round().toString() + ' сек./экран')),
               Slider(min: 1, max: 12, divisions: 11, value: _autoScrollSeconds,
                 onChanged: (v) => update(() => _autoScrollSeconds = v,
                   'autoscroll', v)),
@@ -679,10 +873,10 @@ class _ReaderPageState extends State<ReaderPage> {
                     ),
                   )
                 else const SizedBox(width: 8),
-                IconButton(tooltip: _autoScrollTimer == null
+                IconButton(tooltip: !_autoScrolling
                     ? 'Автопрокрутка' : 'Остановить автопрокрутку',
                   onPressed: _pageCount > 0 ? _toggleAutoscroll : null,
-                  icon: Icon(_autoScrollTimer == null
+                  icon: Icon(!_autoScrolling
                     ? Icons.play_circle_outline : Icons.pause_circle_outline)),
                 IconButton(tooltip: 'Следующая глава',
                   onPressed: () => _stepChapter(1),
@@ -709,16 +903,41 @@ class _ReaderPageState extends State<ReaderPage> {
           }
           if (snapshot.hasError) {
             return Center(child: Padding(padding: const EdgeInsets.all(24),
-              child: Text('Ошибка главы: ${snapshot.error}', style: const TextStyle(color: Colors.white))));
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text('Ошибка главы: ${snapshot.error}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white)),
+                const SizedBox(height: 14),
+                FilledButton.icon(
+                  onPressed: _retryInitialChapter,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Повторить загрузку'),
+                ),
+              ])));
           }
           final pages = snapshot.data ?? [];
           if (pages.isEmpty) {
-            return const Center(child: Padding(padding: EdgeInsets.all(24),
-              child: Text('Нет доступных изображений. Возможно, глава удалена или доступ ограничен.', style: TextStyle(color: Colors.white))));
+            return Center(child: Padding(padding: const EdgeInsets.all(24),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Text('Нет доступных изображений. Возможно, глава удалена или доступ ограничен.',
+                  textAlign: TextAlign.center, style: TextStyle(color: Colors.white)),
+                const SizedBox(height: 14),
+                FilledButton.icon(onPressed: _retryInitialChapter,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Повторить загрузку')),
+              ])));
           }
           final initialIndex = _resumePage.clamp(0, pages.length - 1).toInt();
           return NotificationListener<ScrollNotification>(
             onNotification: (notice) {
+              if (notice is ScrollStartNotification &&
+                  notice.dragDetails != null && _autoScrolling) {
+                // A user's swipe takes priority over automatic scrolling.
+                _stopAutoScroll();
+              }
+              if (notice is ScrollUpdateNotification) {
+                _autoAtBottom = notice.metrics.extentAfter <= 4;
+              }
               if (notice is ScrollUpdateNotification &&
                   (notice.scrollDelta ?? 0) > 0) {
                 _hasForwardScrolled = true;
@@ -738,6 +957,7 @@ class _ReaderPageState extends State<ReaderPage> {
             key: ValueKey('${widget.sourceKey}:${widget.chapter.id}'),
             itemPositionsListener: _positions,
             itemScrollController: _itemScroll,
+            scrollOffsetController: _scrollOffset,
             initialScrollIndex: initialIndex,
             itemCount: _itemCount,
             itemBuilder: (context, index) {
@@ -806,24 +1026,16 @@ class _ReaderPageState extends State<ReaderPage> {
               ).pages[item.index];
               return ColorFiltered(colorFilter: ColorFilter.mode(
                 Colors.black.withValues(alpha: (100 - _brightness) / 100),
-                BlendMode.srcATop), child: Image.network(
-                image.url,
-                width: MediaQuery.sizeOf(context).width,
-                headers: image.headers,
-                fit: _fitHeight ? BoxFit.contain : BoxFit.fitWidth,
-                height: _fitHeight ? MediaQuery.sizeOf(context).height : null,
-                frameBuilder: (context, child, frame, wasSync) {
-                  if (frame != null) _registerLoadedPage(item);
-                  return frame == null
-                    ? const SizedBox(height: 170,
-                        child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
-                    : child;
-                },
-                errorBuilder: (context, error, stack) => Container(
-                  height: 170, color: Colors.white10, alignment: Alignment.center,
-                  child: Text('Страница ${item.index + 1} не загрузилась',
-                    style: const TextStyle(color: Colors.white60))),
-              ));
+                BlendMode.srcATop), child: _RetryableReaderImage(
+                  key: ValueKey('reader-image-${item.key}-${_chapterReloads[item.chapter.id] ?? 0}'),
+                  page: image,
+                  pageIndex: item.index,
+                  width: MediaQuery.sizeOf(context).width,
+                  height: _fitHeight ? MediaQuery.sizeOf(context).height : null,
+                  fit: _fitHeight ? BoxFit.contain : BoxFit.fitWidth,
+                  onLoaded: () => _registerLoadedPage(item),
+                  onRefreshLinks: () => _refreshChapterImages(item.chapter),
+                ));
             },
           ));
         },
