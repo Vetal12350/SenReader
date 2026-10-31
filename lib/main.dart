@@ -737,7 +737,7 @@ class _MainShellState extends State<MainShell> {
         animation: widget.library,
         builder: (context, _) {
           final saved = widget.library.items.where(
-            (item) => item.status != 'viewed').toList();
+            (item) => item.status != 'viewed' || item.favorite).toList();
           final filtered = saved.where((item) =>
             libraryFilter == 'all' || (libraryFilter == 'favorite'
               ? item.favorite : item.status == libraryFilter)).toList();
