@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../data/catalog_repository.dart';
 import '../data/chapter_alert_controller.dart';
 import '../data/chapter_checker.dart';
@@ -18,6 +19,49 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  Future<void> _copyBackup() async {
+    try {
+      final raw = await widget.library.exportBackup();
+      await Clipboard.setData(ClipboardData(text: raw));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Копия скопирована. Сохрани текст в надёжном месте до удаления приложения.')));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Не удалось создать копию библиотеки.')));
+    }
+  }
+
+  Future<void> _pasteBackup() async {
+    try {
+      final raw = (await Clipboard.getData('text/plain'))?.text;
+      if (raw == null || raw.isEmpty) throw const FormatException('Пустой буфер');
+      final preview = widget.library.previewBackup(raw);
+      if (!mounted) return;
+      final approved = await showDialog<bool>(context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Восстановить библиотеку?'),
+          content: Text('Найдено произведений: ${preview.books}. '
+              'Существующие записи не заменяются и не удаляются. '
+              'Импортируй только собственную сохранённую копию.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false),
+              child: const Text('Отмена')),
+            FilledButton(onPressed: () => Navigator.pop(context, true),
+              child: const Text('Импортировать')),
+          ],
+        ));
+      if (approved != true || !mounted) return;
+      final report = await widget.library.importBackup(raw);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Добавлено: ${report.added}; уже существовали: ${report.skipped}.')));
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Резервная копия повреждена или не относится к SenReader.')));
+    }
+  }
+
   bool checking = false;
   ChapterScanReport? report;
   String? error;
@@ -108,6 +152,28 @@ class _SettingsPageState extends State<SettingsPage> {
           Padding(padding: const EdgeInsets.symmetric(vertical: 4),
             child: Text(warning, style: const TextStyle(color: Color(0xFFFFBE80)))),
       ],
+      const Text('Резервная копия библиотеки', style: TextStyle(
+        fontSize: 20, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 8),
+      const Text('Перед переходом с debug APK на постоянную подпись '
+          'скопируй резервную копию и обязательно сохрани текст '
+          'в отдельном надёжном месте. Один буфер обмена ненадёжен. '
+          'В копию входят книги, источники, избранное и история чтения. '
+          'Уведомления и тема после переустановки настраиваются заново.'),
+      const SizedBox(height: 10),
+      Wrap(spacing: 8, runSpacing: 8, children: [
+        OutlinedButton.icon(
+          key: const Key('backup-copy'),
+          onPressed: _copyBackup,
+          icon: const Icon(Icons.copy_outlined),
+          label: const Text('Копировать библиотеку')),
+        OutlinedButton.icon(
+          key: const Key('backup-restore'),
+          onPressed: _pasteBackup,
+          icon: const Icon(Icons.restore),
+          label: const Text('Импорт из буфера')),
+      ]),
+      const SizedBox(height: 24),
     ]),
   );
 }
