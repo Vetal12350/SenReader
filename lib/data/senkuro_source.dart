@@ -69,7 +69,7 @@ query search($query: String!, $first: Int = 30) {
   static const _detailQuery = r'''
 query fetchManga($slug: String!) {
   manga(slug: $slug) {
-    slug score titles { lang content } originalName { lang content }
+    id slug score titles { lang content } originalName { lang content }
     alternativeNames { lang content }
     localizations { lang description { __typename
       ... on TiptapNodeText { text }
@@ -81,6 +81,31 @@ query fetchManga($slug: String!) {
     branches { id primaryBranch chapters }
   }
 }''';
+  // Optional metadata, from Senkuro's public Tachiyomi-compatible API.
+  // A metadata failure must not make readable chapters disappear.
+  static const _statusQuery = r'''
+query fetchTachiyomiManga($mangaId: ID!) {
+  mangaTachiyomiInfo(mangaId: $mangaId) {
+    status translationStatus
+  }
+}''';
+
+  static String? _publicationLabel(dynamic value) => switch (value) {
+    'ANNOUNCE' => 'Анонс',
+    'ONGOING' => 'Онгоинг',
+    'FINISHED' => 'Выпущено',
+    'HIATUS' => 'Приостановлено',
+    'CANCELLED' => 'Отменено',
+    _ => null,
+  };
+  static String? _translationLabel(dynamic value) => switch (value) {
+    'IN_PROGRESS' => 'Переводится',
+    'FINISHED' => 'Переведено',
+    'FROZEN' => 'Заморожено',
+    'ABANDONED' => 'Заброшено',
+    _ => null,
+  };
+
   static const _chaptersQuery = r'''
 query fetchMangaChapters($branchId: ID!, $after: String, $orderBy: MangaChapterOrder!) {
   mangaChapters(first: 100, branchId: $branchId, after: $after, orderBy: $orderBy) {
@@ -239,7 +264,7 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
       if (sourceId.isNotEmpty) seenIds.add(sourceId);
       if (duplicate) return null;
       seenEntryIds.add(id);
-      return MangaEntry(source: key, id: id, title: title,
+      return MangaEntry(source: key, id: id, remoteId: sourceId, title: title,
         rating: tenPointScore(n['score']),
         coverUrl: _cover(n['cover']),
         tags: _optionalList(n['labels']).whereType<Map>()
@@ -314,8 +339,24 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
         cursor = next;
       }
     }
+    Map<dynamic, dynamic> metadata = const {};
+    final metadataId = entry.remoteId.isNotEmpty ? entry.remoteId : _id(m['id']);
+    if (metadataId.isNotEmpty) {
+      try {
+        final statusInfo = await _gql('fetchTachiyomiManga',
+          _statusQuery, {'mangaId': metadataId});
+        if (statusInfo['mangaTachiyomiInfo'] is Map) {
+          metadata = statusInfo['mangaTachiyomiInfo'] as Map;
+        }
+      } catch (_) {
+        // Status labels are optional; chapter and cover loading remain usable.
+      }
+    }
     return MangaDetail(
-      entry: MangaEntry(source: key, id: entry.id, title: _title(m['titles'], m['originalName']),
+      publicationStatus: _publicationLabel(metadata['status']),
+      translationStatus: _translationLabel(metadata['translationStatus']),
+      entry: MangaEntry(source: key, id: entry.id, remoteId: metadataId,
+        title: _title(m['titles'], m['originalName']),
         coverUrl: _cover(m['cover']).isNotEmpty ? _cover(m['cover']) : _image(entry.coverUrl)),
       chapters: chapters,
       description: loc is Map ? _flatten(loc['description']).trim() : '',
