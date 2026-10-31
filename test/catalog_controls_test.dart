@@ -109,8 +109,13 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('catalog-tag-filters')));
     await tester.pumpAndSettle();
-    await tester.scrollUntilVisible(find.text('Фантастика'), 180,
-      scrollable: find.byType(Scrollable).last);
+    // The larger Senkuro filter sheet is lazily built; scroll its own list.
+    for (var attempt = 0;
+         attempt < 6 && find.text('Фантастика').evaluate().isEmpty;
+         attempt++) {
+      await tester.drag(find.byType(ListView).last, const Offset(0, -300));
+      await tester.pumpAndSettle();
+    }
     expect(find.text('Фантастика'), findsOneWidget);
     await tester.tap(find.text('Фантастика'));
     await tester.pumpAndSettle();
