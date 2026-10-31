@@ -83,44 +83,104 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     }
   }
 
+  static String _dateLabel(int millis) {
+    if (millis <= 0) return '';
+    final date = DateTime.fromMillisecondsSinceEpoch(millis);
+    return '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}';
+  }
+
   @override Widget build(BuildContext context) {
+    final activeCount = entries.where((e) => !e.hidden).length;
+    final hiddenCount = entries.length - activeCount;
     final visible = entries.where((e) => e.hidden == hidden).toList()
       ..sort((a, b) => (hidden ? b.hiddenAt.compareTo(a.hiddenAt) :
           b.createdAt.compareTo(a.createdAt)));
+    final theme = Theme.of(context);
     return Column(children: [
-      Padding(padding: const EdgeInsets.all(12),
-        child: Row(children: [
-          Expanded(child: SegmentedButton<bool>(
-            selected: {hidden}, segments: const [
-              ButtonSegment(value: false, label: Text('Новые')),
-              ButtonSegment(value: true, label: Text('Скрытые')),
+      Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.notifications_active_outlined, size: 23),
+            const SizedBox(width: 9),
+            Expanded(child: Text('Обновления глав',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800))),
+            IconButton(tooltip: 'Проверить обновления',
+              onPressed: checking ? null : _check,
+              icon: Icon(checking ? Icons.hourglass_top : Icons.refresh)),
+          ]),
+          const SizedBox(height: 4),
+          Text('Новости сохранённых произведений',
+            style: theme.textTheme.bodySmall),
+          const SizedBox(height: 14),
+          SizedBox(width: double.infinity, child: SegmentedButton<bool>(
+            selected: {hidden}, segments: [
+              ButtonSegment(value: false, label: Text('Новые ($activeCount)')),
+              ButtonSegment(value: true, label: Text('Скрытые ($hiddenCount)')),
             ], onSelectionChanged: (v) => setState(() => hidden = v.first))),
-          IconButton(tooltip: 'Проверить обновления',
-            onPressed: checking ? null : _check, icon: Icon(checking
-              ? Icons.hourglass_top : Icons.refresh)),
         ])),
-      if (error != null) Text(error!),
-      if (loading) const Expanded(child: Center(child: CircularProgressIndicator()))
+      if (error != null)
+        Padding(padding: const EdgeInsets.all(12), child: Text(error!,
+          style: TextStyle(color: theme.colorScheme.error))),
+      if (loading)
+        const Expanded(child: Center(child: CircularProgressIndicator()))
       else Expanded(child: visible.isEmpty
-        ? Center(child: Text(hidden ? 'Скрытых обновлений пока нет' :
-            'Новых глав пока нет', textAlign: TextAlign.center))
-        : ListView.separated(padding: const EdgeInsets.all(12),
-          itemCount: visible.length, separatorBuilder: (_, __) => const SizedBox(height: 8),
+        ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(hidden ? Icons.archive_outlined :
+              Icons.notifications_none, size: 42,
+              color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(height: 10),
+            Text(hidden ? 'Скрытых обновлений пока нет' :
+              'Новых глав пока нет', textAlign: TextAlign.center),
+            const SizedBox(height: 4),
+            if (!hidden) const Text('Нажми обновление, чтобы проверить главы',
+              textAlign: TextAlign.center),
+          ]))
+        : ListView.separated(padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+          itemCount: visible.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 5),
           itemBuilder: (context, index) {
             final entry = visible[index];
-            return Card(child: ListTile(
-              leading: ClipRRect(borderRadius: BorderRadius.circular(7),
-                child: CoverImage(entry.coverUrl, width: 48, height: 64)),
-              title: Text(entry.title, maxLines: 2),
-              subtitle: Text(entry.chapterName),
-              trailing: hidden ? const Icon(Icons.visibility_off_outlined)
-                : IconButton(tooltip: 'Скрыть обновление',
-                    onPressed: () async {
-                      await _store.hideEntry(entry.key);
-                      await _refresh();
-                    }, icon: const Icon(Icons.more_horiz)),
-              onTap: () => _open(entry),
-            ));
+            return Card(clipBehavior: Clip.antiAlias,
+              child: InkWell(onTap: () => _open(entry),
+                child: Padding(padding: const EdgeInsets.all(10),
+                  child: Row(children: [
+                    ClipRRect(borderRadius: BorderRadius.circular(9),
+                      child: CoverImage(entry.coverUrl, width: 58, height: 78)),
+                    const SizedBox(width: 12),
+                    Expanded(child: Column(crossAxisAlignment:
+                        CrossAxisAlignment.start, children: [
+                      Text(entry.title, maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 5),
+                      Text(displayChapterName(entry.chapterName),
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                      const SizedBox(height: 7),
+                      Wrap(spacing: 8, crossAxisAlignment:
+                          WrapCrossAlignment.center, children: [
+                        Text(entry.source == 'senkuro' ? 'Senkuro' :
+                          entry.source == 'readmanga' ? 'ReadManga' : 'ReManga',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.primary)),
+                        Text(_dateLabel(entry.createdAt),
+                          style: theme.textTheme.labelSmall),
+                      ]),
+                    ])),
+                    IconButton(
+                      tooltip: hidden ? 'Вернуть в новые' : 'Скрыть обновление',
+                      icon: Icon(hidden ? Icons.unarchive_outlined :
+                        Icons.archive_outlined),
+                      onPressed: () async {
+                        if (hidden) {
+                          await _store.restoreEntry(entry.key);
+                        } else {
+                          await _store.hideEntry(entry.key);
+                        }
+                        await _refresh();
+                      }),
+                  ]),
+                )));
           })),
     ]);
   }

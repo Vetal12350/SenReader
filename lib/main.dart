@@ -880,7 +880,11 @@ class _MainShellState extends State<MainShell> {
           ],
         ),
       ),
-      bottomNavigationBar: NavigationBar(
+      bottomNavigationBar: NavigationBarTheme(
+        data: const NavigationBarThemeData(
+          labelTextStyle: WidgetStatePropertyAll(TextStyle(
+            fontSize: 10.5, fontWeight: FontWeight.w600))),
+        child: NavigationBar(
         height: 72,
         selectedIndex: tab,
         onDestinationSelected: (index) {
@@ -902,10 +906,11 @@ class _MainShellState extends State<MainShell> {
               label: Text(_newUpdateCount > 99 ? '99+' : _newUpdateCount.toString()),
               child: const Icon(Icons.notifications_outlined)),
             selectedIcon: const Icon(Icons.notifications_active),
-            label: 'Уведы'),
+            label: 'Уведомления'),
           const NavigationDestination(icon: Icon(Icons.more_horiz),
             selectedIcon: Icon(Icons.more_horiz), label: 'Ещё'),
         ],
+        ),
       ),
     );
   }
