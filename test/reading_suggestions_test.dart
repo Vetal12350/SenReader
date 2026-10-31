@@ -57,6 +57,21 @@ void main() {
     expect(showContinueCard(record), false);
   });
 
+  test('selected latest chapter is hidden even at page 77/78', () {
+    final record = saved(last: 'Глава 127 (т. 2)');
+    record.lastChapterId = '127';
+    record.lastPageIndex = 76;
+    record.lastPageCount = 78;
+    record.latestKnownChapterId = '127';
+    record.latestKnownSource = 'readmanga';
+    expect(shouldResumeCurrentChapter(record), true);
+    expect(showContinueCard(record), false);
+    expect(showContinueCard(record,
+      newlyAvailable: const Chapter(id: '128', name: 'Глава 128')), true);
+    record.lastChapterId = '126';
+    expect(showContinueCard(record), true);
+  });
+
   test('current newest chapter never appears in continue-reading', () {
     expect(nextAvailableChapter(
       saved(last: 'Глава 127 (т. 2)'), chapters), isNull);
