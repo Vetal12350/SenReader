@@ -13,9 +13,11 @@ class CatalogRepository {
   };
   final Map<String, MangaSource> sources;
 
-  Future<CatalogResult> getCatalog({String query = ''}) async {
+  Future<CatalogResult> getCatalog({String query = '', String? sourceKey}) async {
     final warnings = <String>[];
-    final orderedSources = sources.values.toList();
+    final orderedSources = sourceKey == null
+        ? sources.values.toList()
+        : [if (sources[sourceKey] != null) sources[sourceKey]!];
     final futures = orderedSources.map((source) async {
       try {
         return query.trim().isEmpty
