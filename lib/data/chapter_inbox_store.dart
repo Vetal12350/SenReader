@@ -51,7 +51,7 @@ class ChapterInboxStore {
       if (raw.length > 1000000) return [];
       final list = jsonDecode(raw);
       if (list is! List) return [];
-      return list.take(500).whereType<Map>().map(
+      return list.whereType<Map>().map(
         (value) => InboxEntry.fromJson(Map<String, dynamic>.from(value)),
       ).where((entry) => entry.bookKey.isNotEmpty && entry.key.isNotEmpty)
        .toList();
@@ -62,7 +62,7 @@ class ChapterInboxStore {
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     final hidden = entries.where((e) => e.hidden).toList()
       ..sort((a, b) => b.hiddenAt.compareTo(a.hiddenAt));
-    return [...active.take(450), ...hidden.take(hiddenLimit)];
+    return [...active, ...hidden.take(hiddenLimit)];
   }
   Future<void> _save(List<InboxEntry> entries) async {
     final prefs = await _prefs();
