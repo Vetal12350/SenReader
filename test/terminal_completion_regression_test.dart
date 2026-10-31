@@ -42,6 +42,17 @@ void main() {
     ), isFalse);
   });
 
+  test('past chapter separator counts without loading next page', () {
+    expect(previousChapterBoundaryReached(
+      boundaryIndex: 18, visibleItemIndexes: [18]), isTrue);
+    expect(previousChapterBoundaryReached(
+      boundaryIndex: 18, visibleItemIndexes: [18, 19]), isTrue);
+    expect(previousChapterBoundaryReached(
+      boundaryIndex: 18, visibleItemIndexes: [17, 18]), isFalse);
+    expect(previousChapterBoundaryReached(
+      boundaryIndex: 18, visibleItemIndexes: []), isFalse);
+  });
+
   test('user override blocks automatic re-completion', () {
     expect(chapterFullyRead(
       forwardScrolled: true,
