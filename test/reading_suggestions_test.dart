@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:senreader/core/models.dart';
+import 'package:senreader/core/chapter_identity.dart';
 import 'package:senreader/data/library_store.dart';
 import 'package:senreader/data/reading_suggestions.dart';
 
@@ -21,6 +22,24 @@ void main() {
       SavedBook(title: 'Title', entries: entry, lastChapter: last,
         lastChapterId: 'last', lastSource: lastSource, preferredSource: preferred,
         status: status, readChapterKeys: read);
+
+  test('unread current chapter always wins over new chapter on resume', () {
+    final record = saved(last: 'Глава 126 (т. 2)');
+    record.lastChapterId = '126';
+    record.lastPageIndex = 0;
+    record.lastPageCount = 16;
+    expect(shouldResumeCurrentChapter(record), isTrue);
+    expect(chapterToResume(record, chapters, nextUnread: chapters.first)?.id, '126');
+  });
+
+  test('read current chapter may advance to new unread chapter', () {
+    final record = saved(last: 'Глава 126 (т. 2)');
+    record.lastChapterId = '126';
+    record.readChapterKeys.add(sourceChapterKey(
+      const Chapter(id: '126', name: 'Глава 126 (т. 2)'), 'readmanga'));
+    expect(shouldResumeCurrentChapter(record), isFalse);
+    expect(chapterToResume(record, chapters, nextUnread: chapters.first)?.id, '127');
+  });
 
   test('current newest chapter never appears in continue-reading', () {
     expect(nextAvailableChapter(

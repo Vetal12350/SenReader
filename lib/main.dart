@@ -356,7 +356,7 @@ class _MainShellState extends State<MainShell> {
     });
   }
 
-  Future<void> _resume(SavedBook saved, Chapter newChapter) async {
+  Future<void> _resume(SavedBook saved, Chapter? newChapter) async {
     await widget.library.load();
     final current = widget.library.get(saved.toUnified());
     if (current == null || !mounted) return;
@@ -370,14 +370,9 @@ class _MainShellState extends State<MainShell> {
     }
     try {
       final detail = await source.detail(entry);
-      Chapter? target;
-      for (final chapter in detail.chapters) {
-        if (chapter.id == newChapter.id &&
-            nextAvailableChapter(saved, detail.chapters)?.id == chapter.id) {
-          target = chapter;
-          break;
-        }
-      }
+      // Resume persisted progress first; do not advance just because a new chapter exists.
+      final target = chapterToResume(saved, detail.chapters,
+        nextUnread: newChapter);
       if (!mounted) return;
       if (target == null) {
         _open(book);
@@ -398,15 +393,15 @@ class _MainShellState extends State<MainShell> {
     animation: widget.library,
     builder: (context, _) {
       final saved = widget.library.items
-          .where((item) => _newChapters.containsKey(item.key) &&
+          .where((item) => item.lastChapter.isNotEmpty &&
               item.lastSource == item.preferredSource &&
-              item.status != 'dropped').toList()
+              item.status != 'dropped' && item.status != 'viewed').toList()
         ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
       if (saved.isEmpty) return const SizedBox.shrink();
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const SizedBox(height: 28),
         SectionTitle('Продолжить чтение',
-          subtitle: 'Есть новые непрочитанные главы'),
+          subtitle: 'Вернуться к сохранённой странице'),
         SizedBox(height: 155, child: ListView.separated(
           scrollDirection: Axis.horizontal,
           itemCount: saved.take(12).length,
@@ -414,7 +409,7 @@ class _MainShellState extends State<MainShell> {
           itemBuilder: (context, index) {
             final item = saved[index];
             return SizedBox(width: 225, child: InkWell(
-              onTap: () => _resume(item, _newChapters[item.key]!),
+              onTap: () => _resume(item, _newChapters[item.key]),
               borderRadius: BorderRadius.circular(14),
               child: Container(
                 padding: const EdgeInsets.all(10),
@@ -433,7 +428,9 @@ class _MainShellState extends State<MainShell> {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontWeight: FontWeight.w700))),
                       const SizedBox(height: 8),
-                      Flexible(child: Text('Новая: ${_newChapters[item.key]!.name}',
+                      Flexible(child: Text((_newChapters.containsKey(item.key) && !shouldResumeCurrentChapter(item)
+                             ? 'Новая: ${_newChapters[item.key]!.name}'
+                             : 'Сохранено: ${item.lastChapter}'),
                         maxLines: 2, overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11))),
                       if (item.lastPageCount > 0) ...[
