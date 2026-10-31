@@ -17,6 +17,9 @@ import 'ui/settings_page.dart';
 import 'data/theme_controller.dart';
 import 'ui/app_theme.dart';
 
+/// Reader exit destinations, observed by the existing MainShell route.
+final ValueNotifier<int> mainTabRequest = ValueNotifier<int>(0);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final library = LibraryStore();
@@ -64,6 +67,13 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int tab = 0;
+
+  void _onMainTabRequest() {
+    final next = mainTabRequest.value;
+    if (!mounted || next == tab) return;
+    setState(() => tab = next);
+    if (next == 1) unawaited(_fetch());
+  }
   String libraryFilter = 'all';
   String? catalogType;
   String? catalogStatus;
@@ -86,6 +96,8 @@ class _MainShellState extends State<MainShell> {
 
   @override void initState() {
     super.initState();
+    tab = mainTabRequest.value;
+    mainTabRequest.addListener(_onMainTabRequest);
     _fetch();
     ChapterNotificationService.instance.openedPayload.addListener(_onNotificationTap);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onNotificationTap());
@@ -93,6 +105,7 @@ class _MainShellState extends State<MainShell> {
 
   @override void dispose() {
     debounce?.cancel();
+    mainTabRequest.removeListener(_onMainTabRequest);
     ChapterNotificationService.instance.openedPayload.removeListener(_onNotificationTap);
     searchController.dispose();
     super.dispose();
