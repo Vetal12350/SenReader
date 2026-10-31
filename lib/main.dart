@@ -7,6 +7,8 @@ import 'data/senkuro_source.dart';
 import 'data/library_store.dart';
 import 'data/reading_suggestions.dart';
 import 'data/chapter_notification_service.dart';
+import 'data/chapter_inbox_store.dart';
+import 'ui/chapter_inbox_panel.dart';
 import 'data/chapter_background_scheduler.dart';
 import 'ui/detail_page.dart';
 import 'ui/reader_page.dart';
@@ -64,6 +66,12 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int tab = 0;
+  int _newUpdateCount = 0;
+  Future<void> _refreshInboxCount() async {
+    final entries = await ChapterInboxStore().load();
+    if (mounted) setState(() => _newUpdateCount = entries.where((e) => !e.hidden).length);
+  }
+
   String libraryFilter = 'all';
   String? catalogType;
   String? catalogStatus;
@@ -87,6 +95,7 @@ class _MainShellState extends State<MainShell> {
   @override void initState() {
     super.initState();
     _fetch();
+    unawaited(_refreshInboxCount());
     ChapterNotificationService.instance.openedPayload.addListener(_onNotificationTap);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onNotificationTap());
   }
@@ -636,12 +645,12 @@ class _MainShellState extends State<MainShell> {
         title: Row(children: [
           const Icon(Icons.auto_stories_rounded, size: 25, color: Color(0xFFFF893F)),
           const SizedBox(width: 10),
-          Expanded(child: Text(tab == 0 ? 'SenReader' : tab == 1 ? 'Каталог' : 'Мои закладки',
+          Expanded(child: Text(tab == 0 ? 'SenReader' : tab == 1 ? 'Каталог' : tab == 2 ? 'Мои закладки' : tab == 3 ? 'Уведомления' : 'Ещё',
             maxLines: 1, overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontWeight: FontWeight.w800))),
         ]),
         actions: [
-          if (tab != 2)
+          if (tab == 0 || tab == 1)
             IconButton(tooltip: 'Обновить', icon: const Icon(Icons.refresh), onPressed: _fetch),
           IconButton(tooltip: 'Настройки', icon: const Icon(Icons.settings_outlined),
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsPage(
@@ -649,7 +658,20 @@ class _MainShellState extends State<MainShell> {
                themes: widget.themes)))),
         ],
       ),
-      body: tab == 2 ? AnimatedBuilder(
+      body: tab == 3 ? ChapterInboxPanel(
+        library: widget.library, repository: widget.repository, alerts: alerts,
+        onChanged: _refreshInboxCount,
+      ) : tab == 4 ? ListView(padding: const EdgeInsets.all(16), children: [
+        const SectionTitle('Ещё'),
+        ListTile(leading: const Icon(Icons.settings_outlined),
+          title: const Text('Настройки'),
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
+            SettingsPage(repository: widget.repository, library: widget.library,
+              alerts: alerts, themes: widget.themes)))),
+        ListTile(leading: const Icon(Icons.notifications_active_outlined),
+          title: const Text('Уведомления о главах'),
+          onTap: () => setState(() => tab = 3)),
+      ]) : tab == 2 ? AnimatedBuilder(
         animation: widget.library,
         builder: (context, _) {
           final saved = widget.library.items;
@@ -787,18 +809,30 @@ class _MainShellState extends State<MainShell> {
         ),
       ),
       bottomNavigationBar: NavigationBar(
+        height: 72,
         selectedIndex: tab,
         onDestinationSelected: (index) {
           setState(() => tab = index);
           if (index == 1) unawaited(_fetch());
+          if (index == 3) unawaited(_refreshInboxCount());
           if (index == 2 && widget.library.items.isNotEmpty) {
             unawaited(offerChapterAlerts(context, alerts));
           }
         },
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Главная'),
-          NavigationDestination(icon: Icon(Icons.explore_outlined), selectedIcon: Icon(Icons.explore), label: 'Каталог'),
-          NavigationDestination(icon: Icon(Icons.bookmarks_outlined), selectedIcon: Icon(Icons.bookmarks), label: 'Библиотека'),
+        destinations: [
+          const NavigationDestination(icon: Icon(Icons.home_outlined),
+            selectedIcon: Icon(Icons.home), label: 'Главная'),
+          const NavigationDestination(icon: Icon(Icons.layers_outlined),
+            selectedIcon: Icon(Icons.layers), label: 'Каталог'),
+          const NavigationDestination(icon: Icon(Icons.bookmark_border),
+            selectedIcon: Icon(Icons.bookmark), label: 'Моё'),
+          NavigationDestination(icon: Badge(isLabelVisible: _newUpdateCount > 0,
+              label: Text(_newUpdateCount > 99 ? '99+' : _newUpdateCount.toString()),
+              child: const Icon(Icons.notifications_outlined)),
+            selectedIcon: const Icon(Icons.notifications_active),
+            label: 'Уведы'),
+          const NavigationDestination(icon: Icon(Icons.more_horiz),
+            selectedIcon: Icon(Icons.more_horiz), label: 'Ещё'),
         ],
       ),
     );

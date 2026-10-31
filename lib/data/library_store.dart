@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/models.dart';
 import '../core/chapter_identity.dart';
+import 'chapter_inbox_store.dart';
 import '../core/title_matching.dart';
 
 class SavedBook {
@@ -319,6 +320,11 @@ class LibraryStore extends ChangeNotifier {
     }
     // Completion and resume are independent, including the current chapter.
     await _save();
+    try {
+      await ChapterInboxStore().hideReadKeys(item.key, source, item.readChapterKeys);
+    } catch (_) {
+      // An unavailable notification store must not roll back reading progress.
+    }
   }
 
   Future<void> setStatus(UnifiedManga book, String status, {String preferredSource = ''}) async {
