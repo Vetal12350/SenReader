@@ -132,7 +132,7 @@ void main() {
     await tester.pumpWidget(scaledApp(DetailPage(book: source.book,
       repository: CatalogRepository(sources: {source.key: source}), library: library), 1));
     await tester.pumpAndSettle();
-    final row = find.widgetWithText(ListTile, source.chapters[1].name);
+    final row = find.widgetWithText(ListTile, displayChapterName(source.chapters[1].name));
     await tester.scrollUntilVisible(row, 220, scrollable: find.byType(Scrollable).first);
     await tester.pumpAndSettle();
     await tester.tap(find.descendant(of: row, matching: find.byType(IconButton)));
@@ -200,7 +200,7 @@ void main() {
     expect(find.widgetWithIcon(IconButton, Icons.visibility_off_outlined), findsNothing);
     await tester.tapAt(const Offset(400, 300));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithIcon(IconButton, Icons.visibility_off_outlined));
+    await tester.tap(find.byTooltip('Отметить прочитанной'));
     await tester.pumpAndSettle();
     expect(library.isChapterRead(source.book, source.chapters[1], source.key), true);
     expect(library.isChapterRead(source.book, source.chapters[2], source.key), true);
@@ -208,7 +208,7 @@ void main() {
     expect(library.items.single.lastChapterId, '2');
     expect(library.items.single.lastPageIndex, 0);
     expect(find.widgetWithIcon(IconButton, Icons.visibility_outlined), findsOneWidget);
-    await tester.tap(find.widgetWithIcon(IconButton, Icons.visibility_outlined));
+    await tester.tap(find.byTooltip('Прочитано'));
     await tester.pumpAndSettle();
     expect(library.isChapterRead(source.book, source.chapters[1], source.key), false);
     expect(library.isChapterRead(source.book, source.chapters[2], source.key), true);
