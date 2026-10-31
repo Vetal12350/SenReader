@@ -85,6 +85,25 @@ void main() {
     }
   }
 
+  testWidgets('explicit favorites are visible; passive views are not bookmarks', (tester) async {
+    final source = LayoutSource();
+    final library = LibraryStore();
+    await library.markViewed(source.book);
+    await tester.pumpWidget(scaledApp(MainShell(
+      repository: CatalogRepository(sources: {source.key: source}),
+      library: library,
+      alerts: ChapterAlertController(
+        preferences: MemoryAlertPreferences()..shown = true),
+    ), 1));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Моё'));
+    await tester.pumpAndSettle();
+    expect(find.byType(MangaTile), findsNothing);
+    await library.setFavorite(source.book, true);
+    await tester.pumpAndSettle();
+    expect(find.byType(MangaTile), findsOneWidget);
+  });
+
   testWidgets('library has bookmarks/filters only; Settings owns notification actions', (tester) async {
     final source = LayoutSource();
     final library = LibraryStore();
