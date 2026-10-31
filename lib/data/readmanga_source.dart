@@ -10,6 +10,8 @@ import '../core/source.dart';
 class ReadMangaSource implements MangaSource {
   ReadMangaSource({http.Client? client}) : _client = client;
   final http.Client? _client;
+  // Keep a connection pool for repeated HTML fetches within one session.
+  late final http.Client _session = _client ?? http.Client();
 
   // ReadManga currently links to the ZazaZa host from the GroupLe hub.
   // Keep only this public source as the canonical HTML origin.
@@ -66,10 +68,8 @@ class ReadMangaSource implements MangaSource {
         'Accept-Language': 'ru-RU,ru;q=0.9',
         'Referer': '$baseUrl/',
       };
-      response = await (_client == null
-          ? http.get(uri, headers: headers)
-          : _client.get(uri, headers: headers)
-      ).timeout(const Duration(seconds: 18));
+      response = await _session.get(uri, headers: headers)
+          .timeout(const Duration(seconds: 18));
     } catch (e) {
       throw SourceException('Нет соединения с ReadManga ($e)');
     }
@@ -286,18 +286,15 @@ class ReadMangaSource implements MangaSource {
         images.take(3).map((image) => image.url).toSet().length == 1) {
       throw SourceException('ReadManga: сервер отдаёт одинаковую заглушку вместо страниц.');
     }
-    final client = _client ?? http.Client();
-    try {
-      final sampled = await Future.wait(
-          images.take(3).map((image) => _sampleImage(client, image)));
-      if (sampled.length >= 2 && sampled.every(
-          (bytes) => _samePrefix(sampled.first, bytes))) {
-        throw SourceException(
-            'ReadManga: вместо страниц возвращается одинаковая картинка — '
-            'возможно, манга удалена на этом зеркале.');
-      }
-    } finally {
-      if (_client == null) client.close();
+    // Use the same bounded connection pool as the HTML request; keep the
+    // existing safety preflight, but avoid extra TLS handshakes per chapter.
+    final sampled = await Future.wait(
+        images.take(3).map((image) => _sampleImage(_session, image)));
+    if (sampled.length >= 2 && sampled.every(
+        (bytes) => _samePrefix(sampled.first, bytes))) {
+      throw SourceException(
+          'ReadManga: вместо страниц возвращается одинаковая картинка — '
+          'возможно, манга удалена на этом зеркале.');
     }
   }
 

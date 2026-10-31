@@ -271,19 +271,53 @@ class _DetailPageState extends State<DetailPage> {
     _ => role,
   };
 
+  /// Build only visible chapter rows, even for thousands of chapters.
+  Widget _chapterTile(Chapter chapter) {
+    return AnimatedBuilder(
+                animation: widget.library,
+                builder: (context, _) {
+                  final read = widget.library.isChapterRead(book, chapter, selected);
+                  return ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: IconButton(
+                      tooltip: read ? 'Прочитано: отметить непрочитанной' :
+                          'Не прочитано: прочитать эту и все предыдущие главы',
+                      icon: Icon(read ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                        color: read ? Theme.of(context).colorScheme.primary :
+                            Theme.of(context).colorScheme.onSurfaceVariant),
+                      onPressed: () async {
+                        if (read) {
+                          await widget.library.unmarkRead(book, chapter, selected,
+                            availableChapters: detail!.chapters);
+                        } else {
+                          await widget.library.markRead(book, chapter, selected,
+                            availableChapters: detail!.chapters,
+                            userInitiated: true);
+                        }
+                      },
+                    ),
+                    title: Text(displayChapterName(chapter.name),
+                      maxLines: 2, overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: read ? Theme.of(context).colorScheme.onSurfaceVariant : null)),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      if (chapter.publishedAt != null) ...[
+                        Text(_chapterDate(chapter.publishedAt!),
+                          style: TextStyle(fontSize: 11,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                        const SizedBox(width: 6),
+                      ],
+                      const Icon(Icons.chevron_right),
+                    ]),
+                    onTap: () => _openChapter(chapter),
+                  );
+                },
+              );
+  }
+
   @override Widget build(BuildContext context) {
     final chapterResults = detail?.chapters ?? const <Chapter>[];
-    return Scaffold(
-      appBar: AppBar(title: const Text(''), actions: [
-        PopupMenuButton<String>(
-          tooltip: 'Сменить источник', icon: const Icon(Icons.source_outlined),
-          initialValue: selected, onSelected: _select,
-          itemBuilder: (context) => [for (final source in book.entries.keys)
-            CheckedPopupMenuItem(value: source, checked: selected == source,
-              child: Text(widget.repository.sources[source]?.name ?? source))],
-        ),
-      ]),
-      body: ListView(padding: const EdgeInsets.all(16), children: [
+    // Non-chapter content is small; chapter rows are created on demand below.
+    final staticContent = <Widget>[
         const SizedBox(height: 10),
         Center(child: ClipRRect(borderRadius: BorderRadius.circular(16),
           child: CoverImage(detail?.entry.coverUrl ?? book.coverUrl,
@@ -480,54 +514,32 @@ class _DetailPageState extends State<DetailPage> {
             onPressed: () => setState(() => newestFirst = !newestFirst),
             icon: const Icon(Icons.swap_vert_rounded),
           )),
-          for (var index = 0; index < chapterResults.length; index++) ...[
-            Builder(builder: (context) {
-              final chapter = chapterResults[
-                newestFirst ? index : chapterResults.length - 1 - index];
-              return AnimatedBuilder(
-                animation: widget.library,
-                builder: (context, _) {
-                  final read = widget.library.isChapterRead(book, chapter, selected);
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: IconButton(
-                      tooltip: read ? 'Прочитано: отметить непрочитанной' :
-                          'Не прочитано: прочитать эту и все предыдущие главы',
-                      icon: Icon(read ? Icons.visibility_outlined : Icons.visibility_off_outlined,
-                        color: read ? Theme.of(context).colorScheme.primary :
-                            Theme.of(context).colorScheme.onSurfaceVariant),
-                      onPressed: () async {
-                        if (read) {
-                          await widget.library.unmarkRead(book, chapter, selected,
-                            availableChapters: detail!.chapters);
-                        } else {
-                          await widget.library.markRead(book, chapter, selected,
-                            availableChapters: detail!.chapters,
-                            userInitiated: true);
-                        }
-                      },
-                    ),
-                    title: Text(displayChapterName(chapter.name),
-                      maxLines: 2, overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: read ? Theme.of(context).colorScheme.onSurfaceVariant : null)),
-                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                      if (chapter.publishedAt != null) ...[
-                        Text(_chapterDate(chapter.publishedAt!),
-                          style: TextStyle(fontSize: 11,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
-                        const SizedBox(width: 6),
-                      ],
-                      const Icon(Icons.chevron_right),
-                    ]),
-                    onTap: () => _openChapter(chapter),
-                  );
-                },
-              );
-            }),
-          ],
+
           ],
         ],
+      ];
+    return Scaffold(
+      appBar: AppBar(title: const Text(''), actions: [
+        PopupMenuButton<String>(
+          tooltip: 'Сменить источник', icon: const Icon(Icons.source_outlined),
+          initialValue: selected, onSelected: _select,
+          itemBuilder: (context) => [for (final source in book.entries.keys)
+            CheckedPopupMenuItem(value: source, checked: selected == source,
+              child: Text(widget.repository.sources[source]?.name ?? source))],
+        ),
       ]),
+      body: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: staticContent.length +
+            (showChapters ? chapterResults.length : 0),
+        itemBuilder: (context, index) {
+          if (index < staticContent.length) return staticContent[index];
+          final chapterIndex = index - staticContent.length;
+          final chapter = chapterResults[
+              newestFirst ? chapterIndex : chapterResults.length - 1 - chapterIndex];
+          return _chapterTile(chapter);
+        },
+      ),
     );
   }
 }

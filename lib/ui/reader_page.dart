@@ -219,6 +219,13 @@ class _ReaderPageState extends State<ReaderPage> {
     for (var i = 0; i < _segments.length; i++) {
       final segment = _segments[i];
       endIndex += segment.pages.length;
+      // Scroll callbacks fire for every small movement. Most of the time no
+      // chapter boundary has been crossed; avoid rebuilding loaded-page sets.
+      if (_autoCompletedChapters.contains(segment.chapter.id) ||
+          _manuallyUnreadChapters.contains(segment.chapter.id)) {
+        endIndex++;
+        continue;
+      }
       final passed = i < _segments.length - 1
           ? previousChapterBoundaryReached(
               boundaryIndex: endIndex,
@@ -227,6 +234,10 @@ class _ReaderPageState extends State<ReaderPage> {
               forwardScrolled: _hasForwardScrolled,
               reachedScrollableEnd: _reachedScrollableEnd,
               footerVisible: visible.any((item) => item.index == _itemCount - 1));
+      if (!passed) {
+        endIndex++;
+        continue;
+      }
       if (chapterFullyRead(
           forwardScrolled: _hasForwardScrolled,
           passedChapterBoundary: passed,

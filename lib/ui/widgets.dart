@@ -32,14 +32,26 @@ class CoverImage extends StatelessWidget {
   final Map<String, String> headers;
 
   @override Widget build(BuildContext context) {
-    final fallback = Container(width: width, height: height,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      alignment: Alignment.center,
-      child: Icon(Icons.menu_book_rounded,
-        color: Theme.of(context).colorScheme.onSurfaceVariant, size: 30));
-    if (!url.startsWith('https://')) return fallback;
-    return Image.network(url, width: width, height: height, fit: BoxFit.cover,
-      headers: headers, errorBuilder: (context, error, stack) => fallback);
+    return LayoutBuilder(builder: (context, constraints) {
+      final fallback = Container(width: width, height: height,
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        alignment: Alignment.center,
+        child: Icon(Icons.menu_book_rounded,
+          color: Theme.of(context).colorScheme.onSurfaceVariant, size: 30));
+      if (!url.startsWith('https://')) return fallback;
+      // Decode only the resolution required for a thumbnail or title cover.
+      // Keep a few shared buckets so the same image can reuse Flutter's cache.
+      final logicalWidth = width ?? (constraints.hasBoundedWidth
+          ? constraints.maxWidth : MediaQuery.sizeOf(context).width);
+      final physicalWidth =
+          (logicalWidth * MediaQuery.devicePixelRatioOf(context)).ceil();
+      final decodeWidth = physicalWidth <= 256 ? 256 :
+          physicalWidth <= 512 ? 512 :
+          physicalWidth <= 768 ? 768 : 1024;
+      return Image.network(url, width: width, height: height,
+        cacheWidth: decodeWidth, fit: BoxFit.cover,
+        headers: headers, errorBuilder: (context, error, stack) => fallback);
+    });
   }
 }
 
