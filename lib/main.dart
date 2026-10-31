@@ -814,7 +814,7 @@ class _MainShellState extends State<MainShell> {
               ]);
         },
       ) : RefreshIndicator(
-        onRefresh: _fetch,
+        onRefresh: () => _fetch(forceHome: true),
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
           children: [
