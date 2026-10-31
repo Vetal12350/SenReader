@@ -93,7 +93,7 @@ void main() {
       alerts: ChapterAlertController(preferences: MemoryAlertPreferences()..shown = true),
     ), 1));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Библиотека'));
+    await tester.tap(find.text('Моё'));
     await tester.pumpAndSettle();
     expect(find.byType(MangaTile), findsOneWidget);
     expect(find.byType(ChoiceChip), findsNWidgets(7));
