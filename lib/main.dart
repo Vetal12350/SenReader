@@ -107,6 +107,49 @@ class _MainShellState extends State<MainShell> {
     super.dispose();
   }
 
+  bool _catalogLoadingMore = false;
+  bool _catalogHasMore = false;
+  int _catalogNextOffset = 30;
+  int _catalogGeneration = 0;
+
+  Future<void> _loadMoreCatalog() async {
+    if (_catalogLoadingMore || !_catalogHasMore || loading || tab != 1) return;
+    final source = widget.repository.sources['senkuro'];
+    if (source is! SenkuroSource) return;
+    final current = result?.books ?? const <UnifiedManga>[];
+    // Server offset is the number of remote rows consumed, not the number
+    // of unique visible cards: duplicates must not break paging.
+    final offset = _catalogNextOffset;
+    if (offset > 970 || offset % 10 != 0) return;
+    final version = _catalogGeneration;
+    setState(() => _catalogLoadingMore = true);
+    try {
+      final matches = await source.filteredCatalog(query: query,
+        type: catalogType, status: catalogStatus,
+        translationStatus: catalogTranslationStatus, label: catalogLabelSlug,
+        offset: offset, orderField: catalogSort == 'rating'
+          ? 'SCORE' : 'POPULARITY_SCORE');
+      if (!mounted || version != _catalogGeneration || tab != 1) return;
+      final seen = current.map((item) => item.primary.id).toSet();
+      final fresh = matches.where((item) => seen.add(item.id)).toList();
+      setState(() {
+        result = CatalogResult(books: [
+          ...current,
+          for (final item in fresh)
+            UnifiedManga(title: item.title, entries: {'senkuro': item}),
+        ], warnings: result?.warnings ?? const []);
+        _catalogNextOffset = offset + matches.length;
+        _catalogHasMore = matches.length == 30 && fresh.isNotEmpty &&
+            offset + matches.length <= 970;
+      });
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Не удалось загрузить следующую страницу каталога')));
+    } finally {
+      if (mounted) setState(() => _catalogLoadingMore = false);
+    }
+  }
+
   Future<void> _fetch() async {
     final thisQuery = query;
     final isCatalog = tab == 1;
@@ -115,7 +158,8 @@ class _MainShellState extends State<MainShell> {
     final translation = catalogTranslationStatus;
     final label = catalogLabelSlug;
     final sort = catalogSort;
-    setState(() => loading = true);
+    final catalogGeneration = ++_catalogGeneration;
+    setState(() { loading = true; _catalogLoadingMore = false; });
     CatalogResult next;
     final senkuro = widget.repository.sources['senkuro'];
     if (isCatalog && senkuro is SenkuroSource &&
@@ -150,7 +194,8 @@ class _MainShellState extends State<MainShell> {
       next = await widget.repository.getCatalog(query: thisQuery,
         sourceKey: isCatalog ? 'senkuro' : null);
     }
-    if (!mounted || thisQuery != query || isCatalog != (tab == 1) ||
+    if (!mounted || catalogGeneration != _catalogGeneration ||
+        thisQuery != query || isCatalog != (tab == 1) ||
         (isCatalog && (type != catalogType || status != catalogStatus ||
             translation != catalogTranslationStatus ||
             label != catalogLabelSlug || sort != catalogSort))) return;
@@ -158,6 +203,10 @@ class _MainShellState extends State<MainShell> {
       result = next;
       if (!isCatalog && thisQuery.isEmpty) _homeResult = next;
       loading = false;
+      _catalogNextOffset = 30;
+      _catalogHasMore = isCatalog && senkuro is SenkuroSource &&
+          next.books.length == 30 && (sort == 'rating' || status != null ||
+          translation != null || label != null);
     });
     unawaited(_refreshNewChapters());
     if (!isCatalog && thisQuery.isEmpty) unawaited(_refreshSenkuroSections());
@@ -804,6 +853,15 @@ class _MainShellState extends State<MainShell> {
                   child: MangaTile(book: book, onTap: () => _open(book)),
                 )).toList(),
               )),
+            if (_catalogHasMore)
+              Padding(padding: const EdgeInsets.all(12), child: Center(
+                child: FilledButton.icon(
+                  onPressed: _catalogLoadingMore ? null : _loadMoreCatalog,
+                  icon: _catalogLoadingMore ? const SizedBox(width: 16,
+                    height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.expand_more),
+                  label: Text(_catalogLoadingMore ? 'Загрузка…' : 'Загрузить ещё'),
+                ))),
             ],
           ],
         ),
