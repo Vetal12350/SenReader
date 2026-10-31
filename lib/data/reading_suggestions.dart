@@ -19,3 +19,27 @@ Chapter? nextAvailableChapter(SavedBook saved, Iterable<Chapter> chapters) {
   }).toList()..sort((a, b) => compareChapterChronology(a, b)!);
   return candidates.isEmpty ? null : candidates.first;
 }
+
+/// Progress is independent from a suggestion that a newer chapter exists.
+/// Never jump forward while the saved chapter has not been marked read.
+bool shouldResumeCurrentChapter(SavedBook saved) {
+  if (saved.lastChapter.isEmpty || saved.lastSource.isEmpty ||
+      saved.lastSource != saved.preferredSource) return false;
+  final chapter = Chapter(id: saved.lastChapterId, name: saved.lastChapter);
+  return !saved.readChapterKeys.contains(sourceChapterKey(chapter, saved.lastSource)) &&
+      !saved.readChapterKeys.contains('${saved.lastSource}|id:name:${chapter.name}');
+}
+
+Chapter? chapterToResume(SavedBook saved, Iterable<Chapter> available,
+    {Chapter? nextUnread}) {
+  final chapters = available.toList();
+  final match = chapters.where((chapter) => saved.lastChapterId.isNotEmpty
+      ? chapter.id == saved.lastChapterId
+      : chapter.name == saved.lastChapter).toList();
+  if (shouldResumeCurrentChapter(saved) && match.isNotEmpty) return match.first;
+  if (nextUnread != null && chapters.any((chapter) => chapter.id == nextUnread.id) &&
+      nextAvailableChapter(saved, chapters)?.id == nextUnread.id) {
+    return chapters.firstWhere((chapter) => chapter.id == nextUnread.id);
+  }
+  return match.isNotEmpty ? match.first : null;
+}
