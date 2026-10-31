@@ -276,11 +276,7 @@ class _DetailPageState extends State<DetailPage> {
           builder: (context, _) {
             final saved = widget.library.get(book);
             final status = saved?.status ?? 'viewed';
-            final label = status == 'reading' ? 'Читаю' :
-                status == 'completed' ? 'Прочитано' :
-                status == 'planned' ? 'В планах' :
-                status == 'dropped' ? 'Заброшено' :
-                saved == null ? 'Не в списках' : 'Открыто';
+            const label = 'Добавить в список';
             return Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
               PopupMenuButton<String>(
                 tooltip: 'Статус произведения',
