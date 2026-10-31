@@ -6,6 +6,7 @@ import '../core/chapter_identity.dart';
 import '../data/catalog_repository.dart';
 import '../data/library_store.dart';
 import '../data/reading_completion.dart';
+import 'detail_page.dart';
 
 /// Chapter page URLs are kept as lightweight metadata; the indexed list
 /// lazily builds image widgets, so scrolling does not retain all image widgets.
@@ -39,6 +40,7 @@ class ReaderPage extends StatefulWidget {
 class _ReaderPageState extends State<ReaderPage> {
   late final Future<List<PageImage>> future;
   final ItemPositionsListener _positions = ItemPositionsListener.create();
+  final ItemScrollController _pageScroll = ItemScrollController();
   Timer? _saveTimer;
   int _pageCount = 0;
   String? _lastSavedKey;
@@ -374,6 +376,16 @@ class _ReaderPageState extends State<ReaderPage> {
     if (chapter != null && mounted) await _go(chapter);
   }
 
+  int _globalPageIndex(Chapter chapter, int page) {
+    var offset = 0;
+    for (var i = 0; i < _segments.length; i++) {
+      if (i > 0) offset++; // Chapter separator.
+      if (_segments[i].chapter.id == chapter.id) return offset + page;
+      offset += _segments[i].pages.length;
+    }
+    return page;
+  }
+
   Widget _toolbar() {
     final ordered = _chapters.where((chapter) => canonicalChapterKey(chapter) != null)
         .toList()..sort((a, b) => compareChapterChronology(a, b)!);
@@ -387,6 +399,11 @@ class _ReaderPageState extends State<ReaderPage> {
             Row(children: [
               IconButton(tooltip: 'Список глав', onPressed: _loadingChapters ? null : _chapterList,
                 icon: const Icon(Icons.format_list_bulleted)),
+              IconButton(tooltip: 'Предыдущая страница',
+                onPressed: page > 0 && _pageScroll.isAttached
+                    ? () => _pageScroll.scrollTo(index: _globalPageIndex(_activeChapter, page - 1),
+                        duration: const Duration(milliseconds: 220)) : null,
+                icon: const Icon(Icons.chevron_left_rounded)),
               IconButton(tooltip: 'Предыдущая глава',
                 onPressed: index > 0 ? () => _go(ordered[index - 1]) : null,
                 icon: const Icon(Icons.skip_previous_rounded)),
@@ -411,6 +428,11 @@ class _ReaderPageState extends State<ReaderPage> {
                   },
                   icon: Icon(read ? Icons.visibility_outlined : Icons.visibility_off_outlined));
               }),
+              IconButton(tooltip: 'Следующая страница',
+                onPressed: page + 1 < _pageCount && _pageScroll.isAttached
+                    ? () => _pageScroll.scrollTo(index: _globalPageIndex(_activeChapter, page + 1),
+                        duration: const Duration(milliseconds: 220)) : null,
+                icon: const Icon(Icons.chevron_right_rounded)),
               IconButton(tooltip: 'Следующая глава',
                 onPressed: index >= 0 && index + 1 < ordered.length
                     ? () => _go(ordered[index + 1]) : null,
@@ -465,6 +487,7 @@ class _ReaderPageState extends State<ReaderPage> {
             child: ScrollablePositionedList.builder(
             key: ValueKey('${widget.sourceKey}:${widget.chapter.id}'),
             itemPositionsListener: _positions,
+            itemScrollController: _pageScroll,
             initialScrollIndex: initialIndex,
             itemCount: _itemCount,
             itemBuilder: (context, index) {
@@ -564,8 +587,24 @@ class _ReaderPageState extends State<ReaderPage> {
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () => Navigator.maybePop(context),
               ),
-              title: Text(_activeChapter.name,
-                maxLines: 1, overflow: TextOverflow.ellipsis),
+              title: InkWell(
+                onTap: () async {
+                  await _flushPosition();
+                  if (!mounted) return;
+                  await Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage(
+                    book: widget.book, repository: widget.repository, library: widget.library)));
+                },
+                child: Text(_activeChapter.name,
+                  maxLines: 1, overflow: TextOverflow.ellipsis)),
+              actions: [IconButton(
+                tooltip: 'Страница произведения',
+                icon: const Icon(Icons.menu_book_outlined),
+                onPressed: () async {
+                  await _flushPosition();
+                  if (!mounted) return;
+                  await Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage(
+                    book: widget.book, repository: widget.repository, library: widget.library)));
+                })],
             )),
         if (_controlsVisible)
           Positioned(bottom: 0, left: 0, right: 0, child: _toolbar()),
