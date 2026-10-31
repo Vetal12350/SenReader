@@ -9,6 +9,7 @@ void main() {
     expect(displayChapterName('Глава 11 (т. 1)'), 'Глава 11');
     expect(displayChapterName('Глава 5.1 (том 2)'), 'Глава 5.1');
     expect(displayChapterName('Глава 167'), 'Глава 167');
+    expect(displayChapterName('Глава 168 (1 т)'), 'Глава 168');
     expect(canonicalChapterKey(const Chapter(id: 'abc', name: raw)), 'v3:c166');
   });
 }
