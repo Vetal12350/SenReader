@@ -29,7 +29,6 @@ class _DetailPageState extends State<DetailPage> {
   String? error;
   bool showChapters = true;
   bool _descriptionExpanded = false;
-  String _chapterQuery = '';
   bool newestFirst = true;
   final Set<String> _attempted = {};
   final List<String> _warnings = [];
@@ -83,7 +82,7 @@ class _DetailPageState extends State<DetailPage> {
     final request = ++_request;
     final sourceKey = selected;
     _attempted.add(sourceKey);
-    setState(() { loading = true; error = null; detail = null; _similarFuture = null; _chapterQuery = ''; });
+    setState(() { loading = true; error = null; detail = null; _similarFuture = null });
     try {
       final source = widget.repository.sources[sourceKey];
       if (source == null) throw StateError('Источник $sourceKey недоступен');
@@ -261,9 +260,7 @@ class _DetailPageState extends State<DetailPage> {
   };
 
   @override Widget build(BuildContext context) {
-    final chapterResults = (detail?.chapters ?? const <Chapter>[])
-        .where((chapter) => chapter.name.toLowerCase().contains(
-          _chapterQuery.toLowerCase())).toList();
+    final chapterResults = detail?.chapters ?? const <Chapter>[];
     return Scaffold(
       appBar: AppBar(title: const Text(''), actions: [
         PopupMenuButton<String>(
@@ -312,7 +309,13 @@ class _DetailPageState extends State<DetailPage> {
           builder: (context, _) {
             final saved = widget.library.get(book);
             final status = saved?.status ?? 'viewed';
-            const label = 'Добавить в список';
+            final label = switch (status) {
+              'reading' => 'Читаю',
+              'planned' => 'В планах',
+              'completed' => 'Прочитано',
+              'dropped' => 'Заброшено',
+              _ => 'Добавить в список',
+            };
             return Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
               PopupMenuButton<String>(
                 tooltip: 'Статус произведения',
@@ -458,13 +461,6 @@ class _DetailPageState extends State<DetailPage> {
           const SizedBox(height: 24),
           SectionTitle('Главы', subtitle: '${detail!.chapters.length} · ${widget.repository.sources[selected]?.name}'),
           const SizedBox(height: 12),
-          TextField(
-            key: const Key('chapter-search'),
-            onChanged: (value) => setState(() => _chapterQuery = value),
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search),
-              hintText: 'Номер или название главы'),
-          ),
           if (detail!.chapters.isEmpty)
             Text('Глав нет или они недоступны. Попробуй другой источник.', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant)),
           Align(alignment: Alignment.centerRight, child: IconButton(
@@ -494,7 +490,8 @@ class _DetailPageState extends State<DetailPage> {
                             availableChapters: detail!.chapters);
                         } else {
                           await widget.library.markRead(book, chapter, selected,
-                            availableChapters: detail!.chapters);
+                            availableChapters: detail!.chapters,
+                            userInitiated: true);
                         }
                       },
                     ),
