@@ -264,7 +264,7 @@ class _MainShellState extends State<MainShell> {
     if (items.isEmpty) return const SizedBox.shrink();
     return Padding(padding: const EdgeInsets.only(top: 25, bottom: 8),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        SectionTitle(title, subtitle: 'Подборка из доступного каталога'),
+        SectionTitle(title),
         const SizedBox(height: 12),
         SingleChildScrollView(scrollDirection: Axis.horizontal,
           child: Row(crossAxisAlignment: CrossAxisAlignment.start,
@@ -371,8 +371,10 @@ class _MainShellState extends State<MainShell> {
     try {
       final detail = await source.detail(entry);
       // Resume persisted progress first; do not advance just because a new chapter exists.
-      final target = chapterToResume(saved, detail.chapters,
-        nextUnread: newChapter);
+      final target = detail.chapters.where((chapter) =>
+        saved.lastChapterId.isNotEmpty
+            ? chapter.id == saved.lastChapterId
+            : chapter.name == saved.lastChapter).firstOrNull;
       if (!mounted) return;
       if (target == null) {
         _open(book);
@@ -429,7 +431,7 @@ class _MainShellState extends State<MainShell> {
                         style: const TextStyle(fontWeight: FontWeight.w700))),
                       const SizedBox(height: 8),
                       Flexible(child: Text((_newChapters.containsKey(item.key) && !shouldResumeCurrentChapter(item)
-                             ? 'Новая: ${_newChapters[item.key]!.name}'
+                             ? 'Новая глава: ${_newChapters[item.key]!.name}'
                              : 'Сохранено: ${item.lastChapter}'),
                         maxLines: 2, overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11))),
