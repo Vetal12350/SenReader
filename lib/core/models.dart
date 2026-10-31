@@ -37,6 +37,29 @@ class Chapter {
   final DateTime? publishedAt;
 }
 
+/// Parse only a timestamp returned by a reader source; never invent dates.
+DateTime? sourceChapterDate(Object? raw) {
+  if (raw == null) return null;
+  DateTime? date;
+  if (raw is num) {
+    final millis = raw > 100000000000 ? raw.toInt()
+        : raw > 1000000000 ? (raw * 1000).toInt() : 0;
+    if (millis > 0) {
+      date = DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true);
+    }
+  } else if (raw is String && raw.trim().isNotEmpty) {
+    final value = raw.trim();
+    final numeric = int.tryParse(value);
+    if (numeric != null) return sourceChapterDate(numeric);
+    date = DateTime.tryParse(value);
+  }
+  if (date == null || date.year < 2000 ||
+      date.isAfter(DateTime.now().add(const Duration(days: 2)))) {
+    return null;
+  }
+  return date;
+}
+
 class PageImage {
   const PageImage(this.url, {this.headers = const {}});
   final String url;
