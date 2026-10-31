@@ -74,8 +74,8 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     expect(library.get(source.book)?.lastChapterId, '2');
     expect(library.get(source.book)?.lastSource, source.key);
-    // Saving a page is NOT a completed-chapter eye marker.
-    expect(library.isChapterRead(source.book, source.chapters.last, source.key), false);
+    // Entering a chapter opens its read eye without moving the resume position.
+    expect(library.isChapterRead(source.book, source.chapters.last, source.key), true);
     expect(tester.takeException(), isNull);
   });
 
