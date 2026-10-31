@@ -21,7 +21,7 @@ class SenkuroSource implements MangaSource {
   static const _catalogQuery = r'''
 query fetchMangas($first: Int = 30) {
   mangas(first: $first, orderBy: {field: POPULARITY_SCORE, direction: DESC}) {
-    edges { node { id slug titles { lang content } originalName { lang content }
+    edges { node { id slug score titles { lang content } originalName { lang content }
       labels { titles { lang content } }
       cover { main: resize(width: 300, height: 420, format: WEBP) { url } } } }
   }
@@ -33,7 +33,7 @@ query fetchMangas($first: Int = 18, $type: MangaTypeFilter,
     $orderField: MangaOrderField = POPULARITY_SCORE) {
   mangas(first: $first, type: $type,
     orderBy: {field: $orderField, direction: DESC}) {
-    edges { node { id slug type titles { lang content }
+    edges { node { id slug type score titles { lang content }
       originalName { lang content } labels { titles { lang content } }
       cover { main: resize(width: 300, height: 420, format: WEBP) { url } } } }
   }
@@ -61,7 +61,7 @@ query fetchMangas($first: Int = 18, $type: MangaTypeFilter,
 query search($query: String!, $first: Int = 30) {
   search(query: $query, type: MANGA, first: $first) {
     edges { node { __typename ... on SearchManga {
-      id slug originalName titles { lang content }
+      id slug score originalName titles { lang content }
       cover { main: resize(width: 300, height: 420, format: WEBP) { url } }
     } } }
   }
@@ -240,6 +240,7 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
       if (duplicate) return null;
       seenEntryIds.add(id);
       return MangaEntry(source: key, id: id, title: title,
+        rating: tenPointScore(n['score']),
         coverUrl: _cover(n['cover']),
         tags: _optionalList(n['labels']).whereType<Map>()
             .map((label) => _title(label['titles'], null))
