@@ -125,6 +125,24 @@ class _ReaderPageState extends State<ReaderPage> {
           }
           _pageCount = pages.length;
         });
+        if (pages.isNotEmpty) {
+          // An opened chapter has an open eye immediately. Progress remains
+          // independent so merely entering a page cannot skip the chapter.
+          final page = _resumePage.clamp(0, pages.length - 1).toInt();
+          final initial = _VisibleChapterPage(widget.chapter, page, pages.length);
+          if (_lastSavedKey == null && _pendingPosition == null) {
+            _lastSavedKey = initial.key;
+            _saveChain = _saveChain.then((_) async {
+              await widget.library.savePosition(widget.book, widget.chapter,
+                widget.sourceKey, pageIndex: page, pageCount: pages.length);
+              await widget.library.markRead(widget.book, widget.chapter,
+                widget.sourceKey, availableChapters: _chapters);
+            }).catchError((Object _) {});
+          } else {
+            unawaited(widget.library.markRead(widget.book, widget.chapter,
+              widget.sourceKey, availableChapters: _chapters));
+          }
+        }
       }
       return pages;
     });
