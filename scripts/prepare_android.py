@@ -19,11 +19,19 @@ for permission in ('INTERNET', 'POST_NOTIFICATIONS'):
 # Flutter's generated manifest defaults to the lowercase project/package name.
 if '<application' not in body:
     raise SystemExit('Expected generated Android application tag')
-body = re.sub(r'(\<application\b[^>]*?)\s+android:(?:label|icon|roundIcon)="[^"]*"', r'\1', body, count=0)
-body = body.replace('<application',
-    '<application android:label="SenReader" '
-    'android:icon="@mipmap/senreader_launcher" '
-    'android:roundIcon="@mipmap/senreader_launcher"', 1)
+# Remove prior attributes within the one opening tag before adding our own.
+# Replacing them separately using a whole-manifest regex can miss later attrs.
+def _brand_application(match):
+    tag = match.group(0)
+    tag = re.sub(r'\s+android:(?:label|icon|roundIcon)="[^"]*"', '', tag)
+    return tag.replace('<application',
+        '<application android:label="SenReader" '
+        'android:icon="@mipmap/senreader_launcher" '
+        'android:roundIcon="@mipmap/senreader_launcher"', 1)
+
+body, branded = re.subn(r'<application\b[^>]*>', _brand_application, body, count=1)
+if branded != 1:
+    raise SystemExit('Could not brand Android application tag')
 manifest.write_text(body, encoding='utf-8')
 
 # Flutter creates the Android wrapper at build time. Copy committed vector
