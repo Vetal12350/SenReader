@@ -71,8 +71,9 @@ void main() {
       expect(store.isChapterRead(book, chapters[i], 'senkuro'),
         i < 2, reason: chapters[i].name);
     }
-    expect(store.get(book)!.lastChapterId, chapters[5].id);
-    expect(store.get(book)!.lastPageIndex, 6);
+    expect(store.get(book)!.lastChapterId, chapters[2].id);
+    expect(store.get(book)!.lastPageIndex, 0);
+    expect(store.get(book)!.lastPageCount, 0);
     final restored = LibraryStore();
     await restored.load();
     expect(restored.isChapterRead(book, chapters[6], 'senkuro'), false);
