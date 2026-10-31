@@ -24,3 +24,15 @@ bool terminalChapterBoundaryReached({
   required bool reachedScrollableEnd,
   required bool footerVisible,
 }) => forwardScrolled && reachedScrollableEnd && footerVisible;
+
+/// After a continuous-chapter transition, the previous chapter is past the
+/// viewport once the separator is the first visible item. The next chapter's
+/// first image need not have loaded or entered the screen yet.
+bool previousChapterBoundaryReached({
+  required int boundaryIndex,
+  required Iterable<int> visibleItemIndexes,
+}) {
+  final visible = visibleItemIndexes.toList();
+  return visible.isNotEmpty &&
+      visible.every((index) => index >= boundaryIndex);
+}
