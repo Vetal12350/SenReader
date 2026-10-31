@@ -111,7 +111,8 @@ query searchTachiyomiManga(
 
   Future<List<MangaEntry>> filteredCatalog({
       String query = '', String? type, String? status,
-      String? translationStatus, String? label, int offset = 0}) async {
+      String? translationStatus, String? label, int offset = 0,
+      String orderField = 'POPULARITY_SCORE'}) async {
     if (type != null && !const {'MANGA', 'MANHWA', 'MANHUA',
         'COMICS', 'OEL_MANGA', 'RU_MANGA'}.contains(type)) {
       throw ArgumentError.value(type, 'type');
@@ -128,7 +129,10 @@ query searchTachiyomiManga(
         !RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(label))) {
       throw ArgumentError.value(label, 'label');
     }
-    if (offset < 0 || offset > 990 || offset % 10 != 0) {
+    if (!const {'POPULARITY_SCORE', 'SCORE'}.contains(orderField)) {
+      throw ArgumentError.value(orderField, 'orderField');
+    }
+    if (offset < 0 || offset > 970 || offset % 10 != 0) {
       throw ArgumentError.value(offset, 'offset');
     }
     final allEdges = <Map<String, dynamic>>[];
@@ -142,7 +146,7 @@ query searchTachiyomiManga(
         'label': label == null ? null : {'include': [label]},
         'translationStatus': translationStatus == null
             ? null : {'include': [translationStatus]},
-        'orderBy': {'field': 'POPULARITY_SCORE', 'direction': 'DESC'},
+        'orderBy': {'field': orderField, 'direction': 'DESC'},
         'offset': offset + page * 10,
       });
       final connection = data['mangaTachiyomiSearch'];
