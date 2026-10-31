@@ -166,8 +166,9 @@ class _ReaderPageState extends State<ReaderPage> {
       final segment = _segments[i];
       endIndex += segment.pages.length;
       final passed = i < _segments.length - 1
-          ? visible.any((item) => item.index > endIndex) &&
-            !visible.any((item) => item.index < endIndex)
+          ? previousChapterBoundaryReached(
+              boundaryIndex: endIndex,
+              visibleItemIndexes: visible.map((item) => item.index))
           : terminalChapterBoundaryReached(
               forwardScrolled: _hasForwardScrolled,
               reachedScrollableEnd: _reachedScrollableEnd,
