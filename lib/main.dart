@@ -277,8 +277,13 @@ class _MainShellState extends State<MainShell> {
     // Scanning every saved title on each catalogue search made Senkuro
     // sluggish. Do it only on Home, at most once per 15 minutes.
     if (!isCatalog && thisQuery.isEmpty) {
-      unawaited(_refreshNewChapters(force: forceHome));
-      unawaited(_refreshSenkuroSections(force: forceHome));
+      // Prioritize visible home sections. Background library scans start only
+      // after the browse feed settles, avoiding a burst of Senkuro requests.
+      unawaited(_refreshSenkuroSections(force: forceHome).whenComplete(() {
+        if (mounted && tab == 0) {
+          unawaited(_refreshNewChapters(force: forceHome));
+        }
+      }));
     }
   }
 
@@ -293,21 +298,26 @@ class _MainShellState extends State<MainShell> {
       ('Топ маньхуа', 'MANHUA', 'POPULARITY_SCORE'),
       ('Топ манг', 'MANGA', 'POPULARITY_SCORE'),
     ];
-    await Future.wait(options.map((option) async {
-      try {
-        var list = force ? null : await _homeCache.load(option.$1);
-        if (list == null) {
-          list = await source.browseHome(
-            type: option.$2, orderField: option.$3);
-          if (list.isNotEmpty) unawaited(_homeCache.save(option.$1, list));
+    // Fetch at most two categories concurrently instead of four requests
+    // plus the saved-title scan racing the user's foreground navigation.
+    for (var offset = 0; offset < options.length; offset += 2) {
+      await Future.wait(options.skip(offset).take(2).map((option) async {
+        try {
+          var list = force ? null : await _homeCache.load(option.$1);
+          if (list == null) {
+            list = await source.browseHome(
+              type: option.$2, orderField: option.$3);
+            if (list.isNotEmpty) unawaited(_homeCache.save(option.$1, list));
+          }
+          if (list.isNotEmpty) categories[option.$1] = list;
+        } catch (_) {
+          // Category-specific failures never hide the regular catalog.
         }
-        if (list.isNotEmpty) categories[option.$1] = list;
-      } catch (_) {
-        // Category-specific failures never hide the regular catalog.
-      }
-    }));
-    if (!mounted || request != _homeRequest) return;
-    setState(() => _senkuroSections..clear()..addAll(categories));
+      }));
+      if (!mounted || request != _homeRequest) return;
+      // Show the first categories while the next pair loads.
+      setState(() => _senkuroSections..clear()..addAll(categories));
+    }
   }
 
   Future<void> _refreshNewChapters({bool force = false}) async {
