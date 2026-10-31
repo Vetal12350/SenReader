@@ -4,6 +4,13 @@ import 'package:http/http.dart' as http;
 import '../core/models.dart';
 import '../core/source.dart';
 
+class SenkuroCatalogLabel {
+  const SenkuroCatalogLabel(this.slug, this.title, this.rootId);
+  final String slug;
+  final String title;
+  final String rootId;
+}
+
 /// Public catalog adapter. No credentials, paywall circumvention or CAPTCHA bypass.
 /// GraphQL schema based on the Apache-2.0 mangayomi-ru-sources adapter.
 class SenkuroSource implements MangaSource {
@@ -42,7 +49,7 @@ query fetchMangas($first: Int = 18, $type: MangaTypeFilter,
   /// Public, explicitly ordered Senkuro manga browse categories.
   /// Unknown values are rejected rather than sent to a remote API.
   Future<List<MangaEntry>> browseHome({
-      String? type, String orderField = 'POPULARITY_SCORE'}) async {
+      String? type, String orderField = 'POPULARITY_SCORE', int first = 18}) async {
     if (type != null && !const {'MANGA', 'MANHWA', 'MANHUA'}.contains(type)) {
       throw ArgumentError.value(type, 'type', 'Unsupported Senkuro type');
     }
@@ -50,11 +57,103 @@ query fetchMangas($first: Int = 18, $type: MangaTypeFilter,
         .contains(orderField)) {
       throw ArgumentError.value(orderField, 'orderField', 'Unsupported order');
     }
+    if (first < 1 || first > 30) throw ArgumentError.value(first, 'first');
     final data = await _gql('fetchMangas', _homeQuery, {
-      'first': 18, 'type': type == null ? null : {'include': [type]},
+      'first': first, 'type': type == null ? null : {'include': [type]},
       'orderField': orderField,
     });
     return _parseNodes(_edges(data['mangas']));
+  }
+
+  // Public search/filter operation used by the Senkuro extensions.
+  // Never interpolate untrusted values directly into the GraphQL document.
+  static const _labelsQuery = r'''
+query fetchTachiyomiSearchFilters {
+  mangaTachiyomiSearchFilters {
+    labels { id rootId slug titles { lang content } }
+  }
+}''';
+
+  Future<List<SenkuroCatalogLabel>> catalogLabels() async {
+    final data = await _gql('fetchTachiyomiSearchFilters', _labelsQuery, {});
+    final filters = data['mangaTachiyomiSearchFilters'];
+    if (filters is! Map || filters['labels'] is! List) throw _invalidResponse();
+    final seen = <String>{};
+    final labels = <SenkuroCatalogLabel>[];
+    for (final label in filters['labels'] as List) {
+      if (label is! Map) continue;
+      final slug = _text(label['slug']);
+      final title = _title(label['titles'], null);
+      if (slug.isEmpty || title.isEmpty || !seen.add(slug)) continue;
+      labels.add(SenkuroCatalogLabel(slug, title, _text(label['rootId'])));
+    }
+    labels.sort((a, b) => a.title.compareTo(b.title));
+    return labels;
+  }
+
+  static const _filteredQuery = r'''
+query searchTachiyomiManga(
+  $query: String,
+  $type: MangaTachiyomiSearchTypeFilter,
+  $status: MangaTachiyomiSearchStatusFilter,
+  $label: MangaTachiyomiSearchLabelFilter,
+  $translationStatus: MangaTachiyomiSearchTranslationStatusFilter,
+  $orderBy: MangaTachiyomiOrder,
+  $offset: Int
+) {
+  mangaTachiyomiSearch(query: $query, type: $type, status: $status,
+      label: $label, translationStatus: $translationStatus, orderBy: $orderBy,
+      offset: $offset) {
+    mangas { id slug originalName { lang content } titles { lang content }
+      cover { original { url } } }
+  }
+}''';
+
+  Future<List<MangaEntry>> filteredCatalog({
+      String query = '', String? type, String? status,
+      String? translationStatus, String? label, int offset = 0}) async {
+    if (type != null && !const {'MANGA', 'MANHWA', 'MANHUA',
+        'COMICS', 'OEL_MANGA', 'RU_MANGA'}.contains(type)) {
+      throw ArgumentError.value(type, 'type');
+    }
+    if (status != null && !const {'ANNOUNCE', 'ONGOING', 'FINISHED',
+        'HIATUS', 'CANCELLED'}.contains(status)) {
+      throw ArgumentError.value(status, 'status');
+    }
+    if (translationStatus != null && !const {'IN_PROGRESS', 'FINISHED',
+        'FROZEN', 'ABANDONED'}.contains(translationStatus)) {
+      throw ArgumentError.value(translationStatus, 'translationStatus');
+    }
+    if (label != null && (label.length > 120 ||
+        !RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(label))) {
+      throw ArgumentError.value(label, 'label');
+    }
+    if (offset < 0 || offset > 990 || offset % 10 != 0) {
+      throw ArgumentError.value(offset, 'offset');
+    }
+    final allEdges = <Map<String, dynamic>>[];
+    // The public Tachiyomi search API returns pages of at most 10 items.
+    // Keep the first 30 server-ordered results, without claiming all titles.
+    for (var page = 0; page < 3; page++) {
+      final data = await _gql('searchTachiyomiManga', _filteredQuery, {
+        'query': query.trim().isEmpty ? null : query.trim(),
+        'type': type == null ? null : {'include': [type]},
+        'status': status == null ? null : {'include': [status]},
+        'label': label == null ? null : {'include': [label]},
+        'translationStatus': translationStatus == null
+            ? null : {'include': [translationStatus]},
+        'orderBy': {'field': 'POPULARITY_SCORE', 'direction': 'DESC'},
+        'offset': offset + page * 10,
+      });
+      final connection = data['mangaTachiyomiSearch'];
+      if (connection is! Map || connection['mangas'] is! List) {
+        throw _invalidResponse();
+      }
+      final pageNodes = _list(connection['mangas']);
+      allEdges.addAll(pageNodes.map((node) => {'node': node}));
+      if (pageNodes.length < 10) break;
+    }
+    return _parseNodes(allEdges);
   }
 
   static const _searchQuery = r'''
@@ -243,7 +342,9 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
   }
 
   static String _cover(dynamic json) =>
-      json is Map && json['main'] is Map ? _image(json['main']['url']) : '';
+      json is Map && json['main'] is Map ? _image(json['main']['url'])
+        : json is Map && json['original'] is Map
+          ? _image(json['original']['url']) : '';
 
   List<MangaEntry> _parseNodes(dynamic edges) {
     final seenSlugs = <String>{};
