@@ -42,7 +42,7 @@ query fetchMangas($first: Int = 18, $type: MangaTypeFilter,
   /// Public, explicitly ordered Senkuro manga browse categories.
   /// Unknown values are rejected rather than sent to a remote API.
   Future<List<MangaEntry>> browseHome({
-      String? type, String orderField = 'POPULARITY_SCORE'}) async {
+      String? type, String orderField = 'POPULARITY_SCORE', int first = 18}) async {
     if (type != null && !const {'MANGA', 'MANHWA', 'MANHUA'}.contains(type)) {
       throw ArgumentError.value(type, 'type', 'Unsupported Senkuro type');
     }
@@ -50,8 +50,9 @@ query fetchMangas($first: Int = 18, $type: MangaTypeFilter,
         .contains(orderField)) {
       throw ArgumentError.value(orderField, 'orderField', 'Unsupported order');
     }
+    if (first < 1 || first > 30) throw ArgumentError.value(first, 'first');
     final data = await _gql('fetchMangas', _homeQuery, {
-      'first': 18, 'type': type == null ? null : {'include': [type]},
+      'first': first, 'type': type == null ? null : {'include': [type]},
       'orderField': orderField,
     });
     return _parseNodes(_edges(data['mangas']));
