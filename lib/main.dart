@@ -67,6 +67,7 @@ class _MainShellState extends State<MainShell> {
   String libraryFilter = 'all';
   String catalogSourceFilter = 'all';
   String? catalogTagFilter;
+  String catalogSort = 'popularity';
   CatalogResult? result;
   CatalogResult? _homeResult; // Never replaced by catalog search results.
   bool loading = false;
@@ -181,6 +182,16 @@ class _MainShellState extends State<MainShell> {
           (catalogTagFilter == null || book.entries.values.any(
             (entry) => entry.tags.contains(catalogTagFilter))))
         .toList();
+    if (catalogSort == 'rating') {
+      // Preserve source order for unknown scores; never invent zero ratings.
+      books.sort((a, b) {
+        final left = a.primary.rating;
+        final right = b.primary.rating;
+        if (left == null) return right == null ? 0 : 1;
+        if (right == null) return -1;
+        return right.compareTo(left);
+      });
+    }
     return books;
   }
 
@@ -300,6 +311,22 @@ class _MainShellState extends State<MainShell> {
               catalogSourceFilter == 'senkuro' ? 'Senkuro' :
               catalogSourceFilter == 'readmanga' ? 'ReadManga' : 'ReManga'),
           ),
+        ),
+        PopupMenuButton<String>(
+          key: const Key('catalog-sort'),
+          tooltip: 'Сортировка загруженного каталога',
+          initialValue: catalogSort,
+          onSelected: (value) => setState(() => catalogSort = value),
+          itemBuilder: (context) => const [
+            PopupMenuItem(value: 'popularity', child: Text('По популярности')),
+            PopupMenuItem(value: 'rating', child: Text('По рейтингу')),
+            PopupMenuItem<String>(enabled: false, value: 'chapters', child: Text('По количеству глав · нет данных')),
+            PopupMenuItem<String>(enabled: false, value: 'views', child: Text('По просмотрам · нет данных')),
+            PopupMenuItem<String>(enabled: false, value: 'created', child: Text('По дате создания · нет данных')),
+            PopupMenuItem<String>(enabled: false, value: 'uploaded', child: Text('По дате залива · нет данных')),
+          ],
+          child: Chip(avatar: const Icon(Icons.swap_vert, size: 18),
+            label: Text(catalogSort == 'rating' ? 'По рейтингу' : 'Сортировка')),
         ),
         ActionChip(
           key: const Key('catalog-tag-filters'),
