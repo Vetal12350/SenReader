@@ -7,6 +7,7 @@ import '../main.dart' show mainTabRequest;
 import '../core/models.dart';
 import '../core/chapter_identity.dart';
 import '../data/catalog_repository.dart';
+import '../data/page_load_retry.dart';
 import '../data/library_store.dart';
 import '../data/reading_completion.dart';
 import 'detail_page.dart';
@@ -27,6 +28,93 @@ class _VisibleChapterPage {
   String get key => '${chapter.id}|$index';
 }
 
+
+/// A failed CDN image is retried in place rather than requiring route
+/// navigation. Keep its state tied to the chapter/page, not viewport rebuilds.
+class _RetryableReaderImage extends StatefulWidget {
+  const _RetryableReaderImage({super.key, required this.page,
+    required this.pageIndex, required this.width,
+    required this.height, required this.fit, required this.onLoaded});
+  final PageImage page;
+  final int pageIndex;
+  final double width;
+  final double? height;
+  final BoxFit fit;
+  final VoidCallback onLoaded;
+
+  @override State<_RetryableReaderImage> createState() =>
+      _RetryableReaderImageState();
+}
+
+class _RetryableReaderImageState extends State<_RetryableReaderImage> {
+  int _attempt = 0;
+  Timer? _retryTimer;
+
+  void _retry(NetworkImage image) {
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    // Evict any failed network image from Flutter's image cache.
+    unawaited(() async {
+      await image.evict();
+      if (mounted) setState(() => _attempt++);
+    }());
+  }
+
+  void _scheduleRetry(NetworkImage image) {
+    if (_attempt >= 2 || _retryTimer != null) return;
+    _retryTimer = Timer(
+      Duration(milliseconds: _attempt == 0 ? 450 : 1100),
+      () => _retry(image),
+    );
+  }
+
+  @override void didUpdateWidget(_RetryableReaderImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.page.url != widget.page.url) {
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      _attempt = 0;
+    }
+  }
+
+  @override void dispose() {
+    _retryTimer?.cancel();
+    super.dispose();
+  }
+
+  @override Widget build(BuildContext context) {
+    final provider = NetworkImage(widget.page.url,
+      headers: widget.page.headers);
+    return Image(
+      key: ValueKey('reader-image-attempt-$_attempt'),
+      image: provider, width: widget.width, height: widget.height,
+      fit: widget.fit,
+      frameBuilder: (context, child, frame, wasSync) {
+        if (frame != null) widget.onLoaded();
+        return frame == null
+          ? const SizedBox(height: 170,
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
+          : child;
+      },
+      errorBuilder: (context, error, stack) {
+        _scheduleRetry(provider);
+        return Container(
+          height: 170, color: Colors.white10,
+          alignment: Alignment.center,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('Страница ${widget.pageIndex + 1} не загрузилась',
+              style: const TextStyle(color: Colors.white60)),
+            const SizedBox(height: 8),
+            TextButton.icon(onPressed: () => _retry(provider),
+              icon: const Icon(Icons.refresh),
+              label: const Text('Повторить')),
+          ]),
+        );
+      },
+    );
+  }
+}
+
 class ReaderPage extends StatefulWidget {
   const ReaderPage({super.key, required this.book, required this.chapter,
     required this.sourceKey, required this.repository, required this.library,
@@ -41,7 +129,7 @@ class ReaderPage extends StatefulWidget {
 }
 
 class _ReaderPageState extends State<ReaderPage> {
-  late final Future<List<PageImage>> future;
+  late Future<List<PageImage>> future;
   final ItemPositionsListener _positions = ItemPositionsListener.create();
   final ItemScrollController _itemScroll = ItemScrollController();
   // Pixel-relative scrolling keeps movement smooth across tall webtoon images.
@@ -117,7 +205,13 @@ class _ReaderPageState extends State<ReaderPage> {
     _chapters = widget.chapters;
     _activeChapter = widget.chapter;
     _visiblePage.value = _resumePage;
-    future = widget.repository.sources[widget.sourceKey]!.pages(widget.chapter).then((pages) {
+    future = _loadInitialChapter();
+    _positions.itemPositions.addListener(_onVisiblePages);
+  }
+
+  Future<List<PageImage>> _loadInitialChapter() async {
+    final pages = await loadChapterPagesWithRetry(
+      widget.repository.sources[widget.sourceKey]!, widget.chapter);
       if (mounted) {
         setState(() {
           _segments.add(_ChapterSegment(widget.chapter, pages));
@@ -150,9 +244,20 @@ class _ReaderPageState extends State<ReaderPage> {
           }
         }
       }
-      return pages;
+    return pages;
+  }
+
+  void _retryInitialChapter() {
+    if (!mounted) return;
+    _stopAutoScroll();
+    setState(() {
+      // The failed future is never reused; no need to reopen the route.
+      _segments.clear();
+      _loadedPageKeys.clear();
+      _atSeriesEnd = false;
+      _nextError = null;
+      future = _loadInitialChapter();
     });
-    _positions.itemPositions.addListener(_onVisiblePages);
   }
 
   int get _resumePage {
@@ -366,7 +471,8 @@ class _ReaderPageState extends State<ReaderPage> {
         return;
       }
       final next = ordered[index + 1];
-      final pages = await widget.repository.sources[widget.sourceKey]!.pages(next);
+      final pages = await loadChapterPagesWithRetry(
+        widget.repository.sources[widget.sourceKey]!, next);
       if (!mounted) return;
       if (pages.isEmpty) {
         setState(() => _nextError = 'Следующая глава пока недоступна');
@@ -764,12 +870,29 @@ class _ReaderPageState extends State<ReaderPage> {
           }
           if (snapshot.hasError) {
             return Center(child: Padding(padding: const EdgeInsets.all(24),
-              child: Text('Ошибка главы: ${snapshot.error}', style: const TextStyle(color: Colors.white))));
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text('Ошибка главы: ${snapshot.error}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white)),
+                const SizedBox(height: 14),
+                FilledButton.icon(
+                  onPressed: _retryInitialChapter,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Повторить загрузку'),
+                ),
+              ])));
           }
           final pages = snapshot.data ?? [];
           if (pages.isEmpty) {
-            return const Center(child: Padding(padding: EdgeInsets.all(24),
-              child: Text('Нет доступных изображений. Возможно, глава удалена или доступ ограничен.', style: TextStyle(color: Colors.white))));
+            return Center(child: Padding(padding: const EdgeInsets.all(24),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Text('Нет доступных изображений. Возможно, глава удалена или доступ ограничен.',
+                  textAlign: TextAlign.center, style: TextStyle(color: Colors.white)),
+                const SizedBox(height: 14),
+                FilledButton.icon(onPressed: _retryInitialChapter,
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('Повторить загрузку')),
+              ])));
           }
           final initialIndex = _resumePage.clamp(0, pages.length - 1).toInt();
           return NotificationListener<ScrollNotification>(
@@ -870,24 +993,15 @@ class _ReaderPageState extends State<ReaderPage> {
               ).pages[item.index];
               return ColorFiltered(colorFilter: ColorFilter.mode(
                 Colors.black.withValues(alpha: (100 - _brightness) / 100),
-                BlendMode.srcATop), child: Image.network(
-                image.url,
-                width: MediaQuery.sizeOf(context).width,
-                headers: image.headers,
-                fit: _fitHeight ? BoxFit.contain : BoxFit.fitWidth,
-                height: _fitHeight ? MediaQuery.sizeOf(context).height : null,
-                frameBuilder: (context, child, frame, wasSync) {
-                  if (frame != null) _registerLoadedPage(item);
-                  return frame == null
-                    ? const SizedBox(height: 170,
-                        child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
-                    : child;
-                },
-                errorBuilder: (context, error, stack) => Container(
-                  height: 170, color: Colors.white10, alignment: Alignment.center,
-                  child: Text('Страница ${item.index + 1} не загрузилась',
-                    style: const TextStyle(color: Colors.white60))),
-              ));
+                BlendMode.srcATop), child: _RetryableReaderImage(
+                  key: ValueKey('reader-image-${item.key}'),
+                  page: image,
+                  pageIndex: item.index,
+                  width: MediaQuery.sizeOf(context).width,
+                  height: _fitHeight ? MediaQuery.sizeOf(context).height : null,
+                  fit: _fitHeight ? BoxFit.contain : BoxFit.fitWidth,
+                  onLoaded: () => _registerLoadedPage(item),
+                ));
             },
           ));
         },
