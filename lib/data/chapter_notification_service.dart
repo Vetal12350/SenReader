@@ -4,6 +4,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../core/title_matching.dart';
 import 'chapter_alert_preferences.dart';
 import 'chapter_checker.dart';
+import 'chapter_inbox_store.dart';
 import 'library_store.dart';
 
 class ChapterNotificationService {
@@ -94,6 +95,9 @@ class ChapterNotificationService {
       await library.load();
       if (library.get(release.book)?.preferredSource != release.sourceKey ||
           !await ChapterAlertPreferences().enabled()) continue;
+      await ChapterInboxStore().add(normalizedTitle(release.book.title),
+        release.book.title, release.book.coverUrl,
+        release.sourceKey, release.chapter);
       await _plugin.show(
         id: notificationId(release),
         title: release.book.title,
