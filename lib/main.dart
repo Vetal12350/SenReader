@@ -4,6 +4,7 @@ import 'core/models.dart';
 import 'core/chapter_identity.dart';
 import 'data/catalog_repository.dart';
 import 'data/senkuro_source.dart';
+import 'data/senkuro_home_cache.dart';
 import 'data/library_store.dart';
 import 'data/reading_suggestions.dart';
 import 'data/chapter_notification_service.dart';
@@ -98,6 +99,7 @@ class _MainShellState extends State<MainShell> {
   final Map<String, Chapter> _newChapters = {};
   int _homeRequest = 0;
   final Map<String, List<MangaEntry>> _senkuroSections = {};
+  final SenkuroHomeCache _homeCache = SenkuroHomeCache();
   late final ChapterAlertController alerts = widget.alerts ?? ChapterAlertController();
   String query = '';
   Timer? debounce;
@@ -164,7 +166,7 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
-  Future<void> _fetch() async {
+  Future<void> _fetch({bool forceHome = false}) async {
     final thisQuery = query;
     final isCatalog = tab == 1;
     final type = catalogType;
@@ -205,6 +207,22 @@ class _MainShellState extends State<MainShell> {
       } catch (e) {
         next = CatalogResult(books: const [], warnings: ['Senkuro: $e']);
       }
+
+    } else if (!isCatalog && thisQuery.isEmpty && senkuro is SenkuroSource) {
+      try {
+        var entries = forceHome ? null : await _homeCache.load('popular');
+        if (entries == null) {
+          entries = await senkuro.popular();
+          unawaited(_homeCache.save('popular', entries));
+        }
+        next = CatalogResult(
+          books: [for (final entry in entries)
+            UnifiedManga(title: entry.title, entries: {'senkuro': entry})],
+          senkuroPopular: entries,
+          warnings: const []);
+      } catch (e) {
+        next = CatalogResult(books: const [], warnings: ['Senkuro: $e']);
+      }
     } else {
       next = await widget.repository.getCatalog(query: thisQuery,
         sourceKey: isCatalog ? 'senkuro' : null);
@@ -224,10 +242,10 @@ class _MainShellState extends State<MainShell> {
           translation != null || label != null);
     });
     unawaited(_refreshNewChapters());
-    if (!isCatalog && thisQuery.isEmpty) unawaited(_refreshSenkuroSections());
+    if (!isCatalog && thisQuery.isEmpty) unawaited(_refreshSenkuroSections(force: forceHome));
   }
 
-  Future<void> _refreshSenkuroSections() async {
+  Future<void> _refreshSenkuroSections({bool force = false}) async {
     final source = widget.repository.sources['senkuro'];
     if (source is! SenkuroSource) return;
     final request = ++_homeRequest;
@@ -240,8 +258,12 @@ class _MainShellState extends State<MainShell> {
     ];
     await Future.wait(options.map((option) async {
       try {
-        final list = await source.browseHome(
-          type: option.$2, orderField: option.$3);
+        var list = force ? null : await _homeCache.load(option.$1);
+        if (list == null) {
+          list = await source.browseHome(
+            type: option.$2, orderField: option.$3);
+          if (list.isNotEmpty) unawaited(_homeCache.save(option.$1, list));
+        }
         if (list.isNotEmpty) categories[option.$1] = list;
       } catch (_) {
         // Category-specific failures never hide the regular catalog.
@@ -714,7 +736,8 @@ class _MainShellState extends State<MainShell> {
         ]),
         actions: [
           if (tab == 0 || tab == 1)
-            IconButton(tooltip: 'Обновить', icon: const Icon(Icons.refresh), onPressed: _fetch),
+            IconButton(tooltip: 'Обновить', icon: const Icon(Icons.refresh),
+              onPressed: () => _fetch(forceHome: true)),
           IconButton(tooltip: 'Настройки', icon: const Icon(Icons.settings_outlined),
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsPage(
               repository: widget.repository, library: widget.library, alerts: alerts,
