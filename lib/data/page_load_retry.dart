@@ -7,7 +7,7 @@ import '../core/source.dart';
 /// chapter. Permanent access/authentication failures should not be hammered.
 bool shouldRetryPageLoad(Object error) {
   final reason = error.toString().toLowerCase();
-  if (RegExp(r'http\\s*(?:400|401|403|404|405|410|422|451)\\b')
+  if (RegExp(r'http\s*(?:400|401|403|404|405|410|422|451)\b')
       .hasMatch(reason)) return false;
   return ![
     'авторизац', 'оплат', 'закрыт', 'удален', 'удалён',
