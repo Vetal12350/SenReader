@@ -142,7 +142,7 @@ class _MainShellState extends State<MainShell> {
         type: catalogType, status: catalogStatus,
         translationStatus: catalogTranslationStatus, label: catalogLabelSlug,
         offset: offset, orderField: catalogSort == 'rating'
-          ? 'SCORE' : 'POPULARITY_SCORE');
+          ? 'SCORE' : 'POPULARITY_SCORE', withRatings: true);
       if (!mounted || version != _catalogGeneration || tab != 1) return;
       final seen = current.map((item) => item.primary.id).toSet();
       final fresh = matches.where((item) => seen.add(item.id)).toList();
@@ -183,7 +183,8 @@ class _MainShellState extends State<MainShell> {
       try {
         final entries = await senkuro.filteredCatalog(query: thisQuery,
           type: type, status: status, translationStatus: translation,
-          label: label, orderField: sort == 'rating' ? 'SCORE' : 'POPULARITY_SCORE');
+          label: label, orderField: sort == 'rating' ? 'SCORE' : 'POPULARITY_SCORE',
+          withRatings: true);
         next = CatalogResult(
           books: [for (final entry in entries)
             UnifiedManga(title: entry.title, entries: {'senkuro': entry})],
@@ -506,9 +507,8 @@ class _MainShellState extends State<MainShell> {
               enabled: catalogStatus == null && catalogTranslationStatus == null &&
                   catalogLabelSlug == null && query.isEmpty,
               child: const Text('По дате создания')),
-            PopupMenuItem<String>(enabled: false, value: 'chapters', child: Text('По количеству глав · нет данных')),
-            PopupMenuItem<String>(enabled: false, value: 'views', child: Text('По просмотрам · нет данных')),
-            PopupMenuItem<String>(enabled: false, value: 'uploaded', child: Text('По дате залива · нет данных')),
+            // Senkuro exposes SCORE, POPULARITY_SCORE and date-based browse.
+            // There are no verified global sort fields for views/chapter count.
           ],
           child: Chip(avatar: const Icon(Icons.swap_vert, size: 18),
             label: Text(catalogSort == 'rating' ? 'По рейтингу' :
