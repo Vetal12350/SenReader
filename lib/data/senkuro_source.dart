@@ -113,6 +113,16 @@ query batchMangaScores($slug0: String!, $slug1: String!, $slug2: String!, $slug3
   a9: manga(slug: $slug9) { score }
 }''';
 
+  /// Fetch confirmed scores for known Senkuro records without downloading
+  /// chapters. Callers should use small background batches (max ten).
+  Future<List<MangaEntry>> verifiedRatings(List<MangaEntry> entries) async {
+    if (entries.length > 10 || entries.any((e) =>
+        e.source != key || e.id.isEmpty)) {
+      throw ArgumentError('Expected up to ten valid Senkuro entries');
+    }
+    return _withVerifiedScores(entries);
+  }
+
   /// Optional real aggregate Senkuro scores for filtered catalog cards.
   /// A missing or rejected score remains absent, never fabricated.
   Future<List<MangaEntry>> _withVerifiedScores(List<MangaEntry> entries) async {
@@ -570,7 +580,8 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
       translationStatus: _translationLabel(metadata['translationStatus']),
       entry: MangaEntry(source: key, id: entry.id, remoteId: metadataId,
         title: _title(m['titles'], m['originalName']),
-        coverUrl: _cover(m['cover']).isNotEmpty ? _cover(m['cover']) : _image(entry.coverUrl)),
+        coverUrl: _cover(m['cover']).isNotEmpty ? _cover(m['cover']) : _image(entry.coverUrl),
+        rating: tenPointScore(m['score']) ?? entry.rating),
       chapters: chapters,
       description: loc is Map ? _flatten(loc['description']).trim() : '',
       genres: _optionalList(m['labels']).whereType<Map>().map((e) => _title(e['titles'], null)).where((s) => s.isNotEmpty).take(12).toList(),
