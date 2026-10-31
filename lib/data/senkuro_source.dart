@@ -69,7 +69,7 @@ query search($query: String!, $first: Int = 30) {
   static const _detailQuery = r'''
 query fetchManga($slug: String!) {
   manga(slug: $slug) {
-    slug score titles { lang content } originalName { lang content }
+    id slug score titles { lang content } originalName { lang content }
     alternativeNames { lang content }
     localizations { lang description { __typename
       ... on TiptapNodeText { text }
@@ -81,6 +81,30 @@ query fetchManga($slug: String!) {
     branches { id primaryBranch chapters }
   }
 }''';
+  // Public, optional status projection from Senkuro's Tachiyomi-compatible API.
+  // If it fails, title details remain available without guessed statuses.
+  static const _statusQuery = r'''
+query fetchTachiyomiManga($mangaId: ID!) {
+  mangaTachiyomiInfo(mangaId: $mangaId) { status translationStatus }
+}''';
+
+  static String? _publicationLabel(dynamic value) => switch (value) {
+    'ANNOUNCE' => 'Анонс',
+    'ONGOING' => 'Онгоинг',
+    'FINISHED' => 'Выпущено',
+    'HIATUS' => 'Приостановлено',
+    'CANCELLED' => 'Отменено',
+    _ => null,
+  };
+
+  static String? _translationLabel(dynamic value) => switch (value) {
+    'IN_PROGRESS' => 'Переводится',
+    'FINISHED' => 'Переведено',
+    'FROZEN' => 'Перевод заморожен',
+    'ABANDONED' => 'Перевод заброшен',
+    _ => null,
+  };
+
   static const _chaptersQuery = r'''
 query fetchMangaChapters($branchId: ID!, $after: String, $orderBy: MangaChapterOrder!) {
   mangaChapters(first: 100, branchId: $branchId, after: $after, orderBy: $orderBy) {
@@ -314,7 +338,25 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
         cursor = next;
       }
     }
+    String? publicationStatus;
+    String? translationStatus;
+    final mangaId = _id(m['id']);
+    if (mangaId.isNotEmpty) {
+      try {
+        final statusData = await _gql('fetchTachiyomiManga', _statusQuery,
+          {'mangaId': mangaId});
+        final info = statusData['mangaTachiyomiInfo'];
+        if (info is Map) {
+          publicationStatus = _publicationLabel(info['status']);
+          translationStatus = _translationLabel(info['translationStatus']);
+        }
+      } catch (_) {
+        // An unavailable optional status cannot break reading or chapter listing.
+      }
+    }
     return MangaDetail(
+      publicationStatus: publicationStatus,
+      translationStatus: translationStatus,
       entry: MangaEntry(source: key, id: entry.id, title: _title(m['titles'], m['originalName']),
         coverUrl: _cover(m['cover']).isNotEmpty ? _cover(m['cover']) : _image(entry.coverUrl)),
       chapters: chapters,
