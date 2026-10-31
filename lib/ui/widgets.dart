@@ -85,10 +85,13 @@ class MangaTile extends StatelessWidget {
                     borderRadius: BorderRadius.circular(7)),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 6, vertical: 4),
-                  child: Text(badge,
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.black,
-                      fontSize: 10, fontWeight: FontWeight.w700)),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(badge, maxLines: 1,
+                      style: const TextStyle(color: Colors.black,
+                        fontSize: 10, fontWeight: FontWeight.w700)),
+                  ),
                 )),
             if (book.primary.rating != null)
               Positioned(right: 6, bottom: 6, child: Container(
