@@ -959,7 +959,7 @@ class _MainShellState extends State<MainShell> {
             ],
           ],
         ),
-      )]),
+      ))]),
       bottomNavigationBar: NavigationBarTheme(
         data: const NavigationBarThemeData(
           labelTextStyle: WidgetStatePropertyAll(TextStyle(
