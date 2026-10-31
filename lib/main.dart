@@ -697,9 +697,15 @@ class _MainShellState extends State<MainShell> {
                     child: CoverImage(item.toUnified().coverUrl,
                       width: 82, height: 124)),
                   const SizedBox(width: 9),
-                  Expanded(child: Column(
+                  // Scale down only when accessibility text would overflow,
+                  // while retaining two lines and readable saved progress.
+                  Expanded(child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: SizedBox(width: 145, child: Column(
+                    mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center, children: [
+                    children: [
                       Text(item.title, maxLines: 2,
                         overflow: TextOverflow.ellipsis, softWrap: true,
                         style: const TextStyle(fontWeight: FontWeight.w700)),
@@ -728,7 +734,7 @@ class _MainShellState extends State<MainShell> {
                          ],
                       ],
                     ],
-                  )),
+                  )))),
                 ]),
               ),
             ));
