@@ -30,9 +30,11 @@ class MangaEntry {
 }
 
 class Chapter {
-  const Chapter({required this.id, required this.name});
+  const Chapter({required this.id, required this.name, this.publishedAt});
   final String id;
   final String name;
+  /// Actual source-provided upload date; null means unknown.
+  final DateTime? publishedAt;
 }
 
 class PageImage {
