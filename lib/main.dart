@@ -19,6 +19,9 @@ import 'ui/settings_page.dart';
 import 'data/theme_controller.dart';
 import 'ui/app_theme.dart';
 
+/// Reader route destinations, separate from saved library state.
+final ValueNotifier<int> mainTabRequest = ValueNotifier<int>(0);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final library = LibraryStore();
@@ -66,6 +69,14 @@ class MainShell extends StatefulWidget {
 
 class _MainShellState extends State<MainShell> {
   int tab = 0;
+
+  void _onMainTabRequest() {
+    final next = mainTabRequest.value;
+    if (!mounted || tab == next) return;
+    setState(() => tab = next);
+    if (next == 1) unawaited(_fetch());
+  }
+
   int _newUpdateCount = 0;
   Future<void> _refreshInboxCount() async {
     final entries = await ChapterInboxStore().load();
@@ -94,6 +105,8 @@ class _MainShellState extends State<MainShell> {
 
   @override void initState() {
     super.initState();
+    tab = mainTabRequest.value;
+    mainTabRequest.addListener(_onMainTabRequest);
     _fetch();
     unawaited(_refreshInboxCount());
     ChapterNotificationService.instance.openedPayload.addListener(_onNotificationTap);
@@ -102,6 +115,7 @@ class _MainShellState extends State<MainShell> {
 
   @override void dispose() {
     debounce?.cancel();
+    mainTabRequest.removeListener(_onMainTabRequest);
     ChapterNotificationService.instance.openedPayload.removeListener(_onNotificationTap);
     searchController.dispose();
     super.dispose();
@@ -603,8 +617,8 @@ class _MainShellState extends State<MainShell> {
                         style: const TextStyle(fontWeight: FontWeight.w700))),
                       const SizedBox(height: 8),
                       Flexible(child: Text((_newChapters.containsKey(item.key) && !shouldResumeCurrentChapter(item)
-                             ? 'Новая: ${_newChapters[item.key]!.name}'
-                             : 'Сохранено: ${item.lastChapter}'),
+                             ? 'Новая: ${displayChapterName(_newChapters[item.key]!.name)}'
+                             : 'Сохранено: ${displayChapterName(item.lastChapter)}'),
                         maxLines: 2, overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11))),
                       if (item.lastPageCount > 0) ...[
