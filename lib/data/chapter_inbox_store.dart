@@ -90,6 +90,12 @@ class ChapterInboxStore {
         ? e.hide(at) : e]);
   }
 
+  Future<void> restoreEntry(String identity) async {
+    final entries = await load();
+    await _save([for (final entry in entries)
+      entry.key == identity && entry.hidden ? entry.hide(0) : entry]);
+  }
+
   Future<void> hideReadKeys(String bookKey, String source,
       Set<String> scopedReadKeys) async {
     final entries = await load();
