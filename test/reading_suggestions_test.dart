@@ -37,6 +37,8 @@ void main() {
     record.lastChapterId = '126';
     record.readChapterKeys.add(sourceChapterKey(
       const Chapter(id: '126', name: 'Глава 126 (т. 2)'), 'readmanga'));
+    record.lastPageCount = 16;
+    record.lastPageIndex = 15;
     expect(shouldResumeCurrentChapter(record), isFalse);
     expect(chapterToResume(record, chapters, nextUnread: chapters.first)?.id, '127');
   });
