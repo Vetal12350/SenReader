@@ -47,6 +47,23 @@ void main() {
     expect(restored.get(book)!.status, 'reading');
   });
 
+  test('reading progress and open eye do not auto-enroll a title in bookmarks', () async {
+    final store = LibraryStore();
+    await store.savePosition(book, chapters[3], 'senkuro',
+      pageIndex: 4, pageCount: 18);
+    await store.markRead(book, chapters[3], 'senkuro',
+      availableChapters: chapters);
+    final entry = store.get(book)!;
+    expect(entry.status, 'planned'); // Historical default, not a user choice.
+    expect(entry.lastPageIndex, 4);
+    expect(store.isChapterRead(book, chapters[3], 'senkuro'), true);
+    await store.unmarkRead(book, chapters[2], 'senkuro',
+      availableChapters: chapters);
+    expect(store.get(book)!.lastChapterId, chapters[2].id);
+    expect(store.get(book)!.lastPageIndex, 0);
+    expect(store.isChapterRead(book, chapters[2], 'senkuro'), false);
+  });
+
   test('legacy JSON without favorite remains readable', () {
     final raw = SavedBook(title: book.title, entries: book.entries,
       status: 'planned').toJson()..remove('favorite');
