@@ -498,27 +498,26 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _exitMenu() {
-    showModalBottomSheet<void>(context: context, useSafeArea: true,
-      builder: (sheet) => SafeArea(child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const ListTile(title: Text('Куда выйти?')),
-          ListTile(leading: const Icon(Icons.menu_book_outlined),
-            title: const Text('К тайтлу'),
-            onTap: () { Navigator.pop(sheet); _openTitle(); }),
-          ListTile(leading: const Icon(Icons.home_outlined),
-            title: const Text('На главную'),
-            onTap: () { Navigator.pop(sheet); _goToRoot(0); }),
-          ListTile(leading: const Icon(Icons.notifications_outlined),
-            title: const Text('В уведомления'),
-            onTap: () { Navigator.pop(sheet); _goToRoot(3); }),
-          ListTile(leading: const Icon(Icons.bookmarks_outlined),
-            title: const Text('В библиотеку'),
-            onTap: () { Navigator.pop(sheet); _goToRoot(2); }),
-          TextButton(onPressed: () => Navigator.pop(sheet),
-            child: const Text('Отмена')),
-        ]),
-      )));
+    // Compact anchored menu, modeled after Senkuro's back arrow.
+    final width = MediaQuery.sizeOf(context).width;
+    final top = MediaQuery.paddingOf(context).top + kToolbarHeight + 8;
+    showMenu<int>(context: context,
+      position: RelativeRect.fromLTRB(16, top,
+        (width - 240).clamp(0.0, width).toDouble(), 0),
+      constraints: const BoxConstraints(maxWidth: 245),
+      items: const [
+        PopupMenuItem(value: 0, child: ListTile(
+          dense: true, leading: Icon(Icons.home_outlined), title: Text('Главная'))),
+        PopupMenuItem(value: 3, child: ListTile(
+          dense: true, leading: Icon(Icons.notifications_outlined),
+          title: Text('Уведомления'))),
+        PopupMenuItem(value: 2, child: ListTile(
+          dense: true, leading: Icon(Icons.bookmarks_outlined),
+          title: Text('Закладки'))),
+      ],
+    ).then((destination) {
+      if (destination != null && mounted) _goToRoot(destination);
+    });
   }
 
   void _toggleAutoscroll() {
@@ -624,18 +623,29 @@ class _ReaderPageState extends State<ReaderPage> {
                 if (_pageCount > 0 && _pageNumbers)
                   PopupMenuButton<int>(tooltip: 'Выбрать страницу',
                     key: const Key('reader-page-picker'),
+                    constraints: BoxConstraints(minWidth: 150, maxWidth: 180,
+                      maxHeight: MediaQuery.sizeOf(context).height * 0.30),
                     initialValue: page.clamp(0, _pageCount - 1),
                     onSelected: _jumpPage,
                     itemBuilder: (_) => [
+                      const PopupMenuItem<int>(enabled: false,
+                        height: 40, child: Text('№ страницы',
+                          style: TextStyle(fontWeight: FontWeight.bold))),
                       for (var i = 0; i < _pageCount; i++)
-                        PopupMenuItem(value: i,
-                          child: Text('Страница ' + (i + 1).toString())),
+                        PopupMenuItem(value: i, height: 42,
+                          child: Text('${i + 1} страница')),
                     ],
-                    child: Padding(padding: const EdgeInsets.all(8),
-                      child: Text((page.clamp(0, _pageCount - 1) + 1).toString()
-                            + '/' + _pageCount.toString(),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 9, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF30251F),
+                        borderRadius: BorderRadius.circular(9),
+                        border: Border.all(color: Colors.white24)),
+                      child: Text('${page.clamp(0, _pageCount - 1) + 1}/$_pageCount',
                         style: const TextStyle(fontWeight: FontWeight.bold,
-                          color: Colors.white))),
+                          fontSize: 12, color: Colors.white)),
+                    ),
                   )
                 else const SizedBox(width: 8),
                 IconButton(tooltip: _autoScrollTimer == null
