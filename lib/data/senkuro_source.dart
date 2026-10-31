@@ -19,6 +19,14 @@ class SenkuroSource implements MangaSource {
       : _client = client, _timeout = timeout;
   final http.Client? _client;
   final Duration _timeout;
+  // Reuse HTTP connections across GraphQL calls instead of negotiating a new
+  // TLS connection for every chapter page, status and title lookup.
+  late final http.Client _session = _client ?? http.Client();
+  final Map<String, Future<MangaDetail>> _inFlightDetails = {};
+  final Map<String, ({DateTime until, MangaDetail data})> _cachedDetails = {};
+  static const _detailTtl = Duration(seconds: 45);
+  static const _maxCachedDetails = 20;
+  bool? _chapterDatesSupported;
   static const _maxResponseBytes = 4 * 1024 * 1024;
   static const _api = 'https://api.senkuro.com/graphql';
   @override String get key => 'senkuro';
@@ -272,9 +280,9 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
 }''';
 
   Future<Map<String, dynamic>> _gql(String operation, String query, Map<String, dynamic> variables) async {
-    // An injected client belongs to the caller. Default clients live for one
-    // request, including body consumption, and are always closed.
-    final client = _client ?? http.Client();
+    // Keep the client alive for this source instance: a title page requires
+    // several requests and closing every connection made navigation slow.
+    final client = _session;
     final elapsed = Stopwatch()..start();
     try {
       final request = http.Request('POST', Uri.parse(_api))
@@ -332,8 +340,6 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
       throw _invalidResponse();
     } catch (_) {
       throw SourceException('Senkuro: нет соединения или время ожидания истекло.');
-    } finally {
-      if (_client == null) client.close();
     }
   }
 
@@ -452,7 +458,28 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
     return '';
   }
 
-  @override Future<MangaDetail> detail(MangaEntry entry) async {
+  @override Future<MangaDetail> detail(MangaEntry entry) {
+    final key = entry.id;
+    final cached = _cachedDetails[key];
+    if (cached != null && DateTime.now().isBefore(cached.until)) {
+      return Future.value(cached.data);
+    }
+    final pending = _inFlightDetails[key];
+    if (pending != null) return pending;
+    final request = _loadDetail(entry);
+    _inFlightDetails[key] = request;
+    return request.then((data) {
+      _cachedDetails.remove(key);
+      _cachedDetails[key] = (
+        until: DateTime.now().add(_detailTtl), data: data);
+      while (_cachedDetails.length > _maxCachedDetails) {
+        _cachedDetails.remove(_cachedDetails.keys.first);
+      }
+      return data;
+    }).whenComplete(() => _inFlightDetails.remove(key));
+  }
+
+  Future<MangaDetail> _loadDetail(MangaEntry entry) async {
     final data = await _gql('fetchManga', _detailQuery, {'slug': entry.id});
     final m = data['manga'];
     if (m is! Map) throw SourceException('Произведение недоступно на Senkuro');
@@ -466,6 +493,17 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
       }
       if (loc != null) break;
     }
+    // Optional status query runs concurrently with chapter pagination, and
+    // its failure cannot prevent the actual chapter list from being shown.
+    final metadataId = entry.remoteId.isNotEmpty ? entry.remoteId : _id(m['id']);
+    final metadataFuture = metadataId.isEmpty
+        ? Future<Map<dynamic, dynamic>>.value(const {})
+        : _gql('fetchTachiyomiManga', _statusQuery,
+            {'mangaId': metadataId}).then((data) {
+            final info = data['mangaTachiyomiInfo'];
+            return info is Map ? info : <dynamic, dynamic>{};
+          }).catchError((Object _) => <dynamic, dynamic>{});
+
     final branches = _optionalList(m['branches']).whereType<Map>().toList()
       ..sort((a, b) => (b['primaryBranch'] == true ? 1 : 0).compareTo(a['primaryBranch'] == true ? 1 : 0));
     final chapters = <Chapter>[];
@@ -498,19 +536,7 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
         cursor = next;
       }
     }
-    Map<dynamic, dynamic> metadata = const {};
-    final metadataId = entry.remoteId.isNotEmpty ? entry.remoteId : _id(m['id']);
-    if (metadataId.isNotEmpty) {
-      try {
-        final statusInfo = await _gql('fetchTachiyomiManga',
-          _statusQuery, {'mangaId': metadataId});
-        if (statusInfo['mangaTachiyomiInfo'] is Map) {
-          metadata = statusInfo['mangaTachiyomiInfo'] as Map;
-        }
-      } catch (_) {
-        // Status labels are optional; chapter and cover loading remain usable.
-      }
-    }
+    final metadata = await metadataFuture;
     return MangaDetail(
       publicationStatus: _publicationLabel(metadata['status']),
       translationStatus: _translationLabel(metadata['translationStatus']),
