@@ -561,8 +561,8 @@ class _MainShellState extends State<MainShell> {
                         style: const TextStyle(fontWeight: FontWeight.w700))),
                       const SizedBox(height: 8),
                       Flexible(child: Text((_newChapters.containsKey(item.key) && !shouldResumeCurrentChapter(item)
-                             ? 'Новая: ${_newChapters[item.key]!.name}'
-                             : 'Сохранено: ${item.lastChapter}'),
+                             ? 'Новая: ${displayChapterName(_newChapters[item.key]!.name)}'
+                             : 'Сохранено: ${displayChapterName(item.lastChapter)}'),
                         maxLines: 2, overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11))),
                       if (item.lastPageCount > 0) ...[
