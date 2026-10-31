@@ -41,6 +41,20 @@ void main() {
     expect(chapterToResume(record, chapters, nextUnread: chapters.first)?.id, '127');
   });
 
+  test('fully completed final chapter disappears from Continue, new verified chapter returns', () {
+    final record = saved(last: 'Глава 127 (т. 2)');
+    record.lastChapterId = '127';
+    record.lastPageIndex = 66;
+    record.lastPageCount = 67;
+    expect(showContinueCard(record), false);
+    expect(showContinueCard(record, newlyAvailable: const Chapter(
+      id: '128', name: 'Глава 128 (т. 2)')), true);
+    record.lastPageIndex = 32;
+    expect(showContinueCard(record), true);
+    record.status = 'completed';
+    expect(showContinueCard(record), false);
+  });
+
   test('current newest chapter never appears in continue-reading', () {
     expect(nextAvailableChapter(
       saved(last: 'Глава 127 (т. 2)'), chapters), isNull);
