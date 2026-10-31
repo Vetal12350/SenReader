@@ -6,6 +6,7 @@ import '../core/chapter_identity.dart';
 import '../data/catalog_repository.dart';
 import '../data/library_store.dart';
 import '../data/reading_completion.dart';
+import 'detail_page.dart';
 
 /// Chapter page URLs are kept as lightweight metadata; the indexed list
 /// lazily builds image widgets, so scrolling does not retain all image widgets.
@@ -39,6 +40,7 @@ class ReaderPage extends StatefulWidget {
 class _ReaderPageState extends State<ReaderPage> {
   late final Future<List<PageImage>> future;
   final ItemPositionsListener _positions = ItemPositionsListener.create();
+  final ItemScrollController _itemScroll = ItemScrollController();
   Timer? _saveTimer;
   int _pageCount = 0;
   String? _lastSavedKey;
@@ -374,10 +376,40 @@ class _ReaderPageState extends State<ReaderPage> {
     if (chapter != null && mounted) await _go(chapter);
   }
 
+  int? _itemIndexForPage(Chapter chapter, int page) {
+    var index = 0;
+    for (var i = 0; i < _segments.length; i++) {
+      if (i > 0) index++; // Chapter boundary.
+      final segment = _segments[i];
+      if (segment.chapter.id == chapter.id) {
+        if (page < 0 || page >= segment.pages.length) return null;
+        return index + page;
+      }
+      index += segment.pages.length;
+    }
+    return null;
+  }
+
+  void _stepPage(int delta) {
+    if (!_itemScroll.isAttached || _pageCount == 0) return;
+    final next = _visiblePage.value + delta;
+    if (next < 0 || next >= _pageCount) return;
+    final index = _itemIndexForPage(_activeChapter, next);
+    if (index == null) return;
+    unawaited(_itemScroll.scrollTo(index: index,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeInOut));
+  }
+
+  void _openTitle() {
+    _saveTimer?.cancel();
+    unawaited(_flushPosition());
+    Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage(
+      book: widget.book, repository: widget.repository, library: widget.library,
+    )));
+  }
+
   Widget _toolbar() {
-    final ordered = _chapters.where((chapter) => canonicalChapterKey(chapter) != null)
-        .toList()..sort((a, b) => compareChapterChronology(a, b)!);
-    final index = ordered.indexWhere((chapter) => chapter.id == _activeChapter.id);
     return Material(color: Theme.of(context).colorScheme.surface,
       child: SafeArea(top: false, child: Column(mainAxisSize: MainAxisSize.min, children: [
         ValueListenableBuilder<int>(valueListenable: _visiblePage,
@@ -387,9 +419,9 @@ class _ReaderPageState extends State<ReaderPage> {
             Row(children: [
               IconButton(tooltip: 'Список глав', onPressed: _loadingChapters ? null : _chapterList,
                 icon: const Icon(Icons.format_list_bulleted)),
-              IconButton(tooltip: 'Предыдущая глава',
-                onPressed: index > 0 ? () => _go(ordered[index - 1]) : null,
-                icon: const Icon(Icons.skip_previous_rounded)),
+              IconButton(tooltip: 'Предыдущая страница',
+                onPressed: page > 0 ? () => _stepPage(-1) : null,
+                icon: const Icon(Icons.chevron_left_rounded)),
               Expanded(child: Text(_pageCount == 0 ? '—' :
                 '${page.clamp(0, _pageCount - 1) + 1}/$_pageCount',
                 maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center)),
@@ -411,10 +443,10 @@ class _ReaderPageState extends State<ReaderPage> {
                   },
                   icon: Icon(read ? Icons.visibility_outlined : Icons.visibility_off_outlined));
               }),
-              IconButton(tooltip: 'Следующая глава',
-                onPressed: index >= 0 && index + 1 < ordered.length
-                    ? () => _go(ordered[index + 1]) : null,
-                icon: const Icon(Icons.skip_next_rounded)),
+              IconButton(tooltip: 'Следующая страница',
+                onPressed: _pageCount > 0 && page < _pageCount - 1
+                    ? () => _stepPage(1) : null,
+                icon: const Icon(Icons.chevron_right_rounded)),
             ]),
           ])),
       ])),
@@ -465,6 +497,7 @@ class _ReaderPageState extends State<ReaderPage> {
             child: ScrollablePositionedList.builder(
             key: ValueKey('${widget.sourceKey}:${widget.chapter.id}'),
             itemPositionsListener: _positions,
+            itemScrollController: _itemScroll,
             initialScrollIndex: initialIndex,
             itemCount: _itemCount,
             itemBuilder: (context, index) {
@@ -564,8 +597,25 @@ class _ReaderPageState extends State<ReaderPage> {
                 icon: const Icon(Icons.arrow_back),
                 onPressed: () => Navigator.maybePop(context),
               ),
-              title: Text(_activeChapter.name,
-                maxLines: 1, overflow: TextOverflow.ellipsis),
+              title: InkWell(
+                key: const Key('reader-open-title'),
+                onTap: _openTitle,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min, children: [
+                    Text(widget.book.title, maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 16,
+                        fontWeight: FontWeight.w700)),
+                    Text(_activeChapter.name, maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12)),
+                  ]),
+              ),
+              actions: [
+                IconButton(tooltip: 'Страница тайтла',
+                  onPressed: _openTitle,
+                  icon: const Icon(Icons.info_outline_rounded)),
+              ],
             )),
         if (_controlsVisible)
           Positioned(bottom: 0, left: 0, right: 0, child: _toolbar()),

@@ -129,7 +129,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('reader bottom toolbar navigates available chapters and stays outside content', (tester) async {
+  testWidgets('reader header opens title and footer has page navigation', (tester) async {
     await tester.binding.setSurfaceSize(const Size(320, 760));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final source = LayoutSource();
@@ -156,19 +156,14 @@ void main() {
     await tester.tapAt(const Offset(160, 350));
     await tester.pumpAndSettle();
     expect(find.widgetWithText(AppBar, source.chapters[0].name), findsOneWidget);
+    expect(find.byTooltip('Предыдущая страница'), findsOneWidget);
+    expect(find.byTooltip('Следующая страница'), findsOneWidget);
     final next = tester.widget<IconButton>(
-      find.widgetWithIcon(IconButton, Icons.skip_next_rounded));
-    expect(next.onPressed, isNull);
-    await tester.tap(find.byTooltip('Предыдущая глава'));
+      find.widgetWithIcon(IconButton, Icons.chevron_right_rounded));
+    expect(next.onPressed, isNull); // Empty source cannot navigate.
+    await tester.tap(find.byTooltip('Страница тайтла'));
     await tester.pumpAndSettle();
-    expect(find.byType(AppBar), findsNothing);
-    await tester.tapAt(const Offset(160, 350));
-    await tester.pumpAndSettle();
-    expect(find.widgetWithText(AppBar, source.chapters[1].name), findsOneWidget);
-    // A second center tap hides everything again.
-    await tester.tapAt(const Offset(160, 350));
-    await tester.pumpAndSettle();
-    expect(find.byType(AppBar), findsNothing);
+    expect(find.byType(DetailPage), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
