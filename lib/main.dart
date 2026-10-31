@@ -33,7 +33,9 @@ Future<void> main() async {
   // can take significant time and must not delay the first rendered frame.
   // The app listens for notification launch payloads as soon as it mounts.
   runApp(SenReaderApp(library: library, themes: themes));
-  unawaited(_initializeBackgroundServices());
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_initializeBackgroundServices());
+  });
 }
 
 /// Keep OS integrations out of the cold-start critical path. Initialize
