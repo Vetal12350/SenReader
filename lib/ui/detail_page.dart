@@ -222,8 +222,9 @@ class _DetailPageState extends State<DetailPage> {
           key: const Key('title-read-button'),
           onPressed: target == null ? null : () => _openChapter(target!),
           icon: const Icon(Icons.menu_book_rounded),
-          label: Text(saved?.lastChapter.isNotEmpty == true
-            ? 'Продолжить чтение' : 'Читать'),
+          label: Text(saved?.lastChapter.isNotEmpty == true && target != null
+            ? 'Продолжить ${target.name.toLowerCase()}'
+            : 'Читать'),
         )),
       );
     },
