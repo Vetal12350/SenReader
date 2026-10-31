@@ -543,14 +543,19 @@ class _MainShellState extends State<MainShell> {
           label: Text(catalogTagFilter == null && catalogType == null &&
               catalogStatus == null && catalogTranslationStatus == null &&
               catalogLabelSlug == null ?
-            'Фильтры' : 'Тег: $catalogTagFilter'),
+            'Фильтры' : catalogTagFilter != null ?
+              'Тег: $catalogTagFilter' : 'Фильтры активны'),
           onPressed: _openCatalogTags,
         ),
 
       ]),
       Padding(
         padding: const EdgeInsets.only(top: 4, bottom: 12),
-        child: Text('Senkuro · серверная сортировка по рейтингу',
+        child: Text(catalogSort == 'rating'
+          ? 'Senkuro · сортировка по рейтингу'
+          : catalogSort == 'popularity'
+            ? 'Senkuro · сортировка по популярности'
+            : 'Senkuro · сортировка по дате',
           style: TextStyle(fontSize: 11,
             color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ),
