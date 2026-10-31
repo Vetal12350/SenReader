@@ -403,7 +403,7 @@ class _ReaderPageState extends State<ReaderPage> {
             : ListView.builder(itemCount: _chapters.length,
               itemBuilder: (context, index) => ListTile(
                 selected: _chapters[index].id == _activeChapter.id,
-                title: Text(_chapters[index].name),
+                title: Text(displayChapterName(_chapters[index].name)),
                 onTap: () => Navigator.pop(context, _chapters[index]),
               ))),
         ]),
@@ -588,53 +588,60 @@ class _ReaderPageState extends State<ReaderPage> {
         }));
   }
 
+
   Widget _toolbar() {
-    return Material(color: Theme.of(context).colorScheme.surface,
-      child: SafeArea(top: false, child: Column(mainAxisSize: MainAxisSize.min, children: [
+    return Material(color: const Color(0xEE19171A),
+      child: SafeArea(top: false, child: Column(
+        mainAxisSize: MainAxisSize.min, children: [
         ValueListenableBuilder<int>(valueListenable: _visiblePage,
-          builder: (context, page, _) => Column(mainAxisSize: MainAxisSize.min, children: [
-            if (_pageCount > 0) LinearProgressIndicator(
-              value: (page.clamp(0, _pageCount - 1) + 1) / _pageCount),
-            Row(children: [
-              IconButton(tooltip: 'Список глав', onPressed: _loadingChapters ? null : _chapterList,
-                icon: const Icon(Icons.format_list_bulleted)),
-              IconButton(tooltip: 'Предыдущая страница',
-                onPressed: page > 0 ? () => _stepPage(-1) : null,
-                icon: const Icon(Icons.chevron_left_rounded)),
-              Expanded(child: Text(_pageCount == 0 ? '—' :
-                '${page.clamp(0, _pageCount - 1) + 1}/$_pageCount',
-                maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center)),
-              AnimatedBuilder(animation: widget.library, builder: (context, _) {
-                final read = widget.library.isChapterRead(widget.book, _activeChapter, widget.sourceKey);
-                return IconButton(tooltip: read ? 'Прочитано: отметить непрочитанной' : 'Отметить прочитанной',
-                  onPressed: _pageCount == 0 ? null : () async {
-                    if (read) {
-                      final chapter = _activeChapter;
-                      _manuallyUnreadChapters.add(chapter.id);
-                      // Finish any queued automatic write before user's unread.
-                      await _autoMarkChain;
-                      await widget.library.unmarkRead(widget.book, chapter, widget.sourceKey,
-                        availableChapters: _chapters);
-                    } else {
-                      _manuallyUnreadChapters.remove(_activeChapter.id);
-                      await _mark();
-                    }
-                  },
-                  icon: Icon(read ? Icons.visibility_outlined : Icons.visibility_off_outlined));
-              }),
-              IconButton(tooltip: 'Следующая страница',
-                onPressed: _pageCount > 0 && page < _pageCount - 1
-                    ? () => _stepPage(1) : null,
-                icon: const Icon(Icons.chevron_right_rounded)),
-            ]),
-          ])),
+          builder: (context, page, _) => Column(mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_pageCount > 0) LinearProgressIndicator(
+                value: (page.clamp(0, _pageCount - 1) + 1) / _pageCount),
+              Row(mainAxisAlignment: MainAxisAlignment.spaceEvenly, children: [
+                IconButton(tooltip: 'Предыдущая глава',
+                  onPressed: () => _stepChapter(-1),
+                  icon: const Icon(Icons.chevron_left_rounded)),
+                IconButton(tooltip: 'Список глав',
+                  onPressed: _loadingChapters ? null : _chapterList,
+                  icon: const Icon(Icons.format_list_bulleted)),
+                IconButton(tooltip: 'Настройки читалки',
+                  onPressed: _readerSettings,
+                  icon: const Icon(Icons.settings_outlined)),
+                if (_pageCount > 0 && _pageNumbers)
+                  PopupMenuButton<int>(tooltip: 'Выбрать страницу',
+                    key: const Key('reader-page-picker'),
+                    initialValue: page.clamp(0, _pageCount - 1),
+                    onSelected: _jumpPage,
+                    itemBuilder: (_) => [
+                      for (var i = 0; i < _pageCount; i++)
+                        PopupMenuItem(value: i,
+                          child: Text('Страница ' + (i + 1).toString())),
+                    ],
+                    child: Padding(padding: const EdgeInsets.all(8),
+                      child: Text((page.clamp(0, _pageCount - 1) + 1).toString()
+                            + '/' + _pageCount.toString(),
+                        style: const TextStyle(fontWeight: FontWeight.bold,
+                          color: Colors.white))),
+                  )
+                else const SizedBox(width: 8),
+                IconButton(tooltip: _autoScrollTimer == null
+                    ? 'Автопрокрутка' : 'Остановить автопрокрутку',
+                  onPressed: _pageCount > 0 ? _toggleAutoscroll : null,
+                  icon: Icon(_autoScrollTimer == null
+                    ? Icons.play_circle_outline : Icons.pause_circle_outline)),
+                IconButton(tooltip: 'Следующая глава',
+                  onPressed: () => _stepChapter(1),
+                  icon: const Icon(Icons.chevron_right_rounded)),
+              ]),
+            ])),
       ])),
     );
   }
 
   @override Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: _lightTheme ? Colors.white : Colors.black,
       body: Stack(children: [
         Positioned.fill(child: LayoutBuilder(builder: (context, constraints) =>
           GestureDetector(
@@ -703,7 +710,7 @@ class _ReaderPageState extends State<ReaderPage> {
                         fontWeight: FontWeight.w800,
                         letterSpacing: 1.5, fontSize: 12)),
                     const SizedBox(height: 8),
-                    Text(heading.name, textAlign: TextAlign.center,
+                    Text(displayChapterName(heading.name), textAlign: TextAlign.center,
                       style: const TextStyle(color: Colors.white,
                         fontWeight: FontWeight.w700, fontSize: 21)),
                     const SizedBox(height: 10),
@@ -743,11 +750,14 @@ class _ReaderPageState extends State<ReaderPage> {
               final image = _segments.firstWhere(
                 (segment) => segment.chapter.id == item.chapter.id
               ).pages[item.index];
-              return Image.network(
+              return ColorFiltered(colorFilter: ColorFilter.mode(
+                Colors.black.withValues(alpha: (100 - _brightness) / 100),
+                BlendMode.srcATop), child: Image.network(
                 image.url,
                 width: MediaQuery.sizeOf(context).width,
                 headers: image.headers,
-                fit: BoxFit.fitWidth,
+                fit: _fitHeight ? BoxFit.contain : BoxFit.fitWidth,
+                height: _fitHeight ? MediaQuery.sizeOf(context).height : null,
                 frameBuilder: (context, child, frame, wasSync) {
                   if (frame != null) _registerLoadedPage(item);
                   return frame == null
@@ -759,7 +769,7 @@ class _ReaderPageState extends State<ReaderPage> {
                   height: 170, color: Colors.white10, alignment: Alignment.center,
                   child: Text('Страница ${item.index + 1} не загрузилась',
                     style: const TextStyle(color: Colors.white60))),
-              );
+              ));
             },
           ));
         },
@@ -772,9 +782,9 @@ class _ReaderPageState extends State<ReaderPage> {
               backgroundColor: const Color(0xEE151317),
               foregroundColor: Colors.white,
               leading: IconButton(
-                tooltip: 'Назад к произведению',
+                tooltip: 'Выход из главы',
                 icon: const Icon(Icons.arrow_back),
-                onPressed: () => Navigator.maybePop(context),
+                onPressed: _exitMenu,
               ),
               title: InkWell(
                 key: const Key('reader-open-title'),
@@ -785,12 +795,19 @@ class _ReaderPageState extends State<ReaderPage> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 16,
                         fontWeight: FontWeight.w700)),
-                    Text(_activeChapter.name, maxLines: 1,
+                    Text(displayChapterName(_activeChapter.name), maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 12)),
                   ]),
               ),
               actions: [
+                AnimatedBuilder(animation: widget.library, builder: (context, _) {
+                  final read = widget.library.isChapterRead(widget.book,
+                    _activeChapter, widget.sourceKey);
+                  return IconButton(tooltip: read ? 'Прочитано' : 'Отметить прочитанной',
+                    onPressed: _mark, icon: Icon(read
+                      ? Icons.bookmark_added_outlined : Icons.bookmark_add_outlined));
+                }),
                 IconButton(tooltip: 'Страница тайтла',
                   onPressed: _openTitle,
                   icon: const Icon(Icons.info_outline_rounded)),
