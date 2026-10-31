@@ -17,7 +17,7 @@ void main() {
       }}}), 200, headers: {'content-type': 'application/json; charset=utf-8'});
     }));
     final books = await source.filteredCatalog(query: 'книга',
-      type: 'MANHWA', status: 'ONGOING', translationStatus: 'ABANDONED');
+      type: 'MANHWA', status: 'ONGOING', translationStatus: 'ABANDONED', label: 'fantasy');
     expect(books.single.title, 'Книга');
     expect(books.single.coverUrl, 'https://cdn.example/cover.webp');
     expect(requests.single['operationName'], 'searchTachiyomiManga');
@@ -26,7 +26,25 @@ void main() {
     expect(values['type'], {'include': ['MANHWA']});
     expect(values['status'], {'include': ['ONGOING']});
     expect(values['translationStatus'], {'include': ['ABANDONED']});
+    expect(values['label'], {'include': ['fantasy']});
     expect(values['orderBy'], {'field': 'POPULARITY_SCORE', 'direction': 'DESC'});
+  });
+
+  test('searchable Senkuro labels are sourced from public filter schema', () async {
+    final source = SenkuroSource(client: MockClient((request) async {
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(body['operationName'], 'fetchTachiyomiSearchFilters');
+      return http.Response(jsonEncode({'data': {'mangaTachiyomiSearchFilters': {
+        'labels': [
+          {'id': 'id-1', 'slug': 'fantasy',
+            'rootId': 'themes', 'titles': [
+              {'lang': 'RU', 'content': 'Фэнтези'}]},
+        ],
+      }}}), 200, headers: {'content-type': 'application/json; charset=utf-8'});
+    }));
+    final labels = await source.catalogLabels();
+    expect(labels.single.slug, 'fantasy');
+    expect(labels.single.title, 'Фэнтези');
   });
 
   test('unknown filters are rejected without network access', () async {
