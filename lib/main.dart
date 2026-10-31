@@ -110,13 +110,13 @@ class _MainShellState extends State<MainShell> {
     CatalogResult next;
     final senkuro = widget.repository.sources['senkuro'];
     if (isCatalog && senkuro is SenkuroSource &&
-        (status != null || translation != null || label != null ||
+        (sort == 'rating' || status != null || translation != null || label != null ||
             (type != null && (thisQuery.isNotEmpty ||
               !const {'MANGA', 'MANHWA', 'MANHUA'}.contains(type))))) {
       try {
         final entries = await senkuro.filteredCatalog(query: thisQuery,
           type: type, status: status, translationStatus: translation,
-          label: label);
+          label: label, orderField: sort == 'rating' ? 'SCORE' : 'POPULARITY_SCORE');
         next = CatalogResult(
           books: [for (final entry in entries)
             UnifiedManga(title: entry.title, entries: {'senkuro': entry})],
@@ -231,7 +231,7 @@ class _MainShellState extends State<MainShell> {
           (catalogTagFilter == null ||
             book.entries['senkuro']!.tags.contains(catalogTagFilter)))
         .toList();
-    if (catalogSort == 'rating') {
+    if (catalogSort == 'rating' && widget.repository.sources['senkuro'] is! SenkuroSource) {
       // Preserve source order for unknown scores; never invent zero ratings.
       books.sort((a, b) {
         final left = a.primary.rating;
@@ -425,9 +425,7 @@ class _MainShellState extends State<MainShell> {
           onSelected: (value) { setState(() => catalogSort = value); _fetch(); },
           itemBuilder: (context) => [
             PopupMenuItem(value: 'popularity', child: Text('По популярности')),
-            PopupMenuItem(value: 'rating', enabled: catalogStatus == null &&
-                catalogTranslationStatus == null && catalogLabelSlug == null,
-              child: const Text('По рейтингу (загруженные)')),
+            const PopupMenuItem(value: 'rating', child: Text('По рейтингу')),
             PopupMenuItem(value: 'updated',
               enabled: catalogStatus == null && catalogTranslationStatus == null &&
                   catalogLabelSlug == null && query.isEmpty,
@@ -458,7 +456,7 @@ class _MainShellState extends State<MainShell> {
       ]),
       Padding(
         padding: const EdgeInsets.only(top: 4, bottom: 12),
-        child: Text('Senkuro · жанры фильтруются по загруженным результатам',
+        child: Text('Senkuro · серверная сортировка по рейтингу',
           style: TextStyle(fontSize: 11,
             color: Theme.of(context).colorScheme.onSurfaceVariant)),
       ),
