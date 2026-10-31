@@ -512,9 +512,8 @@ class _MainShellState extends State<MainShell> {
     animation: widget.library,
     builder: (context, _) {
       final saved = widget.library.items
-          .where((item) => item.lastChapter.isNotEmpty &&
-              item.lastSource == item.preferredSource &&
-              item.status != 'dropped' && item.status != 'viewed').toList()
+          .where((item) => showContinueCard(item,
+              newlyAvailable: _newChapters[item.key])).toList()
         ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
       if (saved.isEmpty) return const SizedBox.shrink();
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -561,6 +560,14 @@ class _MainShellState extends State<MainShell> {
                         Text('Стр. ${item.lastPageIndex + 1}/${item.lastPageCount}',
                           maxLines: 1, overflow: TextOverflow.ellipsis,
                           style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                         if (item.lastUpdatedAt > 0) ...[
+                           const SizedBox(height: 3),
+                           Text('Читал: ' +
+                             DateTime.fromMillisecondsSinceEpoch(item.lastUpdatedAt).day.toString().padLeft(2, '0') +
+                             '.' + DateTime.fromMillisecondsSinceEpoch(item.lastUpdatedAt).month.toString().padLeft(2, '0'),
+                             style: TextStyle(fontSize: 10,
+                               color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                         ],
                       ],
                     ],
                   )),
