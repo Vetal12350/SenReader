@@ -26,8 +26,10 @@ bool shouldResumeCurrentChapter(SavedBook saved) {
   if (saved.lastChapter.isEmpty || saved.lastSource.isEmpty ||
       saved.lastSource != saved.preferredSource) return false;
   final chapter = Chapter(id: saved.lastChapterId, name: saved.lastChapter);
-  return !saved.readChapterKeys.contains(sourceChapterKey(chapter, saved.lastSource)) &&
-      !saved.readChapterKeys.contains('${saved.lastSource}|id:name:${chapter.name}');
+  // Opening a chapter immediately marks its eye, but a saved page before
+  // the end must still resume even when its eye is already open.
+  return saved.lastPageCount == 0 ||
+      saved.lastPageIndex < saved.lastPageCount - 1;
 }
 
 Chapter? chapterToResume(SavedBook saved, Iterable<Chapter> available,
@@ -50,7 +52,7 @@ Chapter? chapterToResume(SavedBook saved, Iterable<Chapter> available,
 bool showContinueCard(SavedBook saved, {Chapter? newlyAvailable}) {
   if (saved.lastChapter.isEmpty || saved.lastSource != saved.preferredSource ||
       saved.status == 'completed' || saved.status == 'dropped' ||
-      saved.status == 'viewed') return false;
+      (saved.status == 'viewed' && saved.lastChapter.isEmpty)) return false;
   if (newlyAvailable != null) return true;
   if (!shouldResumeCurrentChapter(saved)) return false;
   if (saved.lastPageCount > 0 &&

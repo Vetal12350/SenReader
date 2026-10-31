@@ -97,7 +97,7 @@ void main() {
     await tester.tap(find.text('Моё'));
     await tester.pumpAndSettle();
     expect(find.byType(MangaTile), findsOneWidget);
-    expect(find.byType(ChoiceChip), findsNWidgets(7));
+    expect(find.byType(ChoiceChip), findsNWidgets(6));
     expect(find.byType(ChapterNotificationsPanel), findsNothing);
     expect(find.text('Проверить новые главы'), findsNothing);
     await tester.tap(find.byTooltip('Настройки'));
@@ -200,8 +200,7 @@ void main() {
     expect(find.widgetWithIcon(IconButton, Icons.visibility_off_outlined), findsNothing);
     await tester.tapAt(const Offset(400, 300));
     await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Отметить прочитанной'));
-    await tester.pumpAndSettle();
+    // The chapter has an open eye immediately when the reader opens.
     expect(library.isChapterRead(source.book, source.chapters[1], source.key), true);
     expect(library.isChapterRead(source.book, source.chapters[2], source.key), true);
     expect(library.isChapterRead(source.book, source.chapters[0], source.key), false);

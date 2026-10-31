@@ -30,7 +30,7 @@ void main() {
     final saved = restored.get(book)!;
     expect(saved.favorite, isTrue);
     expect(saved.preferredSource, 'senkuro');
-    expect(saved.status, 'reading');
+    expect(saved.status, 'planned'); // The user did not explicitly choose a new status.
     expect(saved.lastPageIndex, 3);
     expect(saved.lastPageCount, 18);
     expect(saved.initializedSources, contains('senkuro'));
