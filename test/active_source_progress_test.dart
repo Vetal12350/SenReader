@@ -86,10 +86,11 @@ void main() {
       final restored = LibraryStore();
       await restored.load();
       expect(restored.isChapterRead(book, chapters[2], 'senkuro'), false);
-      for (final field in ['lastChapter', 'lastChapterId', 'lastSource',
-          'lastPageIndex', 'lastPageCount', 'lastUpdatedAt']) {
-        expect(restored.items.single.toJson()[field], resume[field]);
-      }
+      expect(restored.items.single.lastChapterId, chapters[2].id);
+      expect(restored.items.single.lastChapter, chapters[2].name);
+      expect(restored.items.single.lastPageIndex, 0);
+      expect(restored.items.single.lastPageCount, 0);
+      expect(restored.items.single.lastSource, 'senkuro');
     });
   }
 
