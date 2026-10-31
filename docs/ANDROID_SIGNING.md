@@ -52,3 +52,30 @@ sources, favorites, settings and read history.
 The user may need to migrate once to the stable release. After that, release
 builds can be updated normally. This documentation does not promise migration
 from a build whose signing key is lost.
+
+
+## Fallback for an already installed APK with a lost debug certificate
+
+When Android refuses to install the backup-enabled debug APK over the current
+one, a *debuggable* previous APK can still export its private library via ADB
+on a trusted PC. This is an alternative **before uninstalling**, not a
+requirement for future signed updates.
+
+1. Keep the existing SenReader installed. Enable USB debugging, authorize your
+   own computer and install Android Platform Tools (adb) and Python 3.
+2. In this repo, run:
+   `python3 scripts/export_installed_debug_library.py --output senreader-library-backup.json`
+3. The script uses `adb exec-out run-as app.senreader.senreader` to read only
+   the local library preference. It does not need root, does not use a server,
+   does not upload the backup and refuses to overwrite an existing backup.
+4. Verify the saved file exists and safely keep a private copy. The JSON can
+   be transferred back to the phone and copied into the clipboard for the
+   Settings import UI of the new signed build (PR #62 and later).
+5. Verify the restored library on the new installation, including read markers
+   and source preferences. Reenable notification permissions and choose theme.
+
+**Limitations:** `run-as` works only if the original installed APK is
+*debuggable* and ADB authorization succeeds. Non-debuggable releases are
+inaccessible by this method without an existing app export. Do not attempt
+uninstall/reinstall if the backup extraction failed. No private data is sent to
+ChatGPT or GitHub Actions; keep the local JSON out of commits and messages.
