@@ -302,7 +302,8 @@ class LibraryStore extends ChangeNotifier {
   }
 
   Future<void> markRead(UnifiedManga book, Chapter chapter, String source,
-      {Iterable<Chapter> availableChapters = const []}) async {
+      {Iterable<Chapter> availableChapters = const [],
+       bool userInitiated = false}) async {
     await _reload();
     final key = normalizedTitle(book.title);
     final item = _books.putIfAbsent(key,
@@ -312,7 +313,8 @@ class LibraryStore extends ChangeNotifier {
     for (final entry in book.entries.entries) {
       item.entries.putIfAbsent(entry.key, () => entry.value);
     }
-    // Opened chapters are tracked separately from library subscriptions.
+    // An eye tap is an explicit reading-list choice; opening a reader is not.
+    if (userInitiated) item.status = 'reading';
     item.readChapterKeys.add(sourceChapterKey(chapter, source));
     for (final candidate in availableChapters) {
       final order = compareChapterChronology(candidate, chapter);
