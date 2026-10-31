@@ -284,7 +284,8 @@ class LibraryStore extends ChangeNotifier {
     await _reload();
     final key = normalizedTitle(book.title);
     final item = _books.putIfAbsent(key,
-        () => SavedBook(title: book.title, entries: {...book.entries}, preferredSource: source));
+        () => SavedBook(title: book.title, entries: {...book.entries},
+          preferredSource: source, status: 'viewed'));
     if (item.preferredSource != source) return;
     for (final entry in book.entries.entries) {
       item.entries.putIfAbsent(entry.key, () => entry.value);
@@ -305,7 +306,8 @@ class LibraryStore extends ChangeNotifier {
     await _reload();
     final key = normalizedTitle(book.title);
     final item = _books.putIfAbsent(key,
-        () => SavedBook(title: book.title, entries: {...book.entries}, preferredSource: source));
+        () => SavedBook(title: book.title, entries: {...book.entries},
+          preferredSource: source, status: 'viewed'));
     if (item.preferredSource != source) return;
     for (final entry in book.entries.entries) {
       item.entries.putIfAbsent(entry.key, () => entry.value);
