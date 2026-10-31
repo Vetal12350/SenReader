@@ -52,6 +52,19 @@ class _DetailPageState extends State<DetailPage> {
       if (!mounted) return;
       setState(() => book = next);
       if (widget.library.has(next)) await widget.library.add(next);
+      // Only auto-choose on a fresh title. Existing reading history or an
+      // explicit source preference must not silently change translations.
+      final saved = widget.library.get(next);
+      if (!_explicitSelection &&
+          (saved == null || (saved.status == 'viewed' &&
+             saved.lastChapter.isEmpty))) {
+        final preferred = await widget.repository.mostCompleteSource(next, selected);
+        if (mounted && !_explicitSelection && preferred != selected &&
+            (widget.library.get(next)?.lastChapter.isEmpty ?? true)) {
+          setState(() => selected = preferred);
+          unawaited(_load());
+        }
+      }
       if (mounted && !loading && (detail?.chapters.isEmpty == true || error != null)) {
         _fallback();
       }
