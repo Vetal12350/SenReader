@@ -65,7 +65,19 @@ class MangaTile extends StatelessWidget {
                     style: const TextStyle(color: Colors.black,
                       fontSize: 10, fontWeight: FontWeight.w700)),
                 )),
-            Positioned(left: 6, right: 6, bottom: 6, child: Container(
+            if (book.primary.rating != null)
+              Positioned(right: 6, bottom: 6, child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                decoration: BoxDecoration(color: const Color(0xE316161D),
+                  borderRadius: BorderRadius.circular(7)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.star_rounded, color: Color(0xFF5BCA72), size: 12),
+                  const SizedBox(width: 3),
+                  Text(book.primary.rating!.toStringAsFixed(2),
+                    style: const TextStyle(fontSize: 10, color: Color(0xFF5BCA72),
+                      fontWeight: FontWeight.w700)),
+                ]))),
+            Positioned(left: 6, bottom: 6, child: Container(
               decoration: BoxDecoration(color: const Color(0xD916161D), borderRadius: BorderRadius.circular(7)),
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
               child: Text(book.entries.length > 1 ? '${book.entries.length} источника' :
