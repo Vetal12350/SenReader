@@ -34,13 +34,15 @@ class _VisibleChapterPage {
 class _RetryableReaderImage extends StatefulWidget {
   const _RetryableReaderImage({super.key, required this.page,
     required this.pageIndex, required this.width,
-    required this.height, required this.fit, required this.onLoaded});
+    required this.height, required this.fit, required this.onLoaded,
+    required this.onRefreshLinks});
   final PageImage page;
   final int pageIndex;
   final double width;
   final double? height;
   final BoxFit fit;
   final VoidCallback onLoaded;
+  final Future<void> Function() onRefreshLinks;
 
   @override State<_RetryableReaderImage> createState() =>
       _RetryableReaderImageState();
@@ -108,6 +110,9 @@ class _RetryableReaderImageState extends State<_RetryableReaderImage> {
             TextButton.icon(onPressed: () => _retry(provider),
               icon: const Icon(Icons.refresh),
               label: const Text('Повторить')),
+            if (_attempt >= 2)
+              TextButton(onPressed: () => unawaited(widget.onRefreshLinks()),
+                child: const Text('Обновить ссылки главы')),
           ]),
         );
       },
@@ -141,6 +146,8 @@ class _ReaderPageState extends State<ReaderPage> {
   Future<void> _saveChain = Future<void>.value();
   final List<_ChapterSegment> _segments = [];
   final Set<String> _loadedPageKeys = {};
+  final Map<String, int> _chapterReloads = {};
+  final Set<String> _refreshingChapterLinks = {};
   final Set<String> _autoCompletedChapters = {};
   // Explicit unread actions take precedence over automatic completion.
   final Set<String> _manuallyUnreadChapters = {};
@@ -446,6 +453,32 @@ class _ReaderPageState extends State<ReaderPage> {
       pageIndex: pending.index, pageCount: pending.total,
     )).catchError((Object _) {});
     return _saveChain;
+  }
+
+  /// Refresh potentially expired image URLs without leaving the chapter or
+  /// rewriting the reader's saved position, manual eyes, or chapter status.
+  Future<void> _refreshChapterImages(Chapter chapter) async {
+    if (!_refreshingChapterLinks.add(chapter.id)) return;
+    try {
+      final pages = await loadChapterPagesWithRetry(
+        widget.repository.sources[widget.sourceKey]!, chapter);
+      if (!mounted || pages.isEmpty) return;
+      final index = _segments.indexWhere((part) => part.chapter.id == chapter.id);
+      if (index < 0) return;
+      setState(() {
+        _segments[index] = _ChapterSegment(chapter, pages);
+        _chapterReloads[chapter.id] = (_chapterReloads[chapter.id] ?? 0) + 1;
+        if (_activeChapter.id == chapter.id) _pageCount = pages.length;
+        _loadedPageKeys.removeWhere((key) => key.startsWith('${chapter.id}|'));
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
+          content: Text('Не удалось обновить ссылки. Попробуйте ещё раз.')));
+      }
+    } finally {
+      _refreshingChapterLinks.remove(chapter.id);
+    }
   }
 
   Future<void> _appendNextChapter() async {
@@ -994,13 +1027,14 @@ class _ReaderPageState extends State<ReaderPage> {
               return ColorFiltered(colorFilter: ColorFilter.mode(
                 Colors.black.withValues(alpha: (100 - _brightness) / 100),
                 BlendMode.srcATop), child: _RetryableReaderImage(
-                  key: ValueKey('reader-image-${item.key}'),
+                  key: ValueKey('reader-image-${item.key}-${_chapterReloads[item.chapter.id] ?? 0}'),
                   page: image,
                   pageIndex: item.index,
                   width: MediaQuery.sizeOf(context).width,
                   height: _fitHeight ? MediaQuery.sizeOf(context).height : null,
                   fit: _fitHeight ? BoxFit.contain : BoxFit.fitWidth,
                   onLoaded: () => _registerLoadedPage(item),
+                  onRefreshLinks: () => _refreshChapterImages(item.chapter),
                 ));
             },
           ));
