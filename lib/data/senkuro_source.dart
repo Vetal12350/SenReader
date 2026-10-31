@@ -131,22 +131,29 @@ query searchTachiyomiManga(
     if (offset < 0 || offset > 990 || offset % 10 != 0) {
       throw ArgumentError.value(offset, 'offset');
     }
-    final data = await _gql('searchTachiyomiManga', _filteredQuery, {
-      'query': query.trim().isEmpty ? null : query.trim(),
-      'type': type == null ? null : {'include': [type]},
-      'status': status == null ? null : {'include': [status]},
-      'label': label == null ? null : {'include': [label]},
-      'translationStatus': translationStatus == null
-          ? null : {'include': [translationStatus]},
-      'orderBy': {'field': 'POPULARITY_SCORE', 'direction': 'DESC'},
-      'offset': offset,
-    });
-    final connection = data['mangaTachiyomiSearch'];
-    if (connection is! Map || connection['mangas'] is! List) {
-      throw _invalidResponse();
+    final allEdges = <Map<String, dynamic>>[];
+    // The public Tachiyomi search API returns pages of at most 10 items.
+    // Keep the first 30 server-ordered results, without claiming all titles.
+    for (var page = 0; page < 3; page++) {
+      final data = await _gql('searchTachiyomiManga', _filteredQuery, {
+        'query': query.trim().isEmpty ? null : query.trim(),
+        'type': type == null ? null : {'include': [type]},
+        'status': status == null ? null : {'include': [status]},
+        'label': label == null ? null : {'include': [label]},
+        'translationStatus': translationStatus == null
+            ? null : {'include': [translationStatus]},
+        'orderBy': {'field': 'POPULARITY_SCORE', 'direction': 'DESC'},
+        'offset': offset + page * 10,
+      });
+      final connection = data['mangaTachiyomiSearch'];
+      if (connection is! Map || connection['mangas'] is! List) {
+        throw _invalidResponse();
+      }
+      final pageNodes = _list(connection['mangas']);
+      allEdges.addAll(pageNodes.map((node) => {'node': node}));
+      if (pageNodes.length < 10) break;
     }
-    return _parseNodes(_list(connection['mangas'])
-        .map((node) => {'node': node}).toList());
+    return _parseNodes(allEdges);
   }
 
   static const _searchQuery = r'''
