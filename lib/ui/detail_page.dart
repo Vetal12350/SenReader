@@ -34,6 +34,7 @@ class _DetailPageState extends State<DetailPage> {
   final Set<String> _attempted = {};
   final List<String> _warnings = [];
   int _request = 0;
+  Future<void>? _firstLoad;
   bool _explicitSelection = false;
   late final ChapterAlertController alerts = widget.alerts ?? ChapterAlertController();
   @override void initState() {
@@ -42,7 +43,7 @@ class _DetailPageState extends State<DetailPage> {
     book = UnifiedManga(title: saved?.title ?? widget.book.title,
       entries: {...widget.book.entries, ...?saved?.entries});
     selected = saved?.preferredSource ?? SavedBook.chooseSource(book.entries);
-    _load();
+    _firstLoad = _load();
     _discoverOther();
   }
 
@@ -52,13 +53,18 @@ class _DetailPageState extends State<DetailPage> {
       if (!mounted) return;
       setState(() => book = next);
       if (widget.library.has(next)) await widget.library.add(next);
+      // Do not race the first detail request or duplicate fallback retries.
+      await _firstLoad;
+      if (!mounted) return;
       // Only auto-choose on a fresh title. Existing reading history or an
       // explicit source preference must not silently change translations.
       final saved = widget.library.get(next);
-      if (!_explicitSelection &&
+      if (!_explicitSelection && _attempted.length == 1 &&
+          detail?.chapters.isNotEmpty == true &&
           (saved == null || (saved.status == 'viewed' &&
              saved.lastChapter.isEmpty))) {
-        final preferred = await widget.repository.mostCompleteSource(next, selected);
+        final preferred = await widget.repository.mostCompleteSource(
+          next, selected, currentChapterCount: detail!.chapters.length);
         if (mounted && !_explicitSelection && preferred != selected &&
             (widget.library.get(next)?.lastChapter.isEmpty ?? true)) {
           setState(() => selected = preferred);
