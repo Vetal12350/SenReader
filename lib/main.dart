@@ -520,7 +520,7 @@ class _MainShellState extends State<MainShell> {
         const SizedBox(height: 28),
         SectionTitle('Продолжить чтение',
           subtitle: 'Вернуться к сохранённой странице'),
-        SizedBox(height: 155, child: ListView.separated(
+        SizedBox(height: 180, child: ListView.separated(
           scrollDirection: Axis.horizontal,
           itemCount: saved.take(12).length,
           separatorBuilder: (context, index) => const SizedBox(width: 10),
