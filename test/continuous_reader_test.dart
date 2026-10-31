@@ -39,6 +39,33 @@ class _SequentialSource implements MangaSource {
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
+  for (final brightness in [100.0, 65.0]) {
+    testWidgets('reader only adds per-image brightness filter when needed: $brightness',
+        (tester) async {
+      SharedPreferences.setMockInitialValues({
+        'senreader.reader.brightness': brightness,
+      });
+      final source = _SequentialSource();
+      await tester.pumpWidget(MaterialApp(home: ReaderPage(
+        book: source.book, chapter: source.chapters.first,
+        sourceKey: source.key, repository: CatalogRepository(
+          sources: {source.key: source}), library: LibraryStore(),
+        chapters: source.chapters,
+      )));
+      await tester.pumpAndSettle();
+      final list = find.byType(ScrollablePositionedList);
+      expect(list, findsOneWidget);
+      final filters = find.descendant(of: list,
+          matching: find.byType(ColorFiltered));
+      if (brightness == 100) {
+        expect(filters, findsNothing);
+      } else {
+        expect(filters, findsWidgets);
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('next chapter loads inline without chapter-picker or navigation',
       (tester) async {
     await tester.binding.setSurfaceSize(const Size(320, 700));
