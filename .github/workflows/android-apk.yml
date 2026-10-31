@@ -38,7 +38,7 @@ jobs:
           flutter create --project-name senreader --org app.senreader --platforms android .
           rm -f test/widget_test.dart
       - name: Configure stable signing from GitHub Secrets (main only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         env:
           SIGNING_KEY: ${{ secrets.SENREADER_SIGNING_KEY_BASE64 }}
           SIGNING_STORE_PASSWORD: ${{ secrets.SENREADER_SIGNING_STORE_PASSWORD }}
@@ -59,6 +59,9 @@ jobs:
             chmod 600 android/key.properties
             echo 'SENREADER_STABLE_SIGNING=true' >> "$GITHUB_ENV"
             echo 'Protected release signing enabled for main.'
+          elif [[ -n "$SIGNING_KEY" || -n "$SIGNING_STORE_PASSWORD" || -n "$SIGNING_ALIAS" || -n "$SIGNING_KEY_PASSWORD" ]]; then
+            echo 'Incomplete protected signing secrets: refusing an unsigned release.' >&2
+            exit 1
           else
             echo 'Stable signing is not configured. Using an ephemeral debug APK.'
           fi
@@ -71,7 +74,7 @@ jobs:
       - name: Build debug APK
         run: flutter build apk --debug
       - name: Build persistently signed release APK
-        if: github.event_name == 'push' && env.SENREADER_STABLE_SIGNING == 'true'
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.SENREADER_STABLE_SIGNING == 'true'
         run: flutter build apk --release --build-number "$GITHUB_RUN_NUMBER"
       - name: Publish APK artifact
         uses: actions/upload-artifact@v4
@@ -86,7 +89,7 @@ jobs:
   # Run with elevated permissions ONLY after the build+tests succeed on main.
   # Pull-request code never receives a write-capable token.
   publish-direct-apk:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: build
     runs-on: ubuntu-latest
     permissions:
