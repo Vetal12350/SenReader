@@ -36,7 +36,7 @@ class _SearchCatalogSource extends _TestCatalogSource {
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  testWidgets('catalog source filter excludes other sources and can be reset', (tester) async {
+  testWidgets('catalog shows only Senkuro; alternate sources remain outside catalog', (tester) async {
     final sources = <String, MangaSource>{
       'senkuro': _TestCatalogSource('senkuro', 'Альфа'),
       'readmanga': _TestCatalogSource('readmanga', 'Янтарь'),
@@ -50,21 +50,8 @@ void main() {
     await tester.tap(find.text('Каталог').first);
     await tester.pumpAndSettle();
     expect(find.text('Альфа'), findsOneWidget);
-    expect(find.text('Янтарь'), findsOneWidget);
-
-    await tester.tap(find.byTooltip('Фильтр по источнику'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('ReadManga').last);
-    await tester.pumpAndSettle();
-    expect(find.text('Янтарь'), findsOneWidget);
-    expect(find.text('Альфа'), findsNothing);
-
-    await tester.tap(find.byTooltip('Фильтр по источнику'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Все источники').last);
-    await tester.pumpAndSettle();
-    expect(find.text('Альфа'), findsOneWidget);
-    expect(find.text('Янтарь'), findsOneWidget);
+    expect(find.text('Янтарь'), findsNothing);
+    expect(find.byTooltip('Фильтр по источнику'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -122,6 +109,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('catalog-tag-filters')));
     await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Фантастика'), 180,
+      scrollable: find.byType(Scrollable).last);
     expect(find.text('Фантастика'), findsOneWidget);
     await tester.tap(find.text('Фантастика'));
     await tester.pumpAndSettle();
@@ -148,7 +137,7 @@ void main() {
     expect(find.text('Общий каталог'), findsNothing);
     await tester.tap(find.text('Каталог').first);
     await tester.pumpAndSettle();
-    expect(find.text('Другой источник'), findsOneWidget);
+    expect(find.text('Другой источник'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
