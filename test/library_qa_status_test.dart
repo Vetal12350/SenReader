@@ -54,7 +54,7 @@ void main() {
     await store.markRead(book, chapters[3], 'senkuro',
       availableChapters: chapters);
     final entry = store.get(book)!;
-    expect(entry.status, 'planned'); // Historical default, not a user choice.
+    expect(entry.status, 'viewed'); // Passive history, not an explicit bookmark.
     expect(entry.lastPageIndex, 4);
     expect(store.isChapterRead(book, chapters[3], 'senkuro'), true);
     await store.unmarkRead(book, chapters[2], 'senkuro',
