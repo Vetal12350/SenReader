@@ -266,7 +266,14 @@ class _MainShellState extends State<MainShell> {
           final tags = _catalogTags.where((tag) =>
             tag.toLowerCase().contains(search.toLowerCase())).toList();
           void select(void Function() update) {
-            setState(update);
+            setState(() {
+              update();
+              if ((catalogStatus != null || catalogTranslationStatus != null ||
+                   catalogLabelSlug != null) &&
+                  (catalogSort == 'created' || catalogSort == 'updated')) {
+                catalogSort = 'popularity';
+              }
+            });
             setSheet(() {});
             unawaited(_fetch());
           }
@@ -411,11 +418,17 @@ class _MainShellState extends State<MainShell> {
           tooltip: 'Сортировка каталога Senkuro',
           initialValue: catalogSort,
           onSelected: (value) { setState(() => catalogSort = value); _fetch(); },
-          itemBuilder: (context) => const [
+          itemBuilder: (context) => [
             PopupMenuItem(value: 'popularity', child: Text('По популярности')),
             PopupMenuItem(value: 'rating', child: Text('По рейтингу (загруженные)')),
-            PopupMenuItem(value: 'updated', child: Text('По дате обновления')),
-            PopupMenuItem(value: 'created', child: Text('По дате создания')),
+            PopupMenuItem(value: 'updated',
+              enabled: catalogStatus == null && catalogTranslationStatus == null &&
+                  catalogLabelSlug == null,
+              child: const Text('По дате обновления')),
+            PopupMenuItem(value: 'created',
+              enabled: catalogStatus == null && catalogTranslationStatus == null &&
+                  catalogLabelSlug == null,
+              child: const Text('По дате создания')),
             PopupMenuItem<String>(enabled: false, value: 'chapters', child: Text('По количеству глав · нет данных')),
             PopupMenuItem<String>(enabled: false, value: 'views', child: Text('По просмотрам · нет данных')),
             PopupMenuItem<String>(enabled: false, value: 'uploaded', child: Text('По дате залива · нет данных')),
