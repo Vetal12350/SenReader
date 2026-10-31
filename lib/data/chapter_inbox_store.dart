@@ -36,13 +36,16 @@ class InboxEntry {
 }
 
 class ChapterInboxStore {
-  ChapterInboxStore({SharedPreferencesAsync? preferences})
-      : _preferences = preferences ?? SharedPreferencesAsync();
+  ChapterInboxStore();
   static const key = 'senreader.chapter_inbox.v1';
   static const hiddenLimit = 50;
-  final SharedPreferencesAsync _preferences;
+  Future<SharedPreferences> _prefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload(); // Read the latest background-isolate state.
+    return prefs;
+  }
   Future<List<InboxEntry>> load() async {
-    final raw = await _preferences.getString(key);
+    final raw = (await _prefs()).getString(key);
     if (raw == null) return [];
     try {
       if (raw.length > 1000000) return [];
@@ -61,9 +64,11 @@ class ChapterInboxStore {
       ..sort((a, b) => b.hiddenAt.compareTo(a.hiddenAt));
     return [...active.take(450), ...hidden.take(hiddenLimit)];
   }
-  Future<void> _save(List<InboxEntry> entries) =>
-      _preferences.setString(key, jsonEncode(trim(entries)
-        .map((entry) => entry.toJson()).toList()));
+  Future<void> _save(List<InboxEntry> entries) async {
+    final prefs = await _prefs();
+    await prefs.setString(key, jsonEncode(trim(entries)
+      .map((entry) => entry.toJson()).toList()));
+  }
 
   Future<void> add(String bookKey, String title, String coverUrl,
       String source, Chapter chapter) async {
