@@ -72,8 +72,8 @@ void main() {
       160, scrollable: find.byType(Scrollable).first);
     await tester.enterText(find.byKey(const Key('chapter-search')), '3');
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(ListTile, 'Глава 3 (т. 1)'), findsOneWidget);
-    expect(find.widgetWithText(ListTile, 'Глава 1 (т. 1)'), findsNothing);
+    expect(find.widgetWithText(ListTile, 'Глава 3'), findsOneWidget);
+    expect(find.widgetWithText(ListTile, 'Глава 1'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
