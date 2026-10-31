@@ -70,6 +70,7 @@ class _MainShellState extends State<MainShell> {
   String catalogSort = 'popularity';
   String? catalogType;
   List<MangaEntry>? _nativeBrowse;
+  int _nativeBrowseRequest = 0;
   bool _nativeBrowseLoading = false;
   String? _nativeBrowseError;
   CatalogResult? result;
@@ -116,6 +117,7 @@ class _MainShellState extends State<MainShell> {
   Future<void> _refreshNativeBrowse() async {
     final source = widget.repository.sources['senkuro'];
     if (source is! SenkuroSource) return;
+    final request = ++_nativeBrowseRequest;
     final type = catalogType;
     final order = catalogSort == 'created'
         ? 'CREATED_AT'
@@ -124,10 +126,10 @@ class _MainShellState extends State<MainShell> {
     setState(() { _nativeBrowseLoading = true; _nativeBrowseError = null; });
     try {
       final entries = await source.browseHome(type: type, orderField: order);
-      if (!mounted || type != catalogType) return;
+      if (!mounted || request != _nativeBrowseRequest) return;
       setState(() { _nativeBrowse = entries; _nativeBrowseLoading = false; });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || request != _nativeBrowseRequest) return;
       setState(() {
         _nativeBrowseError = 'Не удалось загрузить каталог Senkuro: $error';
         _nativeBrowseLoading = false;
