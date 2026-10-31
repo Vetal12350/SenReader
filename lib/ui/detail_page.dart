@@ -82,7 +82,7 @@ class _DetailPageState extends State<DetailPage> {
     final request = ++_request;
     final sourceKey = selected;
     _attempted.add(sourceKey);
-    setState(() { loading = true; error = null; detail = null; _similarFuture = null });
+    setState(() { loading = true; error = null; detail = null; _similarFuture = null; });
     try {
       final source = widget.repository.sources[sourceKey];
       if (source == null) throw StateError('Источник $sourceKey недоступен');
