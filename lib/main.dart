@@ -255,7 +255,7 @@ class _MainShellState extends State<MainShell> {
     final saved = widget.library.items
       .where((item) => item.lastChapter.isNotEmpty &&
         item.lastSource == item.preferredSource && item.status != 'dropped' &&
-        item.status != 'viewed').toList()
+        (item.status != 'viewed' || item.lastChapter.isNotEmpty)).toList()
       ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
     final suggestions = <String, Chapter>{};
     // Bound parallel calls and avoid bogus update indicators when offline.
@@ -537,7 +537,6 @@ class _MainShellState extends State<MainShell> {
 
   void _open(UnifiedManga book) {
     // Viewing is a separate category, not the "В планах" library status.
-    unawaited(widget.library.markViewed(book));
     Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage(
       book: book, repository: widget.repository, library: widget.library, alerts: alerts,
     ))).then((_) {
@@ -737,7 +736,8 @@ class _MainShellState extends State<MainShell> {
       ]) : tab == 2 ? AnimatedBuilder(
         animation: widget.library,
         builder: (context, _) {
-          final saved = widget.library.items;
+          final saved = widget.library.items.where(
+            (item) => item.status != 'viewed').toList();
           final filtered = saved.where((item) =>
             libraryFilter == 'all' || (libraryFilter == 'favorite'
               ? item.favorite : item.status == libraryFilter)).toList();
@@ -749,7 +749,7 @@ class _MainShellState extends State<MainShell> {
                   scrollDirection: Axis.horizontal,
                   child: Row(children: [
                     for (final option in const [
-                      ('all', 'Все'), ('viewed', 'Открыто'),
+                      ('all', 'Все'),
                       ('reading', 'Читаю'), ('planned', 'В планах'),
                       ('completed', 'Прочитано'), ('dropped', 'Заброшено'),
                       ('favorite', 'Любимое')
