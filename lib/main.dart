@@ -27,16 +27,30 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   final library = LibraryStore();
   await library.load();
-  try {
-    await ChapterNotificationService.instance.initialize();
-    await ChapterBackgroundScheduler.initialize();
-  } catch (_) {
-    // Keep the library usable even if this Android version cannot schedule
-    // background checks; manual checking remains available.
-  }
   final themes = ThemeController();
   try { await themes.load(); } catch (_) { /* Use the existing dark default. */ }
+  // Display the library immediately; native notifications/WorkManager setup
+  // can take significant time and must not delay the first rendered frame.
+  // The app listens for notification launch payloads as soon as it mounts.
   runApp(SenReaderApp(library: library, themes: themes));
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_initializeBackgroundServices());
+  });
+}
+
+/// Keep OS integrations out of the cold-start critical path. Initialize
+/// independently so one unavailable plugin cannot disable the other.
+Future<void> _initializeBackgroundServices() async {
+  try {
+    await ChapterNotificationService.instance.initialize();
+  } catch (_) {
+    // Manual reading and notification history remain available.
+  }
+  try {
+    await ChapterBackgroundScheduler.initialize();
+  } catch (_) {
+    // A failed scheduler registration must never prevent reading.
+  }
 }
 
 class SenReaderApp extends StatelessWidget {

@@ -74,19 +74,30 @@ class CatalogRepository {
   // equivalence when labels differ. Later versions will add user-approved links.
   Future<UnifiedManga> findOtherSources(UnifiedManga book) async {
     final entries = {...book.entries};
-    for (final source in sources.values) {
-      if (entries.containsKey(source.key)) continue;
+    final titleKey = normalizedTitle(book.title);
+    final missing = sources.values
+        .where((source) => !entries.containsKey(source.key)).toList();
+    if (missing.isEmpty) return book;
+
+    // Unrelated providers used to block one another: two 8-second source
+    // failures could delay opening a title by 16 seconds. Execute discovery
+    // concurrently, but apply results in stable source order.
+    final candidates = await Future.wait(missing.map((source) async {
       try {
-        final matches = await source.search(book.title);
+        final matches = await source.search(book.title)
+            .timeout(const Duration(seconds: 8));
         for (final match in matches) {
-          if (normalizedTitle(match.title) == normalizedTitle(book.title)) {
-            entries[source.key] = match;
-            break;
+          if (normalizedTitle(match.title) == titleKey) {
+            return (source.key, match);
           }
         }
       } catch (_) {
-        // Keep existing source even if another site is temporarily unavailable.
+        // Missing or blocked providers must not affect existing sources.
       }
+      return null;
+    }));
+    for (final result in candidates) {
+      if (result != null) entries[result.$1] = result.$2;
     }
     return UnifiedManga(title: book.title, entries: entries);
   }

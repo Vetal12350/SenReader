@@ -1024,18 +1024,25 @@ class _ReaderPageState extends State<ReaderPage> {
               final image = _segments.firstWhere(
                 (segment) => segment.chapter.id == item.chapter.id
               ).pages[item.index];
-              return ColorFiltered(colorFilter: ColorFilter.mode(
-                Colors.black.withValues(alpha: (100 - _brightness) / 100),
-                BlendMode.srcATop), child: _RetryableReaderImage(
-                  key: ValueKey('reader-image-${item.key}-${_chapterReloads[item.chapter.id] ?? 0}'),
-                  page: image,
-                  pageIndex: item.index,
-                  width: MediaQuery.sizeOf(context).width,
-                  height: _fitHeight ? MediaQuery.sizeOf(context).height : null,
-                  fit: _fitHeight ? BoxFit.contain : BoxFit.fitWidth,
-                  onLoaded: () => _registerLoadedPage(item),
-                  onRefreshLinks: () => _refreshChapterImages(item.chapter),
-                ));
+              final pageWidget = _RetryableReaderImage(
+                key: ValueKey('reader-image-${item.key}-${_chapterReloads[item.chapter.id] ?? 0}'),
+                page: image,
+                pageIndex: item.index,
+                width: MediaQuery.sizeOf(context).width,
+                height: _fitHeight ? MediaQuery.sizeOf(context).height : null,
+                fit: _fitHeight ? BoxFit.contain : BoxFit.fitWidth,
+                onLoaded: () => _registerLoadedPage(item),
+                onRefreshLinks: () => _refreshChapterImages(item.chapter),
+              );
+              // No extra saveLayer/color processing at the default 100%
+              // brightness: a long webtoon can contain dozens of images.
+              if (_brightness >= 100) return pageWidget;
+              return ColorFiltered(
+                colorFilter: ColorFilter.mode(
+                  Colors.black.withValues(alpha: (100 - _brightness) / 100),
+                  BlendMode.srcATop),
+                child: pageWidget,
+              );
             },
           ));
         },
