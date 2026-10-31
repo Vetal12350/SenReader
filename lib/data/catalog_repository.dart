@@ -40,9 +40,13 @@ class CatalogRepository {
 
   /// Choose only among verified chapter lists; never overwrite a user's
   /// explicitly saved preferred source. A tie keeps the current source.
-  Future<String> mostCompleteSource(UnifiedManga book, String current) async {
+  Future<String> mostCompleteSource(UnifiedManga book, String current,
+      {int? currentChapterCount}) async {
     if (book.entries.length < 2) return current;
     final counts = await Future.wait(book.entries.entries.map((entry) async {
+      if (entry.key == current && currentChapterCount != null) {
+        return (entry.key, currentChapterCount);
+      }
       final source = sources[entry.key];
       if (source == null) return (entry.key, -1);
       try {
