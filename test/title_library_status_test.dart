@@ -56,7 +56,7 @@ void main() {
     expect(library.has(book), false);
     expect(tester.takeException(), isNull);
   });
-  testWidgets('Senkuro-style title has read button, source and searchable chapters',
+  testWidgets('title has read button, source and chapter list without search',
       (tester) async {
     final source = _SearchableTitleSource();
     final book = UnifiedManga(title: source.entry.title,
@@ -68,12 +68,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('title-read-button')), findsOneWidget);
     expect(find.byTooltip('Сменить источник'), findsOneWidget);
-    await tester.scrollUntilVisible(find.byKey(const Key('chapter-search')),
+    expect(find.byKey(const Key('chapter-search')), findsNothing);
+    await tester.scrollUntilVisible(find.widgetWithText(ListTile, 'Глава 3'),
       160, scrollable: find.byType(Scrollable).first);
-    await tester.enterText(find.byKey(const Key('chapter-search')), '3');
     await tester.pumpAndSettle();
     expect(find.widgetWithText(ListTile, 'Глава 3'), findsOneWidget);
-    expect(find.widgetWithText(ListTile, 'Глава 1'), findsNothing);
+    expect(find.widgetWithText(ListTile, 'Глава 1'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

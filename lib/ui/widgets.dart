@@ -1,5 +1,28 @@
 import 'package:flutter/material.dart';
 import '../core/models.dart';
+import '../data/library_store.dart';
+
+/// Saved reading-list status and last reached chapter; never show a badge
+/// for titles merely opened while browsing.
+String? readingStatusBadge(SavedBook? saved) {
+  if (saved == null || saved.status == 'viewed') return null;
+  final label = switch (saved.status) {
+    'reading' => 'Читаю',
+    'planned' => 'В планах',
+    'completed' => 'Прочитано',
+    'dropped' => 'Заброшено',
+    _ => null,
+  };
+  if (label == null) return null;
+  final chapterName = saved.lastMarkedChapter.isNotEmpty
+      ? saved.lastMarkedChapter
+      : saved.lastSource == saved.preferredSource ? saved.lastChapter : '';
+  final chapter = RegExp(
+    r'(?:глава|chapter|ch\.?)\s*([0-9]+(?:[.,][0-9]+)?)',
+    caseSensitive: false,
+  ).firstMatch(chapterName)?.group(1);
+  return chapter == null ? label : '$label · $chapter гл.';
+}
 
 class CoverImage extends StatelessWidget {
   const CoverImage(this.url, {super.key, this.width, this.height, this.headers = const {}});
@@ -22,10 +45,11 @@ class CoverImage extends StatelessWidget {
 
 class MangaTile extends StatelessWidget {
   const MangaTile({super.key, required this.book, required this.onTap,
-    this.statusLabel});
+    this.statusLabel, this.saved});
   final UnifiedManga book;
   final VoidCallback onTap;
   final String? statusLabel;
+  final SavedBook? saved;
   static const coverAspectRatio = 0.72;
   static const titleStyle = TextStyle(fontSize: 12, fontWeight: FontWeight.w600);
 
@@ -45,6 +69,7 @@ class MangaTile extends StatelessWidget {
       width / coverAspectRatio + 7 + titleHeight(context, width);
 
   @override Widget build(BuildContext context) {
+    final badge = statusLabel ?? readingStatusBadge(saved);
     return LayoutBuilder(builder: (context, constraints) => InkWell(
       borderRadius: BorderRadius.circular(12), onTap: onTap,
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -52,7 +77,7 @@ class MangaTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
           child: Stack(fit: StackFit.expand, children: [
             CoverImage(book.coverUrl),
-            if (statusLabel != null)
+            if (badge != null)
               Positioned(left: 6, right: 6, top: 6,
                 child: Container(
                   decoration: BoxDecoration(
@@ -60,10 +85,13 @@ class MangaTile extends StatelessWidget {
                     borderRadius: BorderRadius.circular(7)),
                   padding: const EdgeInsets.symmetric(
                     horizontal: 6, vertical: 4),
-                  child: Text(statusLabel!,
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.black,
-                      fontSize: 10, fontWeight: FontWeight.w700)),
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(badge, maxLines: 1,
+                      style: const TextStyle(color: Colors.black,
+                        fontSize: 10, fontWeight: FontWeight.w700)),
+                  ),
                 )),
             if (book.primary.rating != null)
               Positioned(right: 6, bottom: 6, child: Container(

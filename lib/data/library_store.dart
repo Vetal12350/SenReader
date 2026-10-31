@@ -14,6 +14,7 @@ class SavedBook {
     Set<String>? readChapterKeys, Set<String>? seenChapterKeys,
     Set<String>? initializedSources,
     this.favorite = false,
+    this.lastMarkedChapter = '',
     String preferredSource = '',
     int readHistoryVersion = 2,
   })  : readChapterKeys = readChapterKeys ?? <String>{},
@@ -54,6 +55,8 @@ class SavedBook {
   final String title;
   final Map<String, MangaEntry> entries;
   String lastChapter;
+  /// Manual eye taps may mark a chapter without moving the reader position.
+  String lastMarkedChapter;
   String lastSource;
   String preferredSource;
   String status; // viewed, planned, reading, completed, dropped
@@ -72,6 +75,7 @@ class SavedBook {
     'title': title,
     'entries': entries.map((k, v) => MapEntry(k, v.toJson())),
     'lastChapter': lastChapter, 'lastSource': lastSource, 'status': status,
+    'lastMarkedChapter': lastMarkedChapter,
     'favorite': favorite,
     'preferredSource': preferredSource,
     'readHistoryVersion': 2,
@@ -87,6 +91,7 @@ class SavedBook {
       title: json['title'] as String? ?? '',
       entries: raw.map((k, v) => MapEntry(k.toString(), MangaEntry.fromJson(Map<String, dynamic>.from(v as Map)))),
       lastChapter: json['lastChapter'] as String? ?? '',
+      lastMarkedChapter: json['lastMarkedChapter'] as String? ?? '',
       lastSource: json['lastSource'] as String? ?? '',
       preferredSource: json['preferredSource'] as String? ?? '',
       readHistoryVersion: (json['readHistoryVersion'] as num?)?.toInt() ?? 1,
@@ -291,6 +296,7 @@ class LibraryStore extends ChangeNotifier {
       item.entries.putIfAbsent(entry.key, () => entry.value);
     }
     item.lastChapter = chapter.name;
+    item.lastMarkedChapter = '';
     item.lastChapterId = chapter.id;
     item.lastSource = source;
     // Reading does not imply an explicit library subscription.
@@ -302,7 +308,8 @@ class LibraryStore extends ChangeNotifier {
   }
 
   Future<void> markRead(UnifiedManga book, Chapter chapter, String source,
-      {Iterable<Chapter> availableChapters = const []}) async {
+      {Iterable<Chapter> availableChapters = const [],
+       bool userInitiated = false}) async {
     await _reload();
     final key = normalizedTitle(book.title);
     final item = _books.putIfAbsent(key,
@@ -312,7 +319,11 @@ class LibraryStore extends ChangeNotifier {
     for (final entry in book.entries.entries) {
       item.entries.putIfAbsent(entry.key, () => entry.value);
     }
-    // Opened chapters are tracked separately from library subscriptions.
+    // An eye tap is an explicit reading-list choice; opening a reader is not.
+    if (userInitiated) {
+      item.status = 'reading';
+      item.lastMarkedChapter = chapter.name;
+    }
     item.readChapterKeys.add(sourceChapterKey(chapter, source));
     for (final candidate in availableChapters) {
       final order = compareChapterChronology(candidate, chapter);
@@ -359,6 +370,7 @@ class LibraryStore extends ChangeNotifier {
     }
     // Explicit unread resets both the resume chapter and its saved page.
     item.lastChapter = chapter.name;
+    item.lastMarkedChapter = '';
     item.lastChapterId = chapter.id;
     item.lastSource = source;
     item.lastPageIndex = 0;

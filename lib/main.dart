@@ -74,8 +74,37 @@ class _MainShellState extends State<MainShell> {
   void _onMainTabRequest() {
     final next = mainTabRequest.value;
     if (!mounted || tab == next) return;
-    setState(() => tab = next);
+    _changeTab(next);
+  }
+
+  /// Leave Catalog with a clean sort/filter/search session.
+  void _changeTab(int next) {
+    if (!mounted || tab == next) return;
+    debounce?.cancel();
+    setState(() {
+      if (tab == 1) {
+        query = '';
+        searchController.clear();
+        catalogType = null;
+        catalogStatus = null;
+        catalogTranslationStatus = null;
+        catalogLabelSlug = null;
+        catalogLabelTitle = null;
+        catalogTagFilter = null;
+        catalogSort = 'popularity';
+        result = null;
+        _catalogHasMore = false;
+        _catalogLoadingMore = false;
+        ++_catalogGeneration;
+        loading = false;
+      }
+      tab = next;
+    });
     if (next == 1) unawaited(_fetch());
+    if (next == 3) unawaited(_refreshInboxCount());
+    if (next == 2 && widget.library.items.isNotEmpty) {
+      unawaited(offerChapterAlerts(context, alerts));
+    }
   }
 
   int _newUpdateCount = 0;
@@ -178,7 +207,10 @@ class _MainShellState extends State<MainShell> {
     setState(() { loading = true; _catalogLoadingMore = false; });
     CatalogResult next;
     final senkuro = widget.repository.sources['senkuro'];
-    if (isCatalog && senkuro is SenkuroSource &&
+    if (isCatalog && thisQuery.trim().isNotEmpty) {
+      // Search all providers, while the browsing catalog stays Senkuro-only.
+      next = await widget.repository.getCatalog(query: thisQuery);
+    } else if (isCatalog && senkuro is SenkuroSource &&
         (sort == 'rating' || status != null || translation != null || label != null ||
             (type != null && (thisQuery.isNotEmpty ||
               !const {'MANGA', 'MANHWA', 'MANHUA'}.contains(type))))) {
@@ -310,9 +342,17 @@ class _MainShellState extends State<MainShell> {
 
   void _onSearch(String value) {
     query = value;
-    if (value.isNotEmpty && (catalogSort == 'updated' ||
-        catalogSort == 'created')) {
-      setState(() => catalogSort = 'popularity');
+    if (value.trim().isNotEmpty) {
+      // Search must not silently exclude ReadManga and ReManga.
+      setState(() {
+        catalogSort = 'popularity';
+        catalogType = null;
+        catalogStatus = null;
+        catalogTranslationStatus = null;
+        catalogTagFilter = null;
+        catalogLabelSlug = null;
+        catalogLabelTitle = null;
+      });
     }
     debounce?.cancel();
     debounce = Timer(const Duration(milliseconds: 450), _fetch);
@@ -322,9 +362,10 @@ class _MainShellState extends State<MainShell> {
   /// they are not a claim of server-wide filtered or chronological ranking.
   List<UnifiedManga> _visibleCatalogBooks() {
     final books = (result?.books ?? const <UnifiedManga>[])
-        .where((book) => book.entries.containsKey('senkuro') &&
+        .where((book) => (query.trim().isNotEmpty ||
+            book.entries.containsKey('senkuro')) &&
           (catalogTagFilter == null ||
-            book.entries['senkuro']!.tags.contains(catalogTagFilter)))
+            book.entries['senkuro']?.tags.contains(catalogTagFilter) == true))
         .toList();
     if (catalogSort == 'rating' && widget.repository.sources['senkuro'] is! SenkuroSource) {
       // Preserve source order for unknown scores; never invent zero ratings.
@@ -489,7 +530,8 @@ class _MainShellState extends State<MainShell> {
             children: [
               for (final book in items) ...[
                 SizedBox(width: 116, child: MangaTile(
-                  book: book, onTap: () => _open(book))),
+                  book: book, saved: widget.library.get(book),
+                  onTap: () => _open(book))),
                 const SizedBox(width: 10),
               ],
             ])),
@@ -567,7 +609,10 @@ class _MainShellState extends State<MainShell> {
     Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage(
       book: book, repository: widget.repository, library: widget.library, alerts: alerts,
     ))).then((_) {
-      if (mounted) unawaited(_refreshNewChapters());
+      if (mounted) {
+        setState(() {}); // Update visible cover badges after status changes.
+        unawaited(_refreshNewChapters());
+      }
     });
   }
 
@@ -803,17 +848,31 @@ class _MainShellState extends State<MainShell> {
                     width: (constraints.maxWidth - 20) / 3,
                     child: MangaTile(
                       book: item.toUnified(),
-                      statusLabel: item.favorite ? '♥ Любимое' :
-                        item.status == 'reading' ? 'Читаю' :
-                        item.status == 'completed' ? 'Прочитано' :
-                        item.status == 'dropped' ? 'Заброшено' :
-                        item.status == 'viewed' ? 'Открыто' : 'В планах',
+                      saved: item,
                       onTap: () => _open(item.toUnified())),
                   )).toList(),
                 )),
               ]);
         },
-      ) : RefreshIndicator(
+      ) : Column(children: [
+        if (tab == 1)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+            child: TextField(
+              key: const Key('catalog-search'),
+              controller: searchController,
+              onChanged: _onSearch,
+              decoration: InputDecoration(
+                hintText: 'Поиск: Senkuro, ReManga, ReadManga',
+                prefixIcon: const Icon(Icons.search),
+                filled: true,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(15),
+                  borderSide: BorderSide.none),
+              ),
+            ),
+          ),
+        Expanded(child: RefreshIndicator(
         onRefresh: () => _fetch(forceHome: true),
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
@@ -821,7 +880,7 @@ class _MainShellState extends State<MainShell> {
             if (tab == 0) ...[
               TextField(
                 readOnly: true,
-                onTap: () => setState(() => tab = 1),
+                onTap: () => _changeTab(1),
                 decoration: InputDecoration(
                   hintText: 'Поиск манги, манхвы или маньхуа',
                   prefixIcon: const Icon(Icons.search),
@@ -849,6 +908,8 @@ class _MainShellState extends State<MainShell> {
                       SizedBox(width: 116, child: MangaTile(
                         book: UnifiedManga(title: item.title,
                           entries: {'senkuro': item}),
+                        saved: widget.library.get(UnifiedManga(
+                          title: item.title, entries: {'senkuro': item})),
                         onTap: () => _open(UnifiedManga(title: item.title,
                           entries: {'senkuro': item})),
                       )),
@@ -860,22 +921,12 @@ class _MainShellState extends State<MainShell> {
               if (_homeResult != null) _homeCollections(),
               const SizedBox(height: 30),
             ] else ...[
-              TextField(
-                controller: searchController,
-                onChanged: _onSearch,
-                decoration: InputDecoration(
-                  hintText: 'Название манги, манхвы, маньхуа…',
-                  prefixIcon: const Icon(Icons.search),
-                  filled: true,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
-                ),
-              ),
-              const SizedBox(height: 18),
-              _catalogControls(),
+              if (query.isEmpty) _catalogControls(),
             ],
             if (tab == 1) ...[
             SectionTitle(query.isEmpty ? 'Каталог' : 'Результаты поиска',
-              subtitle: 'Senkuro'),
+              subtitle: query.isEmpty
+                  ? 'Senkuro' : 'Senkuro · ReManga · ReadManga'),
             if (loading)
               const Padding(padding: EdgeInsets.all(32),
                 child: Center(child: CircularProgressIndicator())),
@@ -892,7 +943,8 @@ class _MainShellState extends State<MainShell> {
                 spacing: 10, runSpacing: 18,
                 children: catalogBooks.map((book) => SizedBox(
                   width: (box.maxWidth - 20) / 3,
-                  child: MangaTile(book: book, onTap: () => _open(book)),
+                  child: MangaTile(book: book,
+                    saved: widget.library.get(book), onTap: () => _open(book)),
                 )).toList(),
               )),
             if (_catalogHasMore)
@@ -907,7 +959,7 @@ class _MainShellState extends State<MainShell> {
             ],
           ],
         ),
-      ),
+      ))]),
       bottomNavigationBar: NavigationBarTheme(
         data: const NavigationBarThemeData(
           labelTextStyle: WidgetStatePropertyAll(TextStyle(
@@ -915,14 +967,7 @@ class _MainShellState extends State<MainShell> {
         child: NavigationBar(
         height: 72,
         selectedIndex: tab,
-        onDestinationSelected: (index) {
-          setState(() => tab = index);
-          if (index == 1) unawaited(_fetch());
-          if (index == 3) unawaited(_refreshInboxCount());
-          if (index == 2 && widget.library.items.isNotEmpty) {
-            unawaited(offerChapterAlerts(context, alerts));
-          }
-        },
+        onDestinationSelected: _changeTab,
         destinations: [
           const NavigationDestination(icon: Icon(Icons.home_outlined),
             selectedIcon: Icon(Icons.home), label: 'Главная'),
