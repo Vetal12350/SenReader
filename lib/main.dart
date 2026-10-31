@@ -66,6 +66,8 @@ class _MainShellState extends State<MainShell> {
   int tab = 0;
   String libraryFilter = 'all';
   String? catalogType;
+  String? catalogStatus;
+  String? catalogTranslationStatus;
   String? catalogTagFilter;
   String catalogSort = 'popularity';
   CatalogResult? result;
@@ -98,11 +100,25 @@ class _MainShellState extends State<MainShell> {
     final thisQuery = query;
     final isCatalog = tab == 1;
     final type = catalogType;
+    final status = catalogStatus;
+    final translation = catalogTranslationStatus;
     final sort = catalogSort;
     setState(() => loading = true);
     CatalogResult next;
     final senkuro = widget.repository.sources['senkuro'];
-    if (isCatalog && thisQuery.isEmpty && senkuro is SenkuroSource &&
+    if (isCatalog && senkuro is SenkuroSource &&
+        (status != null || translation != null)) {
+      try {
+        final entries = await senkuro.filteredCatalog(query: thisQuery,
+          type: type, status: status, translationStatus: translation);
+        next = CatalogResult(
+          books: [for (final entry in entries)
+            UnifiedManga(title: entry.title, entries: {'senkuro': entry})],
+          warnings: const []);
+      } catch (e) {
+        next = CatalogResult(books: const [], warnings: ['Senkuro: $e']);
+      }
+    } else if (isCatalog && thisQuery.isEmpty && senkuro is SenkuroSource &&
         (type != null || sort == 'updated' || sort == 'created')) {
       try {
         final entries = await senkuro.browseHome(type: type, first: 30,
@@ -120,7 +136,8 @@ class _MainShellState extends State<MainShell> {
         sourceKey: isCatalog ? 'senkuro' : null);
     }
     if (!mounted || thisQuery != query || isCatalog != (tab == 1) ||
-        (isCatalog && (type != catalogType || sort != catalogSort))) return;
+        (isCatalog && (type != catalogType || status != catalogStatus ||
+            translation != catalogTranslationStatus || sort != catalogSort))) return;
     setState(() {
       result = next;
       if (!isCatalog && thisQuery.isEmpty) _homeResult = next;
@@ -233,49 +250,80 @@ class _MainShellState extends State<MainShell> {
 
   void _openCatalogTags() {
     var search = '';
-    showModalBottomSheet<void>(context: context, isScrollControlled: true,
-      useSafeArea: true, builder: (sheetContext) =>
+    showModalBottomSheet<void>(context: context, useSafeArea: true,
+      isScrollControlled: true, builder: (sheetContext) =>
         StatefulBuilder(builder: (sheetContext, setSheet) {
           final tags = _catalogTags.where((tag) =>
             tag.toLowerCase().contains(search.toLowerCase())).toList();
-          return FractionallySizedBox(heightFactor: .78,
-            child: Padding(padding: const EdgeInsets.all(16),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  const Expanded(child: Text('Фильтры по тегам',
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold))),
-                  TextButton(onPressed: () {
-                    setState(() => catalogTagFilter = null);
-                    setSheet(() {});
-                  }, child: const Text('Сбросить')),
+          void select(void Function() update) {
+            setState(update);
+            setSheet(() {});
+            unawaited(_fetch());
+          }
+          return SizedBox(height: MediaQuery.sizeOf(context).height * 0.8,
+            child: ListView(padding: const EdgeInsets.all(16), children: [
+              Row(children: [
+                const Expanded(child: Text('Фильтры Senkuro',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold))),
+                TextButton(onPressed: () => select(() {
+                  catalogType = null; catalogStatus = null;
+                  catalogTranslationStatus = null; catalogTagFilter = null;
+                }), child: const Text('Сбросить')),
+              ]),
+              const SizedBox(height: 12),
+              const Text('Тип произведения'),
+              Wrap(spacing: 6, children: [
+                for (final option in const [
+                  (null, 'Все'), ('MANGA', 'Манга'), ('MANHWA', 'Манхва'),
+                  ('MANHUA', 'Маньхуа'), ('COMICS', 'Комикс'),
+                ])
+                  ChoiceChip(label: Text(option.$2),
+                    selected: catalogType == option.$1,
+                    onSelected: (_) => select(() => catalogType = option.$1)),
+              ]),
+              const SizedBox(height: 12),
+              const Text('Статус выпуска'),
+              Wrap(spacing: 6, children: [
+                for (final option in const [
+                  (null, 'Любой'), ('ONGOING', 'Онгоинг'),
+                  ('FINISHED', 'Выпущено'), ('HIATUS', 'Приостановлено'),
+                  ('CANCELLED', 'Отменено'), ('ANNOUNCE', 'Анонс'),
+                ])
+                  ChoiceChip(label: Text(option.$2),
+                    selected: catalogStatus == option.$1,
+                    onSelected: (_) => select(() => catalogStatus = option.$1)),
+              ]),
+              const SizedBox(height: 12),
+              const Text('Статус перевода'),
+              Wrap(spacing: 6, children: [
+                for (final option in const [
+                  (null, 'Любой'), ('IN_PROGRESS', 'Переводится'),
+                  ('FINISHED', 'Переведено'), ('FROZEN', 'Заморожено'),
+                  ('ABANDONED', 'Заброшено'),
+                ])
+                  ChoiceChip(label: Text(option.$2),
+                    selected: catalogTranslationStatus == option.$1,
+                    onSelected: (_) => select(() =>
+                      catalogTranslationStatus = option.$1)),
+              ]),
+              const SizedBox(height: 12),
+              const Text('Жанры и метки (из загруженных результатов)'),
+              TextField(onChanged: (v) => setSheet(() => search = v),
+                decoration: const InputDecoration(prefixIcon: Icon(Icons.search),
+                  hintText: 'Поиск жанра или тега')),
+              const SizedBox(height: 12),
+              if (tags.isNotEmpty)
+                Wrap(spacing: 5, children: [
+                  for (final tag in tags)
+                    FilterChip(label: Text(tag),
+                      selected: catalogTagFilter == tag,
+                      onSelected: (yes) => select(() =>
+                        catalogTagFilter = yes ? tag : null)),
                 ]),
-                const Text('Применяются к загруженному каталогу. '
-                  'Метки доступны только для произведений, '
-                  'которые передал источник.'),
-                const SizedBox(height: 12),
-                TextField(onChanged: (v) => setSheet(() => search = v),
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.search),
-                    hintText: 'Поиск жанра или тега')),
-                const SizedBox(height: 12),
-                Expanded(child: tags.isEmpty
-                  ? const Center(child: Text('Сейчас у загруженных произведений нет меток'))
-                  : ListView(children: [
-                      Wrap(spacing: 6, runSpacing: 3,
-                        children: tags.map((tag) => FilterChip(
-                          label: Text(tag),
-                          selected: catalogTagFilter == tag,
-                          onSelected: (selected) {
-                            setState(() => catalogTagFilter = selected ? tag : null);
-                            setSheet(() {});
-                          },
-                        )).toList()),
-                    ])),
-                SizedBox(width: double.infinity,
-                  child: FilledButton(onPressed: () => Navigator.pop(sheetContext),
-                    child: Text('Показать ${_visibleCatalogBooks().length} результатов'))),
-              ])),
-          );
+              const SizedBox(height: 14),
+              FilledButton(onPressed: () => Navigator.pop(sheetContext),
+                child: const Text('Показать результаты')),
+            ]));
         }),
     );
   }
@@ -338,7 +386,8 @@ class _MainShellState extends State<MainShell> {
         ActionChip(
           key: const Key('catalog-tag-filters'),
           avatar: const Icon(Icons.tune, size: 18),
-          label: Text(catalogTagFilter == null ?
+          label: Text(catalogTagFilter == null && catalogType == null &&
+              catalogStatus == null && catalogTranslationStatus == null ?
             'Фильтры' : 'Тег: $catalogTagFilter'),
           onPressed: _openCatalogTags,
         ),
