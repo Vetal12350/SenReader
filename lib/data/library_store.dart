@@ -320,7 +320,11 @@ class LibraryStore extends ChangeNotifier {
     }
     // Completion and resume are independent, including the current chapter.
     await _save();
-    await ChapterInboxStore().hideReadKeys(item.key, source, item.readChapterKeys);
+    try {
+      await ChapterInboxStore().hideReadKeys(item.key, source, item.readChapterKeys);
+    } catch (_) {
+      // An unavailable notification store must not roll back reading progress.
+    }
   }
 
   Future<void> setStatus(UnifiedManga book, String status, {String preferredSource = ''}) async {
