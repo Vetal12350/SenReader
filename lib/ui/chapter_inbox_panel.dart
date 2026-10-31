@@ -180,7 +180,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
                         await _refresh();
                       }),
                   ]),
-                ))));
+                )));
           })),
     ]);
   }
