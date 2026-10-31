@@ -89,6 +89,7 @@ class _DetailPageState extends State<DetailPage> {
       final next = await source.detail(book.entries[sourceKey]!);
       if (!mounted || request != _request) return;
       setState(() { loading = false; detail = next; });
+      unawaited(widget.library.recordLatestChapter(book, sourceKey, next.chapters));
       if (next.chapters.isEmpty) {
         _warnings.add('${source.name}: публичные главы недоступны.');
         _fallback();
