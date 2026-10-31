@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:senreader/core/models.dart';
+import 'package:senreader/core/chapter_identity.dart';
 import 'package:senreader/core/source.dart';
 import 'package:senreader/data/catalog_repository.dart';
 import 'package:senreader/data/library_store.dart';
