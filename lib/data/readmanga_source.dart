@@ -286,18 +286,15 @@ class ReadMangaSource implements MangaSource {
         images.take(3).map((image) => image.url).toSet().length == 1) {
       throw SourceException('ReadManga: сервер отдаёт одинаковую заглушку вместо страниц.');
     }
-    final client = _client ?? http.Client();
-    try {
-      final sampled = await Future.wait(
-          images.take(3).map((image) => _sampleImage(client, image)));
-      if (sampled.length >= 2 && sampled.every(
-          (bytes) => _samePrefix(sampled.first, bytes))) {
-        throw SourceException(
-            'ReadManga: вместо страниц возвращается одинаковая картинка — '
-            'возможно, манга удалена на этом зеркале.');
-      }
-    } finally {
-      if (_client == null) client.close();
+    // Use the same bounded connection pool as the HTML request; keep the
+    // existing safety preflight, but avoid extra TLS handshakes per chapter.
+    final sampled = await Future.wait(
+        images.take(3).map((image) => _sampleImage(_session, image)));
+    if (sampled.length >= 2 && sampled.every(
+        (bytes) => _samePrefix(sampled.first, bytes))) {
+      throw SourceException(
+          'ReadManga: вместо страниц возвращается одинаковая картинка — '
+          'возможно, манга удалена на этом зеркале.');
     }
   }
 
