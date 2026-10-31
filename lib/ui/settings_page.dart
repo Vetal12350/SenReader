@@ -129,28 +129,6 @@ class _SettingsPageState extends State<SettingsPage> {
         );
       }),
       const SizedBox(height: 24),
-      const Text('Резервная копия библиотеки', style: TextStyle(
-        fontSize: 20, fontWeight: FontWeight.w700)),
-      const SizedBox(height: 8),
-      const Text('Перед переходом с debug APK на постоянную подпись '
-          'скопируй резервную копию и обязательно сохрани текст '
-          'в отдельном надёжном месте. Один буфер обмена ненадёжен. '
-          'В копию входят книги, источники, избранное и история чтения. '
-          'Уведомления и тема после переустановки настраиваются заново.'),
-      const SizedBox(height: 10),
-      Wrap(spacing: 8, runSpacing: 8, children: [
-        OutlinedButton.icon(
-          key: const Key('backup-copy'),
-          onPressed: _copyBackup,
-          icon: const Icon(Icons.copy_outlined),
-          label: const Text('Копировать библиотеку')),
-        OutlinedButton.icon(
-          key: const Key('backup-restore'),
-          onPressed: _pasteBackup,
-          icon: const Icon(Icons.restore),
-          label: const Text('Импорт из буфера')),
-      ]),
-      const SizedBox(height: 24),
       const Text('Уведомления', style: TextStyle(
         fontSize: 20, fontWeight: FontWeight.w700)),
       const SizedBox(height: 10),
@@ -174,6 +152,28 @@ class _SettingsPageState extends State<SettingsPage> {
           Padding(padding: const EdgeInsets.symmetric(vertical: 4),
             child: Text(warning, style: const TextStyle(color: Color(0xFFFFBE80)))),
       ],
+      const Text('Резервная копия библиотеки', style: TextStyle(
+        fontSize: 20, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 8),
+      const Text('Перед переходом с debug APK на постоянную подпись '
+          'скопируй резервную копию и обязательно сохрани текст '
+          'в отдельном надёжном месте. Один буфер обмена ненадёжен. '
+          'В копию входят книги, источники, избранное и история чтения. '
+          'Уведомления и тема после переустановки настраиваются заново.'),
+      const SizedBox(height: 10),
+      Wrap(spacing: 8, runSpacing: 8, children: [
+        OutlinedButton.icon(
+          key: const Key('backup-copy'),
+          onPressed: _copyBackup,
+          icon: const Icon(Icons.copy_outlined),
+          label: const Text('Копировать библиотеку')),
+        OutlinedButton.icon(
+          key: const Key('backup-restore'),
+          onPressed: _pasteBackup,
+          icon: const Icon(Icons.restore),
+          label: const Text('Импорт из буфера')),
+      ]),
+      const SizedBox(height: 24),
     ]),
   );
 }
