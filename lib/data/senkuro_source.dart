@@ -269,6 +269,33 @@ query fetchMangaChapters($branchId: ID!, $after: String, $orderBy: MangaChapterO
     pageInfo { hasNextPage endCursor }
   }
 }''';
+  // The optional createdAt field is tried once. Older public schemas may
+  // reject it; transparently fall back and never manufacture a date.
+  static final String _datedChaptersQuery = _chaptersQuery.replaceFirst(
+      'id slug name number volume', 'id slug name number volume createdAt');
+
+  Future<Map<String, dynamic>> _chapterBatch(Map<String, dynamic> variables) async {
+    if (_chapterDatesSupported == false) {
+      return _gql('fetchMangaChapters', _chaptersQuery, variables);
+    }
+    try {
+      final result = await _gql('fetchMangaChapters',
+          _datedChaptersQuery, variables);
+      _chapterDatesSupported = true;
+      return result;
+    } on SourceException catch (e) {
+      if (_chapterDatesSupported == null &&
+          e.message.contains('createdAt') &&
+          (e.message.contains('Cannot query field') ||
+           e.message.contains('Unknown field') ||
+           e.message.contains('Field'))) {
+        _chapterDatesSupported = false;
+        return _gql('fetchMangaChapters', _chaptersQuery, variables);
+      }
+      rethrow;
+    }
+  }
+
   static const _pagesQuery = r'''
 query fetchMangaChapter($slug: String!, $cdnQuality: String) {
   mangaChapter(slug: $slug) {
@@ -511,7 +538,7 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
     if (branches.isNotEmpty) {
       String? cursor;
       for (var batch = 0; batch < 10; batch++) {
-        final result = await _gql('fetchMangaChapters', _chaptersQuery, {
+        final result = await _chapterBatch({
           'branchId': '${branches.first['id']}',
           'after': cursor,
           'orderBy': {'field': 'NUMBER', 'direction': 'DESC'},
@@ -526,7 +553,8 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
           final subtitle = (n['name'] is String && (n['name'] as String).isNotEmpty) ? ': ${n['name']}' : '';
           final volume = n['volume'];
           final suffix = volume == null || '$volume' == '0' ? '' : ' (т. $volume)';
-          chapters.add(Chapter(id: id, name: 'Глава $number$subtitle$suffix'));
+          chapters.add(Chapter(id: id, name: 'Глава $number$subtitle$suffix',
+            publishedAt: sourceChapterDate(n['createdAt'])));
         }
         final pageInfo = (conn as Map)['pageInfo'];
         if (pageInfo is! Map || pageInfo['hasNextPage'] is! bool) throw _invalidResponse();
