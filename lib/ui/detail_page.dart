@@ -216,14 +216,21 @@ class _DetailPageState extends State<DetailPage> {
         }
       }
       target ??= _startChapter();
+      final isResume = saved != null && saved.lastChapter.isNotEmpty &&
+          saved.lastSource == selected;
+      final chapterNumber = target == null ? null
+          : RegExp(r'Глава\s+([^\s:(]+)').firstMatch(target.name)?.group(1);
+      final buttonText = isResume
+          ? chapterNumber == null ? 'Продолжить чтение'
+              : 'Продолжить $chapterNumber главу'
+          : 'Читать';
       return Padding(
         padding: const EdgeInsets.only(top: 14, bottom: 8),
         child: SizedBox(width: double.infinity, child: FilledButton.icon(
           key: const Key('title-read-button'),
           onPressed: target == null ? null : () => _openChapter(target!),
           icon: const Icon(Icons.menu_book_rounded),
-          label: Text(saved?.lastChapter.isNotEmpty == true
-            ? 'Продолжить чтение' : 'Читать'),
+          label: Text(buttonText),
         )),
       );
     },
@@ -269,6 +276,17 @@ class _DetailPageState extends State<DetailPage> {
           ],
           Chip(label: Text(widget.repository.sources[selected]?.name ?? selected)),
         ]),
+        if (detail?.publicationStatus != null ||
+            detail?.translationStatus != null)
+          Padding(padding: const EdgeInsets.only(top: 12),
+            child: Wrap(spacing: 8, runSpacing: 6, children: [
+              if (detail?.publicationStatus != null)
+                Chip(avatar: const Icon(Icons.calendar_month_outlined, size: 16),
+                  label: Text('Статус: ${detail!.publicationStatus!}')),
+              if (detail?.translationStatus != null)
+                Chip(avatar: const Icon(Icons.translate, size: 16),
+                  label: Text('Перевод: ${detail!.translationStatus!}')),
+            ])),
         _readingAction(),
         const SizedBox(height: 14),
         AnimatedBuilder(
