@@ -43,7 +43,11 @@ class _DetailPageState extends State<DetailPage> {
       entries: {...widget.book.entries, ...?saved?.entries});
     selected = saved?.preferredSource ?? SavedBook.chooseSource(book.entries);
     _firstLoad = _load();
-    _discoverOther();
+    // Do not launch two other-source searches on every reopen of a saved title.
+    if (saved == null || (saved.status == 'viewed' &&
+        saved.lastChapter.isEmpty && book.entries.length < 3)) {
+      _discoverOther();
+    }
   }
 
   Future<void> _discoverOther() async {
@@ -193,6 +197,13 @@ class _DetailPageState extends State<DetailPage> {
     _load();
   }
 
+
+  static String _chapterDate(DateTime date) {
+    final local = date.toLocal();
+    return '${local.day.toString().padLeft(2, '0')}.' +
+        '${local.month.toString().padLeft(2, '0')}.' +
+        '${local.year.toString().substring(2)}';
+  }
 
   static String chapterVolume(Chapter chapter) {
     final m = RegExp(r'\(\s*т\.\s*([0-9]+(?:\.[0-9]+)?)\s*\)')
@@ -497,8 +508,17 @@ class _DetailPageState extends State<DetailPage> {
                       },
                     ),
                     title: Text(displayChapterName(chapter.name),
+                      maxLines: 2, overflow: TextOverflow.ellipsis,
                       style: TextStyle(color: read ? Theme.of(context).colorScheme.onSurfaceVariant : null)),
-                    trailing: const Icon(Icons.chevron_right),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      if (chapter.publishedAt != null) ...[
+                        Text(_chapterDate(chapter.publishedAt!),
+                          style: TextStyle(fontSize: 11,
+                            color: Theme.of(context).colorScheme.onSurfaceVariant)),
+                        const SizedBox(width: 6),
+                      ],
+                      const Icon(Icons.chevron_right),
+                    ]),
                     onTap: () => _openChapter(chapter),
                   );
                 },
