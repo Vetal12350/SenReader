@@ -28,7 +28,7 @@ signing does not recover an old debug key or preserve Android app storage.
    - `SENREADER_SIGNING_STORE_PASSWORD` — keystore password.
    - `SENREADER_SIGNING_ALIAS` — `senreader` (or your chosen alias).
    - `SENREADER_SIGNING_KEY_PASSWORD` — private key password.
-4. The `main` GitHub Actions workflow will build and publish a persistently
+4. A push to `main` or a manual **Run workflow** on `main` will build and publish a persistently
    signed **release** APK at:
    `https://github.com/Vetal12350/SenReader/releases/download/qa-latest/SenReader-latest.apk`
    Confirm its release notes contain `Подписанная постоянным ключом`.
