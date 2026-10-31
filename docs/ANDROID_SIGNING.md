@@ -42,10 +42,15 @@ build for CI verification. **Do not use it for routine user upgrades.**
 ## Migration from an earlier debug installation
 
 Because earlier debug keys are not retained, Android will reject changing
-that installation to the new release key. First back up user data via a
-verified export function on the *currently installed* app. Existing
-`LibraryStore` has JSON serialization / transfer support internally, but
-do not assume a visible working export/import flow is present yet.
+that installation to the new release key. First back up user data from the *currently installed* APK. Once the
+backup UI is installed, open **Настройки → Резервная копия библиотеки →
+Копировать библиотеку** and paste the JSON into a separate private note/file.
+Do not rely on clipboard retention across uninstall. After a fresh install,
+copy that saved JSON and use **Настройки → Импорт из буфера**; confirm the
+preview, verify titles, read markers and favorites before deleting the backup.
+Existing local titles are skipped rather than overwritten. If the currently
+installed APK cannot show these backup controls and cannot be upgraded to the
+backup-enabled build, this procedure alone cannot extract its private data.
 Avoid uninstalling without verified restoration of chapters, bookmarks,
 sources, favorites, settings and read history.
 
