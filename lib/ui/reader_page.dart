@@ -44,6 +44,8 @@ class _ReaderPageState extends State<ReaderPage> {
   late final Future<List<PageImage>> future;
   final ItemPositionsListener _positions = ItemPositionsListener.create();
   final ItemScrollController _itemScroll = ItemScrollController();
+  // Pixel-relative scrolling keeps movement smooth across tall webtoon images.
+  final ScrollOffsetController _scrollOffset = ScrollOffsetController();
   Timer? _saveTimer;
   int _pageCount = 0;
   String? _lastSavedKey;
@@ -74,7 +76,9 @@ class _ReaderPageState extends State<ReaderPage> {
   bool _lightTheme = false;
   double _brightness = 100;
   double _autoScrollSeconds = 5;
-  Timer? _autoScrollTimer;
+  bool _autoScrolling = false;
+  int _autoScrollRun = 0;
+  bool _autoAtBottom = false;
 
   Future<void> _restoreReaderSettings() async {
     final prefs = await SharedPreferences.getInstance();
@@ -378,7 +382,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override void dispose() {
     _positions.itemPositions.removeListener(_onVisiblePages);
-    _autoScrollTimer?.cancel();
+    _stopAutoScroll(updateUi: false);
     if (_fullScreen) unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     _saveTimer?.cancel();
     unawaited(_flushPosition());
@@ -407,6 +411,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _go(Chapter chapter) async {
+    _stopAutoScroll();
     if (chapter.id == _activeChapter.id) return;
     _saveTimer?.cancel();
     await _flushPosition();
@@ -419,6 +424,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   Future<void> _chapterList() async {
     if (_loadingChapters) return;
+    _stopAutoScroll();
     if (_chapters.isEmpty) {
       setState(() => _loadingChapters = true);
       try {
@@ -436,6 +442,10 @@ class _ReaderPageState extends State<ReaderPage> {
       }
     }
     if (!mounted) return;
+    // Match the chapter currently visible in the continuous reader, not
+    // the first chapter with which ReaderPage was initially opened.
+    final activeIndex = _chapters.indexWhere((ch) => ch.id == _activeChapter.id);
+    final initialIndex = activeIndex >= 0 ? activeIndex : 0;
     final chapter = await showModalBottomSheet<Chapter>(context: context,
       useSafeArea: true, isScrollControlled: true,
       builder: (context) => SafeArea(child: SizedBox(
@@ -444,8 +454,13 @@ class _ReaderPageState extends State<ReaderPage> {
           const Padding(padding: EdgeInsets.all(16), child: Text('Главы')),
           Expanded(child: _chapters.isEmpty
             ? const Center(child: Text('Нет доступных глав'))
-            : ListView.builder(itemCount: _chapters.length,
+            : ScrollablePositionedList.builder(
+              key: const Key('reader-chapter-picker'),
+              itemCount: _chapters.length,
+              initialScrollIndex: initialIndex,
+              initialAlignment: 0.4,
               itemBuilder: (context, index) => ListTile(
+                key: Key('reader-chapter-${_chapters[index].id}'),
                 selected: _chapters[index].id == _activeChapter.id,
                 title: Text(displayChapterName(_chapters[index].name)),
                 onTap: () => Navigator.pop(context, _chapters[index]),
@@ -470,6 +485,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _stepPage(int delta) {
+    _stopAutoScroll();
     if (!_itemScroll.isAttached || _pageCount == 0) return;
     final next = _visiblePage.value + delta;
     if (next < 0 || next >= _pageCount) return;
@@ -481,6 +497,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _openTitle() {
+    _stopAutoScroll();
     _saveTimer?.cancel();
     unawaited(_flushPosition());
     Navigator.push(context, MaterialPageRoute(builder: (_) => DetailPage(
@@ -515,6 +532,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _jumpPage(int index) {
+    _stopAutoScroll();
     final itemIndex = _itemIndexForPage(_activeChapter, index);
     if (itemIndex != null && _itemScroll.isAttached) {
       _itemScroll.jumpTo(index: itemIndex);
@@ -522,6 +540,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _goToRoot(int destination) {
+    _stopAutoScroll();
     _saveTimer?.cancel();
     unawaited(_flushPosition());
     mainTabRequest.value = destination;
@@ -551,22 +570,58 @@ class _ReaderPageState extends State<ReaderPage> {
     });
   }
 
-  void _toggleAutoscroll() {
-    if (_autoScrollTimer != null) {
-      _autoScrollTimer!.cancel();
-      setState(() => _autoScrollTimer = null);
-    } else {
-      setState(() => _autoScrollTimer = Timer.periodic(
-        Duration(milliseconds: (_autoScrollSeconds * 1000).round()),
-        (timer) {
-          if (!mounted || _visiblePage.value >= _pageCount - 1) {
-            timer.cancel();
-            if (mounted) setState(() => _autoScrollTimer = null);
-            return;
-          }
-          _stepPage(1);
-        }));
+  void _stopAutoScroll({bool updateUi = true}) {
+    // Invalidate any in-flight animation continuation on pause or dispose.
+    _autoScrollRun++;
+    if (!_autoScrolling) return;
+    _autoScrolling = false;
+    if (mounted && updateUi) setState(() {});
+  }
+
+  Future<void> _runAutoScroll(int run) async {
+    // Each animation moves a small, fixed number of physical pixels. Unlike
+    // jumping by image index, this never skips the middle of tall webtoon pages.
+    const frame = Duration(milliseconds: 160);
+    while (mounted && _autoScrolling && run == _autoScrollRun) {
+      if (!_itemScroll.isAttached || _segments.isEmpty) {
+        _stopAutoScroll();
+        break;
+      }
+      if (_autoAtBottom && _atSeriesEnd) {
+        _stopAutoScroll();
+        break;
+      }
+      if (_autoAtBottom && (_nextLoading || _nextScheduled)) {
+        // Do not spin against the footer while the next chapter is loading.
+        await Future<void>.delayed(frame);
+        continue;
+      }
+      // The existing slider remains valid: N seconds per *viewport*, not per
+      // source image. Thus a 5-screen-high image scrolls for ~5N seconds.
+      final pixels = MediaQuery.sizeOf(context).height /
+          _autoScrollSeconds * (frame.inMilliseconds / 1000);
+      try {
+        await _scrollOffset.animateScroll(
+          offset: pixels, duration: frame, curve: Curves.linear);
+      } catch (_) {
+        if (mounted && run == _autoScrollRun) _stopAutoScroll();
+        return;
+      }
+      if (_autoAtBottom && mounted && run == _autoScrollRun) {
+        await Future<void>.delayed(frame);
+      }
     }
+  }
+
+  void _toggleAutoscroll() {
+    if (_autoScrolling) {
+      _stopAutoScroll();
+      return;
+    }
+    if (!_itemScroll.isAttached || _segments.isEmpty) return;
+    setState(() => _autoScrolling = true);
+    final run = ++_autoScrollRun;
+    unawaited(_runAutoScroll(run));
   }
 
   void _readerSettings() {
@@ -619,7 +674,7 @@ class _ReaderPageState extends State<ReaderPage> {
               Slider(min: 30, max: 100, divisions: 14, value: _brightness,
                 onChanged: (v) => update(() => _brightness = v, 'brightness', v)),
               ListTile(title: Text('Скорость автопрокрутки: ' +
-                  _autoScrollSeconds.round().toString() + ' сек./стр.')),
+                  _autoScrollSeconds.round().toString() + ' сек./экран')),
               Slider(min: 1, max: 12, divisions: 11, value: _autoScrollSeconds,
                 onChanged: (v) => update(() => _autoScrollSeconds = v,
                   'autoscroll', v)),
@@ -679,10 +734,10 @@ class _ReaderPageState extends State<ReaderPage> {
                     ),
                   )
                 else const SizedBox(width: 8),
-                IconButton(tooltip: _autoScrollTimer == null
+                IconButton(tooltip: !_autoScrolling
                     ? 'Автопрокрутка' : 'Остановить автопрокрутку',
                   onPressed: _pageCount > 0 ? _toggleAutoscroll : null,
-                  icon: Icon(_autoScrollTimer == null
+                  icon: Icon(!_autoScrolling
                     ? Icons.play_circle_outline : Icons.pause_circle_outline)),
                 IconButton(tooltip: 'Следующая глава',
                   onPressed: () => _stepChapter(1),
@@ -719,6 +774,14 @@ class _ReaderPageState extends State<ReaderPage> {
           final initialIndex = _resumePage.clamp(0, pages.length - 1).toInt();
           return NotificationListener<ScrollNotification>(
             onNotification: (notice) {
+              if (notice is ScrollStartNotification &&
+                  notice.dragDetails != null && _autoScrolling) {
+                // A user's swipe takes priority over automatic scrolling.
+                _stopAutoScroll();
+              }
+              if (notice is ScrollUpdateNotification) {
+                _autoAtBottom = notice.metrics.extentAfter <= 4;
+              }
               if (notice is ScrollUpdateNotification &&
                   (notice.scrollDelta ?? 0) > 0) {
                 _hasForwardScrolled = true;
@@ -738,6 +801,7 @@ class _ReaderPageState extends State<ReaderPage> {
             key: ValueKey('${widget.sourceKey}:${widget.chapter.id}'),
             itemPositionsListener: _positions,
             itemScrollController: _itemScroll,
+            scrollOffsetController: _scrollOffset,
             initialScrollIndex: initialIndex,
             itemCount: _itemCount,
             itemBuilder: (context, index) {
