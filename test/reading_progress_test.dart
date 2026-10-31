@@ -65,6 +65,6 @@ void main() {
     await library.unmarkRead(book, chapter, 'readmanga');
     await library.load();
     expect(library.isChapterRead(book, chapter, 'readmanga'), false);
-    expect(library.get(book)!.lastPageIndex, 4);
+    expect(library.get(book)!.lastPageIndex, 0); // Explicit unread rewinds to page 1.
   });
 }
