@@ -100,6 +100,7 @@ class _MainShellState extends State<MainShell> {
 
   bool _catalogLoadingMore = false;
   bool _catalogHasMore = false;
+  int _catalogNextOffset = 30;
   int _catalogGeneration = 0;
 
   Future<void> _loadMoreCatalog() async {
@@ -107,7 +108,9 @@ class _MainShellState extends State<MainShell> {
     final source = widget.repository.sources['senkuro'];
     if (source is! SenkuroSource) return;
     final current = result?.books ?? const <UnifiedManga>[];
-    final offset = current.length;
+    // Server offset is the number of remote rows consumed, not the number
+    // of unique visible cards: duplicates must not break paging.
+    final offset = _catalogNextOffset;
     if (offset > 970 || offset % 10 != 0) return;
     final version = _catalogGeneration;
     setState(() => _catalogLoadingMore = true);
@@ -126,6 +129,7 @@ class _MainShellState extends State<MainShell> {
           for (final item in fresh)
             UnifiedManga(title: item.title, entries: {'senkuro': item}),
         ], warnings: result?.warnings ?? const []);
+        _catalogNextOffset = offset + matches.length;
         _catalogHasMore = matches.length == 30 && fresh.isNotEmpty &&
             offset + matches.length <= 970;
       });
@@ -190,6 +194,7 @@ class _MainShellState extends State<MainShell> {
       result = next;
       if (!isCatalog && thisQuery.isEmpty) _homeResult = next;
       loading = false;
+      _catalogNextOffset = 30;
       _catalogHasMore = isCatalog && senkuro is SenkuroSource &&
           next.books.length == 30 && (sort == 'rating' || status != null ||
           translation != null || label != null);
