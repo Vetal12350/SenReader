@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Idempotently prepare flutter-created Android project for chapter alerts."""
 from pathlib import Path
+import re
+import shutil
 
 manifest = Path('android/app/src/main/AndroidManifest.xml')
 gradle = Path('android/app/build.gradle.kts')
@@ -12,7 +14,34 @@ for permission in ('INTERNET', 'POST_NOTIFICATIONS'):
     line = '<uses-permission android:name="android.permission.' + permission + '" />'
     if line not in body:
         body = body.replace('<application', '    ' + line + '\n    <application', 1)
+
+# Use the same, correctly capitalized brand in the Android launcher and Settings.
+# Flutter's generated manifest defaults to the lowercase project/package name.
+if '<application' not in body:
+    raise SystemExit('Expected generated Android application tag')
+body = re.sub(r'(\<application\b[^>]*?)\s+android:(?:label|icon|roundIcon)="[^"]*"', r'\1', body, count=0)
+body = body.replace('<application',
+    '<application android:label="SenReader" '
+    'android:icon="@mipmap/senreader_launcher" '
+    'android:roundIcon="@mipmap/senreader_launcher"', 1)
 manifest.write_text(body, encoding='utf-8')
+
+# Flutter creates the Android wrapper at build time. Copy committed vector
+# assets into it on every build, including CI, without external converters.
+assets = Path(__file__).resolve().parent.parent / 'branding' / 'android'
+res = manifest.parent / 'res'
+copies = {
+    'senreader_launcher_legacy.xml': 'mipmap-anydpi/senreader_launcher.xml',
+    'senreader_launcher_adaptive.xml': 'mipmap-anydpi-v26/senreader_launcher.xml',
+    'senreader_launcher_foreground.xml': 'drawable/senreader_launcher_foreground.xml',
+    'senreader_launcher_monochrome.xml': 'drawable/senreader_launcher_monochrome.xml',
+    'senreader_launcher_colors.xml': 'values/senreader_launcher_colors.xml',
+}
+for source, destination in copies.items():
+    target = res / destination
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(assets / source, target)
+
 
 # flutter_local_notifications 22 requires Java API desugaring even for
 # immediate notifications. This applies only to the generated debug/release
