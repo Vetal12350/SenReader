@@ -43,6 +43,8 @@ void main() {
     // placeholder and subsequently jump to a 3600px rendered image.
     expect(readerLogicalImageHeight(360, 1000, 10000), 3600);
     expect(readerLogicalImageHeight(400, 1200, 2400), 800);
+    // The downsampled decoder preserves the ratio of a high-density image.
+    expect(readerLogicalImageHeight(360, 1600, 12800), 2880);
     expect(readerLogicalImageHeight(400, 0, 1000), isNull);
     expect(readerLogicalImageHeight(-1, 1000, 1000), isNull);
     expect(readerLogicalImageHeight(360, 1, 1000000), isNull);
