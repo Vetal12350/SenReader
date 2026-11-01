@@ -158,35 +158,49 @@ void main() {
     expect((await checker.check()).discoveries.single.canonicalKey, 'v0:c2');
   });
 
-  test('only explicit source switch scans another source and silently baselines it', () async {
-    final a = FakeSource('senkuro')..chapters = [const Chapter(id: '1', name: 'Глава 1')];
-    final b = FakeSource('remanga')..chapters = [const Chapter(id: '99', name: 'Глава 99')];
+  test('newly linked source silently baselines then reports its new chapter', () async {
+    final a = FakeSource('senkuro')
+      ..chapters = [const Chapter(id: 's1', name: 'Глава 1')];
+    final b = FakeSource('readmanga')
+      ..chapters = [const Chapter(id: 'r99', name: 'Глава 99')];
     final library = await makeLibrary([a]);
-    await ChapterChecker(repository: CatalogRepository(sources: {'senkuro': a}),
-      library: library).check();
     final checker = ChapterChecker(repository: CatalogRepository(sources: {
-      'senkuro': a, 'remanga': b,
+      'senkuro': a, 'readmanga': b,
     }), library: library);
-    expect((await checker.check()).discoveries, isEmpty);
+    await checker.check();
     expect(b.detailCalls, 0);
-    expect(b.searchCalls, 0);
+    final linked = library.items.single.toUnified();
+    linked.entries['readmanga'] =
+        const MangaEntry(source: 'readmanga', id: '1', title: 'Example');
+    await library.add(linked);
+    expect((await checker.check()).discoveries, isEmpty);
     expect(library.items.single.preferredSource, 'senkuro');
+    expect(library.items.single.initializedSources, contains('readmanga'));
+    b.chapters = [const Chapter(id: 'r100', name: 'Глава 100')];
+    expect((await checker.check()).discoveries.single.sourceKey, 'readmanga');
+    expect((await checker.check()).discoveries, isEmpty);
+  });
+
+  test('already-read chapter from a linked source never alerts twice', () async {
+    final a = FakeSource('senkuro')
+      ..chapters = [const Chapter(id: 's70', name: 'Глава 70')];
+    final b = FakeSource('readmanga')
+      ..chapters = [const Chapter(id: 'r70', name: 'Глава 70')];
+    final library = await makeLibrary([a, b]);
     final book = library.items.single.toUnified();
-    book.entries['remanga'] = const MangaEntry(source: 'remanga', id: '1', title: 'Example');
-    await library.add(book);
-    await library.setPreferredSource(book, 'remanga');
-    final oldCalls = a.detailCalls;
-    expect((await checker.check()).discoveries, isEmpty);
-    expect(a.detailCalls, oldCalls);
-    expect(b.detailCalls, 1);
-    expect(library.items.single.initializedSources, contains('remanga'));
-    expect(library.items.single.seenChapterKeys, contains('v0:c99'));
-    b.chapters = [const Chapter(id: '100', name: 'Глава 100')];
-    expect((await checker.check()).discoveries.single.sourceKey, 'remanga');
-    expect((await checker.check()).discoveries, isEmpty);
-    expect(library.items.single.entries.keys, containsAll(['senkuro', 'remanga']));
-    await library.setPreferredSource(book, 'senkuro');
-    await library.setPreferredSource(book, 'remanga');
+    await library.markRead(book, b.chapters.first, 'readmanga');
+    final checker = ChapterChecker(repository: CatalogRepository(sources: {
+      'senkuro': a, 'readmanga': b,
+    }), library: library);
+    await checker.check();
+    a.chapters = [
+      const Chapter(id: 's70new', name: 'Глава 70'),
+      const Chapter(id: 's71', name: 'Глава 71'),
+    ];
+    b.available = false;
+    final next = await checker.check();
+    expect(next.discoveries.map((d) => d.canonicalKey), ['v0:c71']);
+    expect(next.warnings, isNotEmpty);
     expect((await checker.check()).discoveries, isEmpty);
   });
 
@@ -223,7 +237,6 @@ void main() {
     expect((await checking).discoveries, isEmpty);
     expect(library.items.single.preferredSource, 'remanga');
     expect(library.items.single.seenChapterKeys, isNot(contains('v0:c2')));
-    expect(other.detailCalls, 0);
   });
 
   test('ambiguous different-title sources are never silently joined', () async {
