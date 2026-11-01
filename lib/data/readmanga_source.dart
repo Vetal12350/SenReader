@@ -132,6 +132,48 @@ class ReadMangaSource implements MangaSource {
     return parseTiles(await _html(uri));
   }
 
+  /// Extract an upload date from the same chapter row as its link.
+  /// ZazaZa displays DD.MM.YY on desktop; a missing/invalid date stays null.
+  /// Never use the current time or the title's own publication date.
+  static DateTime? chapterUploadDate(dom.Element row) {
+    final candidates = row.querySelectorAll(
+      'time, [datetime], [data-date], .chapter-date, .date, td');
+    for (final node in candidates) {
+      // A chapter title could include a date; only inspect its metadata cells.
+      if (node.localName == 'td' &&
+          node.querySelector('a.chapter-link, a[href*="/vol"]') != null) {
+        continue;
+      }
+      for (final raw in [
+        node.attributes['datetime'],
+        node.attributes['data-date'],
+        node.attributes['title'],
+        node.text,
+      ]) {
+        if (raw == null || raw.trim().isEmpty) continue;
+        final iso = sourceChapterDate(raw.trim());
+        if (iso != null) return iso;
+        final match = RegExp(
+          r'(?<![0-9])([0-3]?[0-9])\\.([01]?[0-9])\\.([0-9]{2}|[0-9]{4})(?![0-9])'
+        ).firstMatch(raw);
+        if (match == null) continue;
+        final day = int.parse(match.group(1)!);
+        final month = int.parse(match.group(2)!);
+        final yearText = match.group(3)!;
+        final year = yearText.length == 2
+            ? 2000 + int.parse(yearText) : int.parse(yearText);
+        if (year < 2000 || month < 1 || month > 12 ||
+            day < 1 || day > 31) continue;
+        final date = DateTime(year, month, day);
+        if (date.year == year && date.month == month && date.day == day &&
+            !date.isAfter(DateTime.now().add(const Duration(days: 2)))) {
+          return date;
+        }
+      }
+    }
+    return null;
+  }
+
   @override Future<MangaDetail> detail(MangaEntry entry) async {
     final doc = html_parser.parse(await _html(_absolute(entry.id)));
     final h1 = doc.querySelector('h1.cr-hero-names__main') ??
@@ -172,7 +214,8 @@ class ReadMangaSource implements MangaSource {
       final name = match == null ? rawName
           : 'Глава ${match.group(2)}${match.group(3)?.isNotEmpty == true ? ': ${match.group(3)}' : ''} (т. ${match.group(1)})';
       final suffix = href.contains('?') ? '&mtr=true' : '?mtr=true';
-      chapters.add(Chapter(id: '$href$suffix', name: name));
+      chapters.add(Chapter(id: '$href$suffix', name: name,
+          publishedAt: chapterUploadDate(row)));
     }
     return MangaDetail(entry: MangaEntry(source: key, id: entry.id, title: name,
         coverUrl: cover.isNotEmpty ? cover : entry.coverUrl),
