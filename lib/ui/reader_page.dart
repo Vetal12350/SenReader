@@ -36,6 +36,17 @@ class _VisibleChapterPage {
 int readerDecodeWidth(double logicalWidth, double pixelRatio) =>
     (logicalWidth * pixelRatio).ceil().clamp(1, 1600).toInt();
 
+/// Reserve the actual aspect-ratio height before an upcoming webtoon page
+/// enters the viewport. The decoded size may be smaller than its CDN original.
+double? readerLogicalImageHeight(
+    double logicalWidth, int decodedWidth, int decodedHeight) {
+  if (!logicalWidth.isFinite || logicalWidth <= 0 ||
+      decodedWidth <= 0 || decodedHeight <= 0) return null;
+  final height = logicalWidth * decodedHeight / decodedWidth;
+  if (!height.isFinite || height <= 0 || height > 50000) return null;
+  return height;
+}
+
 class _RetryableReaderImage extends StatefulWidget {
   const _RetryableReaderImage({super.key, required this.page,
     required this.pageIndex, required this.width,
@@ -133,7 +144,8 @@ class _RetryableReaderImageState extends State<_RetryableReaderImage> {
       errorBuilder: (context, error, stack) {
         _scheduleRetry(provider);
         return Container(
-          height: 170, color: Colors.white10,
+          height: widget.height ?? widget.knownHeight ?? widget.width * 1.5,
+          color: Colors.white10,
           alignment: Alignment.center,
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             Text('Страница ${widget.pageIndex + 1} не загрузилась',
@@ -182,6 +194,11 @@ class _ReaderPageState extends State<ReaderPage> {
   // Stores page heights for the whole active chapter; prevents sliver
   // layout reflow when already-loaded pages are recycled off-screen.
   final Map<String, double> _knownPageHeights = {};
+  // A maximum of two offscreen image decoders prepare geometry ahead of
+  // reading. Keep cancellable listeners out of the widget tree.
+  final Map<String, VoidCallback> _geometryProbes = {};
+  final Set<String> _geometryFailedKeys = {};
+  int? _lastGeometryVisibleIndex;
   int? _lastCompletionVisibleIndex;
   final Map<String, int> _chapterReloads = {};
   final Set<String> _refreshingChapterLinks = {};
@@ -294,6 +311,10 @@ class _ReaderPageState extends State<ReaderPage> {
   void _retryInitialChapter() {
     if (!mounted) return;
     _stopAutoScroll();
+    _cancelGeometryProbes();
+    _knownPageHeights.clear();
+    _geometryFailedKeys.clear();
+    _lastGeometryVisibleIndex = null;
     setState(() {
       // The failed future is never reused; no need to reopen the route.
       _segments.clear();
@@ -441,6 +462,65 @@ class _ReaderPageState extends State<ReaderPage> {
     }
   }
 
+  void _cancelGeometryProbes() {
+    for (final cancel in _geometryProbes.values.toList()) {
+      cancel();
+    }
+    _geometryProbes.clear();
+  }
+
+  void _preloadUpcomingGeometry(int visibleIndex) {
+    if (!mounted || _fitHeight) return;
+    final logicalWidth = MediaQuery.sizeOf(context).width;
+    if (logicalWidth <= 0) return;
+    final decodeWidth = readerDecodeWidth(
+        logicalWidth, MediaQuery.devicePixelRatioOf(context));
+
+    // Only two pages ahead: avoid full-chapter decoding and network bursts.
+    for (var index = visibleIndex + 1; index <= visibleIndex + 2; index++) {
+      if (_geometryProbes.length >= 2) break;
+      final item = _pageAt(index);
+      if (item == null || _knownPageHeights.containsKey(item.key) ||
+          _geometryFailedKeys.contains(item.key) ||
+          _geometryProbes.containsKey(item.key)) continue;
+      final segment = _segments.firstWhere(
+          (part) => part.chapter.id == item.chapter.id);
+      final page = segment.pages[item.index];
+      final provider = ResizeImage.resizeIfNeeded(decodeWidth, null,
+          NetworkImage(page.url, headers: page.headers));
+      final stream = provider.resolve(createLocalImageConfiguration(context));
+      late final ImageStreamListener listener;
+      late final Timer deadline;
+      void finish() {
+        deadline.cancel();
+        stream.removeListener(listener);
+        _geometryProbes.remove(item.key);
+      }
+
+      listener = ImageStreamListener((info, _) {
+        finish();
+        final height = readerLogicalImageHeight(
+            logicalWidth, info.image.width, info.image.height);
+        if (height != null && mounted) {
+          // The page will now keep this layout when it first becomes visible,
+          // including while the bitmap is being fetched from the image cache.
+          setState(() => _rememberHeight(item.key, height));
+        } else {
+          _geometryFailedKeys.add(item.key);
+        }
+      }, onError: (error, stack) {
+        finish();
+        _geometryFailedKeys.add(item.key);
+      });
+      deadline = Timer(const Duration(seconds: 12), () {
+        finish();
+        _geometryFailedKeys.add(item.key);
+      });
+      _geometryProbes[item.key] = finish;
+      stream.addListener(listener);
+    }
+  }
+
   void _onVisiblePages() {
     if (_segments.isEmpty) return;
     final visible = _positions.itemPositions.value.where((position) =>
@@ -460,9 +540,18 @@ class _ReaderPageState extends State<ReaderPage> {
       }
     }
 
+    // Prepare the next images' real aspect ratios rather than discovering
+    // their heights during a swipe and forcing a scroll layout correction.
+    final firstIndex = visible.isEmpty ? null : visible.first.index;
+    if (firstIndex != null && firstIndex != _lastGeometryVisibleIndex) {
+      _lastGeometryVisibleIndex = firstIndex;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _preloadUpcomingGeometry(firstIndex);
+      });
+    }
+
     // A full completion scan on every pixel of a long image can trigger
     // expensive work while dragging. Run it when a new item enters view.
-    final firstIndex = visible.isEmpty ? null : visible.first.index;
     if (firstIndex != _lastCompletionVisibleIndex) {
       _lastCompletionVisibleIndex = firstIndex;
       _autoCompletePassedChapters(visible);
@@ -526,7 +615,13 @@ class _ReaderPageState extends State<ReaderPage> {
         if (_activeChapter.id == chapter.id) _pageCount = pages.length;
         _loadedPageKeys.removeWhere((key) => key.startsWith('${chapter.id}|'));
         _loadingPageKeys.removeWhere((key) => key.startsWith('${chapter.id}|'));
+        _knownPageHeights.removeWhere((key, _) =>
+            key.startsWith('${chapter.id}|'));
+        _geometryFailedKeys.removeWhere((key) =>
+            key.startsWith('${chapter.id}|'));
+        _lastGeometryVisibleIndex = null;
       });
+      _cancelGeometryProbes();
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(
@@ -577,6 +672,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override void dispose() {
     _positions.itemPositions.removeListener(_onVisiblePages);
+    _cancelGeometryProbes();
     _stopAutoScroll(updateUi: false);
     if (_fullScreen) unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
     _saveTimer?.cancel();
