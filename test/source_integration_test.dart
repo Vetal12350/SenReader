@@ -107,6 +107,7 @@ void main() {
     expect(library.items.single.preferredSource, 'remanga');
     await selectSource(tester, 'senkuro');
     expect(library.items.single.preferredSource, 'senkuro');
+    await revealInScrollable(tester, find.text('Readable chapter'));
     expect(find.text('Readable chapter'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
