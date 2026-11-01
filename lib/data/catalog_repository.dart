@@ -23,7 +23,7 @@ class CatalogRepository {
           ? await source.popular()
           : await source.search(query.trim());
       } catch (e) {
-        warnings.add('${source.name}: $e');
+        warnings.add('Один из источников временно недоступен');
         return <MangaEntry>[];
       }
     });

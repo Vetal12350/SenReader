@@ -188,6 +188,7 @@ void main() {
       ..chapters = [const Chapter(id: 'r70', name: 'Глава 70')];
     final library = await makeLibrary([a, b]);
     final book = library.items.single.toUnified();
+    await library.setPreferredSource(book, 'readmanga');
     await library.markRead(book, b.chapters.first, 'readmanga');
     final checker = ChapterChecker(repository: CatalogRepository(sources: {
       'senkuro': a, 'readmanga': b,
