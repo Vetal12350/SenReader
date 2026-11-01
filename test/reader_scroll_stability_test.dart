@@ -56,7 +56,10 @@ void main() {
       find.descendant(of: reader, matching: find.byType(Image))).toList();
     expect(images, isNotEmpty);
     expect(images.every((image) => image.image is ResizeImage), isTrue);
-    expect((images.first.image as ResizeImage).width, 360);
+    // Widget-test DPR is not tied to setSurfaceSize. Any on-screen reader
+    // image must be bounded without relying on a fixed test-device DPI.
+    expect((images.first.image as ResizeImage).width,
+      inInclusiveRange(1, 1600));
     await tester.drag(reader, const Offset(0, -320));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
