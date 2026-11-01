@@ -42,7 +42,10 @@ class SenkuroRequestGate {
 
   Future<void> _sleep(Duration duration) async {
     if (duration <= Duration.zero) return;
-    if (_sleeper != null) return _sleeper(duration);
+    if (_sleeper != null) {
+      await _sleeper(duration);
+      return;
+    }
     await Future<void>.delayed(duration);
   }
 
