@@ -91,4 +91,26 @@ android {
     build = build.replace('signingConfig = signingConfigs.getByName("debug")',
                           'signingConfig = signingConfigs.getByName("senreaderStable")', 1)
 gradle.write_text(build, encoding='utf-8')
+# This disposable QA branch must install separately from production SenReader.
+# Keep the Kotlin/Flutter MainActivity package, but give Android a unique app ID.
+qa_package = 'app.senreader.senreader.scrollqa20261102'
+original_id = 'applicationId = "app.senreader.senreader"'
+qa_gradle = gradle.read_text(encoding='utf-8')
+if original_id in qa_gradle:
+    gradle.write_text(qa_gradle.replace(
+        original_id, f'applicationId = "{qa_package}"', 1),
+        encoding='utf-8')
+    qa_manifest = manifest.read_text(encoding='utf-8')
+    activity = 'android:name=".MainActivity"'
+    label = 'android:label="SenReader"'
+    if activity not in qa_manifest or label not in qa_manifest:
+        raise SystemExit('Expected generated Flutter activity and label not found')
+    qa_manifest = qa_manifest.replace(
+        activity, 'android:name="app.senreader.senreader.MainActivity"', 1)
+    qa_manifest = qa_manifest.replace(
+        label, 'android:label="SenReader Scroll QA"', 1)
+    manifest.write_text(qa_manifest, encoding='utf-8')
+elif 'applicationId =' in qa_gradle:
+    raise SystemExit('Unexpected generated Android application ID for QA')
+
 print('Android manifest and Gradle prepared for networking and notifications')

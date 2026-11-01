@@ -123,6 +123,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
       }
       tab = next;
     });
+    if (next == 0) unawaited(_refreshNewChapters());
     if (next == 1) unawaited(_fetch());
     if (next == 3) unawaited(_refreshInboxCount());
     if (next == 2 && widget.library.items.isNotEmpty) {
@@ -134,7 +135,10 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int _newUpdateCount = 0;
   Future<void> _refreshInboxCount() async {
     final entries = await ChapterInboxStore().load();
-    if (mounted) setState(() => _newUpdateCount = entries.where((e) => !e.hidden).length);
+    if (mounted) {
+      setState(() => _newUpdateCount = entries.where((e) => !e.hidden).length);
+      if (tab == 0) unawaited(_refreshNewChapters());
+    }
   }
 
   String libraryFilter = 'all';
@@ -213,6 +217,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(ChapterBackgroundScheduler.checkOnResume());
+      if (tab == 0) unawaited(_refreshNewChapters());
     }
   }
 
@@ -393,19 +398,35 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   }
 
   Future<void> _refreshNewChapters({bool force = false}) async {
+    final request = ++_suggestionRequest;
+    final saved = widget.library.items
+      .where((item) => item.lastChapter.isNotEmpty &&
+        item.lastSource == item.preferredSource &&
+        item.status == 'reading').toList()
+      ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
+    // All 68+ saved titles can have discovered updates, even if Home only
+    // performs network checks on its 12 most-recently-read titles.
+    final inbox = await ChapterInboxStore().load();
+    if (!mounted || request != _suggestionRequest) return;
+    final suggestions = unreadInboxSuggestions(saved, inbox);
+    for (final item in saved) {
+      final cached = eligibleNewChapter(item, _newChapters[item.key]);
+      if (cached == null) continue;
+      final current = suggestions[item.key];
+      if (current == null ||
+          (compareChapterChronology(cached, current) ?? 1) < 0) {
+        suggestions[item.key] = cached;
+      }
+    }
+    setState(() { _newChapters..clear()..addAll(suggestions); });
+
     final now = DateTime.now();
     if (!force && _lastSuggestionsRefreshAt != null &&
         now.difference(_lastSuggestionsRefreshAt!) <
             const Duration(minutes: 15)) return;
     _lastSuggestionsRefreshAt = now;
-    final request = ++_suggestionRequest;
-    final saved = widget.library.items
-      .where((item) => item.status == 'reading' &&
-        item.lastChapter.isNotEmpty &&
-        item.lastSource == item.preferredSource).toList()
-      ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
-    final suggestions = <String, Chapter>{};
-    // Two parallel source scans instead of bursts on every user gesture.
+    // Home network discovery is intentionally bounded to avoid bursts.
+    // Local notifications already cover the rest of the library.
     for (var i = 0; i < saved.length && i < 12; i += 2) {
       final verified = <(SavedBook, List<Chapter>)>[];
       await Future.wait(saved.skip(i).take(2).map((item) async {
@@ -422,7 +443,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
               current.preferredSource == item.preferredSource &&
               current.lastChapterId == item.lastChapterId &&
               current.lastSource == item.lastSource) {
-            suggestions[item.key] = fresh;
+            final previous = suggestions[item.key];
+            if (previous == null ||
+                (compareChapterChronology(fresh, previous) ?? 1) < 0) {
+              suggestions[item.key] = fresh;
+            }
           }
         } catch (_) {
           // Network failures never produce false-positive suggestions.

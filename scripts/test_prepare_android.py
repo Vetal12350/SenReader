@@ -16,14 +16,15 @@ def run_case(signed: bool):
         gradle.parent.mkdir(parents=True, exist_ok=True)
         manifest.write_text('<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
             '<application android:label="senreader" '
-            'android:icon="@mipmap/ic_launcher" /></manifest>',
+            'android:icon="@mipmap/ic_launcher">'
+            '<activity android:name=".MainActivity" /></application></manifest>',
             encoding="utf-8")
         gradle.write_text("""plugins {
     id("com.android.application")
 }
 android {
     compileSdk = flutter.compileSdkVersion
-    defaultConfig { minSdk = flutter.minSdkVersion }
+    defaultConfig { minSdk = flutter.minSdkVersion; applicationId = "app.senreader.senreader" }
     compileOptions {}
     buildTypes {
         release {
@@ -40,7 +41,8 @@ android {
             )
         subprocess.run([sys.executable, str(script)], cwd=root, check=True)
         body = manifest.read_text(encoding="utf-8")
-        assert 'android:label="SenReader"' in body
+        assert 'android:label="SenReader Scroll QA"' in body
+        assert 'android:name="app.senreader.senreader.MainActivity"' in body
         assert 'android:icon="@mipmap/senreader_launcher"' in body
         assert 'android:roundIcon="@mipmap/senreader_launcher"' in body
         assert body.count('android:label=') == 1
@@ -62,6 +64,7 @@ android {
         ).read_text()
         result = gradle.read_text(encoding="utf-8")
         assert "compileSdk = 36" in result
+        assert 'applicationId = "app.senreader.senreader.scrollqa20261102"' in result
         assert "isCoreLibraryDesugaringEnabled = true" in result
         if signed:
             assert result.startswith("import java.util.Properties\n")
