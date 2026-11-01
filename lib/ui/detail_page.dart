@@ -157,7 +157,11 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   void _fallback() {
-    if (widget.library.get(book)?.lastChapter.isNotEmpty == true) return;
+    // Preserve a saved reading position when its provider still exists.
+    // For a removed legacy provider, allow safe replacement without copying
+    // its chapter progress into the new provider.
+    if (widget.library.get(book)?.lastChapter.isNotEmpty == true &&
+        widget.repository.sources.containsKey(selected)) return;
     for (final source in book.entries.keys) {
       if (!_attempted.contains(source) && widget.repository.sources.containsKey(source)) {
         setState(() => selected = source);
@@ -366,7 +370,7 @@ class _DetailPageState extends State<DetailPage> {
             Text('${detail!.rating!.toStringAsFixed(1)} / 10',
               style: const TextStyle(fontWeight: FontWeight.w700)),
           ],
-          Chip(label: Text(widget.repository.sources[selected]?.name ?? selected)),
+          Chip(label: Text(widget.repository.sources[selected]?.name ?? 'Недоступный источник')),
         ]),
         if (detail?.publicationStatus != null ||
             detail?.translationStatus != null)
@@ -449,7 +453,7 @@ class _DetailPageState extends State<DetailPage> {
                 ])),
                 Expanded(child: Column(children: [
                   const Icon(Icons.menu_book_outlined),
-                  Text(widget.repository.sources[selected]?.name ?? selected,
+                  Text(widget.repository.sources[selected]?.name ?? 'Недоступный источник',
                     maxLines: 1, overflow: TextOverflow.ellipsis),
                 ])),
               ])),
