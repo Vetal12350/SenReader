@@ -13,12 +13,14 @@ class _ScheduleFakeSource implements MangaSource {
   @override String get name => key;
   @override Map<String, String> get imageHeaders => {};
   int scans = 0;
+  final List<String> scannedIds = [];
   bool online = true;
   List<Chapter> chapters = [const Chapter(id: '1', name: 'Глава 1')];
   @override Future<List<MangaEntry>> popular() async => [];
   @override Future<List<MangaEntry>> search(String query) async => [];
   @override Future<MangaDetail> detail(MangaEntry entry) async {
     scans++;
+    scannedIds.add(entry.id);
     if (!online) throw SourceException('offline');
     return MangaDetail(entry: entry, chapters: chapters);
   }
@@ -108,6 +110,39 @@ void main() {
     expect(second.checkedSources, 5);
     expect(second.skippedSources, 12);
     expect(source.scans, 17);
+  });
+
+  test('oldest scans win even when first 12 are due again', () async {
+    final source = _ScheduleFakeSource('senkuro');
+    final library = LibraryStore();
+    await library.load();
+    for (var i = 0; i < 17; i++) {
+      await library.setStatus(UnifiedManga(title: 'Book $i', entries: {
+        'senkuro': MangaEntry(source: 'senkuro', id: 'id$i',
+            title: 'Book $i'),
+      }), 'reading');
+    }
+    final now = DateTime.now();
+    final recentDue = now.subtract(const Duration(minutes: 35))
+        .millisecondsSinceEpoch;
+    final overdue = now.subtract(const Duration(minutes: 90))
+        .millisecondsSinceEpoch;
+    await ChapterScanScheduleStore().recordAttempts(library.profileId, {
+      for (final book in library.items)
+        ChapterScanPolicy.keyFor(
+            book, source.key, book.entries[source.key]!.id):
+          int.parse(book.entries[source.key]!.id.substring(2)) < 12
+              ? recentDue : overdue,
+    });
+    final checker = ChapterChecker(repository: CatalogRepository(
+        sources: {source.key: source}), library: library);
+    final result = await checker.check(smartSchedule: true);
+    expect(result.checkedSources, 12);
+    expect(result.skippedSources, 5);
+    // The five never-recently-scanned sources must be handled first.
+    expect(source.scannedIds.take(5).toSet(),
+        {'id12', 'id13', 'id14', 'id15', 'id16'});
+    expect(source.scannedIds.take(5).length, 5);
   });
 
   test('schedule timestamps are isolated between guest and account', () async {
