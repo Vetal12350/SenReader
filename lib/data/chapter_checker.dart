@@ -82,6 +82,31 @@ class ChapterChecker {
     var checked = 0;
     final savedBooks = library.items.where(
         (saved) => saved.status == 'reading').toList();
+    if (smartSchedule) {
+      // With a bounded batch, always taking library order can starve books
+      // near the end when Android delays the worker for 30+ minutes: the
+      // first 12 become due again before the remaining sources are visited.
+      // Give priority to the least recently attempted *trusted source*
+      // within each book, regardless of library insertion/order.
+      int oldestSourceAttempt(SavedBook saved) {
+        int? oldest;
+        for (final entry in saved.entries.entries) {
+          if (!repository.sources.containsKey(entry.key) ||
+              !_trustedLink(saved, entry.key)) continue;
+          final key = ChapterScanPolicy.keyFor(
+              saved, entry.key, entry.value.id);
+          final attempted = lastAttempts[key] ?? 0;
+          if (oldest == null || attempted < oldest) oldest = attempted;
+        }
+        return oldest ?? 0;
+      }
+
+      savedBooks.sort((a, b) {
+        final order = oldestSourceAttempt(a)
+            .compareTo(oldestSourceAttempt(b));
+        return order != 0 ? order : a.key.compareTo(b.key);
+      });
+    }
     for (final saved in savedBooks) {
       checked++;
       originalSource[saved.key] = saved.preferredSource;
