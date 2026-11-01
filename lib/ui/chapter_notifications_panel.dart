@@ -68,8 +68,10 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
           ),
           Text(
             'Проверки раз в 15 минут — по возможности Android: Doze и экономия батареи '
-            'могут задерживать их. Только книги со статусом «Читаю» '
-            'проверяются примерно раз в 30 минут. «В планах» и «Прочитано» '
+            'могут задерживать их. За один запуск проверяется до 12 источников; '
+            'при большой библиотеке очередь занимает несколько запусков. '
+            'Только книги со статусом «Читаю» проверяются не чаще '
+            'раза в 30 минут. «В планах» и «Прочитано» '
             'не проверяются даже при ручном обновлении уведомлений. '
             'При открытии приложения пропущенные проверки выполняются автоматически. '
             'Мгновенная доставка не гарантируется.',
@@ -84,7 +86,7 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
               '${lastRun!.at.hour.toString().padLeft(2, '0')}:'
               '${lastRun!.at.minute.toString().padLeft(2, '0')}. '
               'Источников проверено: ${lastRun!.checkedSources}, '
-              'пропущено по расписанию: ${lastRun!.skippedSources}, '
+              'отложено (интервал или очередь): ${lastRun!.skippedSources}, '
               'найдено глав: ${lastRun!.foundChapters}.',
               style: TextStyle(fontSize: 12,
                   color: Theme.of(context).colorScheme.onSurfaceVariant),
