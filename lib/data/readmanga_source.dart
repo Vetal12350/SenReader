@@ -154,7 +154,7 @@ class ReadMangaSource implements MangaSource {
         final iso = sourceChapterDate(raw.trim());
         if (iso != null) return iso;
         final match = RegExp(
-          r'(?<![0-9])([0-3]?[0-9])\\.([01]?[0-9])\\.([0-9]{2}|[0-9]{4})(?![0-9])'
+          r'\b([0-3]?[0-9])\.([01]?[0-9])\.([0-9]{4}|[0-9]{2})\b'
         ).firstMatch(raw);
         if (match == null) continue;
         final day = int.parse(match.group(1)!);
