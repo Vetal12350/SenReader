@@ -35,7 +35,7 @@ class ChapterBackgroundScanSummary {
   final int checkedSources, skippedSources, foundChapters, warnings;
 }
 
-/// SharedPreferencesAsync reads fresh state from the background isolate.
+/// Reloadable SharedPreferences reads fresh state from the background isolate.
 class ChapterScanScheduleStore {
   static const _prefix = 'senreader.chapter_scan_schedule.v1';
   static const _lastPrefix = 'senreader.chapter_scan_last.v1';
@@ -78,14 +78,15 @@ class ChapterScanScheduleStore {
     await (await _prefs()).setString('$_prefix${_suffix(profile)}', jsonEncode(latest));
   }
 
-  Future<void> recordRun(String profile, ChapterBackgroundScanSummary value) async =>
-      (await _prefs()).setString('$_lastPrefix${_suffix(profile)}', jsonEncode({
-        'at': value.at.millisecondsSinceEpoch,
-        'checked': value.checkedSources,
-        'skipped': value.skippedSources,
-        'found': value.foundChapters,
-        'warnings': value.warnings,
-      }));
+  Future<void> recordRun(String profile, ChapterBackgroundScanSummary value) async {
+    await (await _prefs()).setString('$_lastPrefix${_suffix(profile)}', jsonEncode({
+      'at': value.at.millisecondsSinceEpoch,
+      'checked': value.checkedSources,
+      'skipped': value.skippedSources,
+      'found': value.foundChapters,
+      'warnings': value.warnings,
+    }));
+  }
 
   Future<ChapterBackgroundScanSummary?> lastRun(String profile) async {
     final raw = (await _prefs()).getString('$_lastPrefix${_suffix(profile)}');
