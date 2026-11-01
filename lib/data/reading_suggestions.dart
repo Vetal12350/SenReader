@@ -1,5 +1,6 @@
 import '../core/chapter_identity.dart';
 import '../core/models.dart';
+import 'chapter_inbox_store.dart';
 import 'library_store.dart';
 
 /// Only source-backed, chronologically newer unread chapters qualify for
@@ -18,6 +19,46 @@ Chapter? nextAvailableChapter(SavedBook saved, Iterable<Chapter> chapters) {
           sourceChapterKey(chapter, saved.lastSource));
   }).toList()..sort((a, b) => compareChapterChronology(a, b)!);
   return candidates.isEmpty ? null : candidates.first;
+}
+
+/// An old cached suggestion stops being new as soon as its chapter is
+/// opened/read, or when the saved chapter advances to the same number.
+/// This guard is also used when the home page was not refreshed.
+Chapter? eligibleNewChapter(SavedBook saved, Chapter? candidate) {
+  if (candidate == null || saved.lastChapter.isEmpty ||
+      saved.lastSource.isEmpty || saved.lastSource != saved.preferredSource ||
+      saved.status == 'completed' || saved.status == 'dropped' ||
+      saved.status == 'viewed') return null;
+  final last = Chapter(id: saved.lastChapterId, name: saved.lastChapter);
+  final order = compareChapterChronology(candidate, last);
+  if (order == null || order <= 0) return null;
+  if (saved.readChapterKeys.contains(
+      sourceChapterKey(candidate, saved.lastSource))) return null;
+  return candidate;
+}
+
+/// Already verified inbox discoveries can feed Continue without another
+/// network scan of the same books. Ignore archives, alternate translations,
+/// unlinked and already-read chapters. Earliest unread chapter wins.
+Map<String, Chapter> unreadInboxSuggestions(Iterable<SavedBook> savedBooks,
+    Iterable<InboxEntry> inbox) {
+  final books = {for (final book in savedBooks) book.key: book};
+  final suggestions = <String, Chapter>{};
+  for (final entry in inbox) {
+    if (entry.hidden) continue;
+    final saved = books[entry.bookKey];
+    if (saved == null || saved.preferredSource != entry.source ||
+        !saved.entries.containsKey(entry.source)) continue;
+    final chapter = Chapter(id: entry.chapterId, name: entry.chapterName);
+    final candidate = eligibleNewChapter(saved, chapter);
+    if (candidate == null) continue;
+    final previous = suggestions[saved.key];
+    if (previous == null ||
+        (compareChapterChronology(candidate, previous) ?? 1) < 0) {
+      suggestions[saved.key] = candidate;
+    }
+  }
+  return suggestions;
 }
 
 /// Progress is independent from a suggestion that a newer chapter exists.
@@ -53,7 +94,7 @@ bool showContinueCard(SavedBook saved, {Chapter? newlyAvailable}) {
   if (saved.lastChapter.isEmpty || saved.lastSource != saved.preferredSource ||
       saved.status == 'completed' || saved.status == 'dropped' ||
       (saved.status == 'viewed' && saved.lastChapter.isEmpty)) return false;
-  if (newlyAvailable != null) return true;
+  if (eligibleNewChapter(saved, newlyAvailable) != null) return true;
   // Even when partially read, the current LAST available chapter should
   // not appear in Continue: it is not a remaining chapter to catch up on.
   if (saved.latestKnownSource == saved.lastSource &&
