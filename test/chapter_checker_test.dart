@@ -102,6 +102,10 @@ void main() {
     final first = await checker.check();
     expect(first.discoveries.map((d) => d.canonicalKey), ['v0:c113']);
     expect(library.items.single.initializedSources, contains('readmanga'));
+    // The foreground inbox/background notification service records delivery
+    // after check() returns; simulate that handoff to prevent replay.
+    await ChapterInboxStore().add(library.items.single.key, 'Example', '',
+        'readmanga', source.chapters.first);
     expect((await checker.check()).discoveries, isEmpty);
     final reopened = LibraryStore();
     await reopened.load();
