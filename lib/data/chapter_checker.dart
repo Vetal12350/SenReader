@@ -56,7 +56,8 @@ class ChapterChecker {
     });
   }
 
-  /// Manual scans are always exhaustive; only background scans are scheduled.
+  /// Manual scans cover every title in "Читаю"; background ones are
+  /// additionally staggered. No scanning of other library statuses.
   Future<ChapterScanReport> check({bool diagnostics = false,
       bool smartSchedule = false}) async {
     final discoveries = <ChapterDiscovery>[];
@@ -79,18 +80,9 @@ class ChapterChecker {
       if (canonical != null) delivered.add('${entry.bookKey}|$canonical');
     }
     var checked = 0;
-    final savedBooks = List<SavedBook>.of(library.items);
-    if (smartSchedule) {
-      int priority(SavedBook book) => switch (book.status) {
-        'reading' => 0,
-        'planned' => 1,
-        'completed' => 2,
-        _ => 3,
-      };
-      savedBooks.sort((a, b) => priority(a).compareTo(priority(b)));
-    }
+    final savedBooks = library.items.where(
+        (saved) => saved.status == 'reading').toList();
     for (final saved in savedBooks) {
-      if (saved.status == 'viewed' || saved.status == 'dropped') continue;
       checked++;
       originalSource[saved.key] = saved.preferredSource;
       final book = saved.toUnified();
@@ -124,7 +116,7 @@ class ChapterChecker {
               : await source.detail(entry);
           await library.load();
           var current = library.get(book);
-          if (current == null ||
+          if (current == null || current.status != 'reading' ||
               current.preferredSource != originalSource[saved.key] ||
               current.entries[sourceKey]?.id != entry.id) continue;
           final chapters = <String, Chapter>{};
@@ -206,7 +198,7 @@ class ChapterChecker {
             }
             await library.load();
             current = library.get(book);
-            if (current == null ||
+            if (current == null || current.status != 'reading' ||
                 current.preferredSource != originalSource[saved.key] ||
                 current.entries[sourceKey]?.id != entry.id) continue;
             await library.recordChapterScan(current.key, sourceKey,
@@ -285,7 +277,7 @@ class ChapterChecker {
           if (verified.isEmpty && recovered.isEmpty) continue;
           await library.load();
           current = library.get(book);
-          if (current == null ||
+          if (current == null || current.status != 'reading' ||
               current.preferredSource != originalSource[saved.key] ||
               current.entries[sourceKey]?.id != entry.id) continue;
           final newKeys = verified.keys.where((key) =>
@@ -320,9 +312,12 @@ class ChapterChecker {
     if (library.profileId == scanProfile) {
       await schedule.recordAttempts(scanProfile, attempts);
     }
-    discoveries.removeWhere((d) =>
-        library.get(d.book)?.preferredSource !=
-            originalSource[normalizedTitle(d.book.title)]);
+    discoveries.removeWhere((d) {
+      final current = library.get(d.book);
+      return current == null || current.status != 'reading' ||
+          current.preferredSource !=
+              originalSource[normalizedTitle(d.book.title)];
+    });
     return ChapterScanReport(discoveries, warnings, checked,
         diagnostics: scanDetails, checkedSources: checkedSources,
         skippedSources: skippedSources);

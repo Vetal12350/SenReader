@@ -5,17 +5,15 @@ import 'library_store.dart';
 /// Source-scoped check timing stays on the device and never touches the
 /// cloud-synced library, read markers, or the active reading source.
 class ChapterScanPolicy {
-  static Duration intervalFor(String status) => switch (status) {
-    'reading' => const Duration(minutes: 30),
-    'planned' => const Duration(hours: 6),
-    'completed' => const Duration(hours: 24),
-    _ => const Duration(hours: 24),
-  };
+  // Only titles in the actual reading list are eligible for checks.
+  static Duration intervalFor(String status) => status == 'reading'
+      ? const Duration(minutes: 30) : Duration.zero;
 
   static String keyFor(SavedBook book, String sourceKey, String sourceId) =>
       jsonEncode([book.key, sourceKey, sourceId]);
 
   static bool isDue(String status, int? lastAttemptMs, DateTime now) {
+    if (status != 'reading') return false;
     if (lastAttemptMs == null || lastAttemptMs <= 0) return true;
     final delta = now.millisecondsSinceEpoch - lastAttemptMs;
     // Wall-clock changes must not suppress checks indefinitely.

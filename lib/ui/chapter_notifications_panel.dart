@@ -62,14 +62,15 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Уведомлять о новых главах'),
-            subtitle: const Text('Автопроверка доступных источников без повторов'),
+            subtitle: const Text('Автопроверка только произведений в разделе «Читаю»'),
             value: enabled,
             onChanged: loading ? null : _toggle,
           ),
           Text(
             'Проверки раз в 15 минут — по возможности Android: Doze и экономия батареи '
-            'могут задерживать их. Читаемые книги проверяются примерно раз '
-            'в 30 минут, отложенные — раз в 6 часов, прочитанные — раз в сутки. '
+            'могут задерживать их. Только книги со статусом «Читаю» '
+            'проверяются примерно раз в 30 минут. «В планах» и «Прочитано» '
+            'не проверяются даже при ручном обновлении уведомлений. '
             'При открытии приложения пропущенные проверки выполняются автоматически. '
             'Мгновенная доставка не гарантируется.',
             style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
