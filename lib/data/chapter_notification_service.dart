@@ -93,7 +93,9 @@ class ChapterNotificationService {
       // A source may have changed while the checker or Android was waiting.
       final library = LibraryStore();
       await library.load();
-      if (library.get(release.book)?.preferredSource != release.sourceKey ||
+      final saved = library.get(release.book);
+      if (saved == null || saved.status == 'dropped' ||
+          !saved.entries.containsKey(release.sourceKey) ||
           !await ChapterAlertPreferences().enabled()) continue;
       await ChapterInboxStore().add(normalizedTitle(release.book.title),
         release.book.title, release.book.coverUrl,
@@ -101,7 +103,7 @@ class ChapterNotificationService {
       await _plugin.show(
         id: notificationId(release),
         title: release.book.title,
-        body: release.chapter.name + ' · ' + release.sourceKey,
+        body: release.chapter.name,
         notificationDetails: const NotificationDetails(
           android: AndroidNotificationDetails(
             'senreader_new_chapters', 'Новые главы',

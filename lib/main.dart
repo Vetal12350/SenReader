@@ -830,14 +830,14 @@ class _MainShellState extends State<MainShell> {
     }
     if (saved == null) return;
     final sourceKey = info['source']!;
-    if (saved.preferredSource != sourceKey) return;
+    if (!saved.entries.containsKey(sourceKey)) return;
     final entry = saved.entries[sourceKey];
     final source = widget.repository.sources[sourceKey];
     if (entry == null || source == null) return;
     try {
       final detail = await source.detail(entry);
       await widget.library.load();
-      if (widget.library.get(saved.toUnified())?.preferredSource != sourceKey) return;
+      if (!(widget.library.get(saved.toUnified())?.entries.containsKey(sourceKey) ?? false)) return;
       Chapter? matched;
       for (final chapter in detail.chapters) {
         if (chapter.id == info['chapter'] &&

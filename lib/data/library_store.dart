@@ -13,6 +13,8 @@ class SavedBook {
     this.lastPageIndex = 0, this.lastPageCount = 0, this.lastUpdatedAt = 0,
     Set<String>? readChapterKeys, Set<String>? seenChapterKeys,
     Set<String>? initializedSources,
+    Map<String, Set<String>>? sourceSeenChapterKeys,
+    Map<String, int>? sourceChapterDates,
     this.favorite = false,
     this.syncEditedAt = 0,
     this.lastMarkedChapter = '',
@@ -23,6 +25,8 @@ class SavedBook {
   })  : readChapterKeys = readChapterKeys ?? <String>{},
         seenChapterKeys = seenChapterKeys ?? <String>{},
         initializedSources = initializedSources ?? <String>{},
+        sourceSeenChapterKeys = sourceSeenChapterKeys ?? <String, Set<String>>{},
+        sourceChapterDates = sourceChapterDates ?? <String, int>{},
         preferredSource = chooseSource(entries, preferredSource, lastSource) {
     // Preserve legacy keys, but attribute unscoped read history only to its
     // original source. Never project completion onto another translation.
@@ -75,6 +79,9 @@ class SavedBook {
   final Set<String> readChapterKeys;
   final Set<String> seenChapterKeys;
   final Set<String> initializedSources;
+  final Map<String, Set<String>> sourceSeenChapterKeys;
+  /// Genuine source-provided publication timestamps (UTC milliseconds).
+  final Map<String, int> sourceChapterDates;
   String get key => normalizedTitle(title);
   UnifiedManga toUnified() => UnifiedManga(title: title, entries: {...entries});
 
@@ -94,6 +101,9 @@ class SavedBook {
     'readChapterKeys': readChapterKeys.toList()..sort(),
     'seenChapterKeys': seenChapterKeys.toList()..sort(),
     'initializedSources': initializedSources.toList()..sort(),
+    'sourceSeenChapterKeys': sourceSeenChapterKeys.map((k, v) =>
+        MapEntry(k, v.toList()..sort())),
+    'sourceChapterDates': sourceChapterDates,
   };
   factory SavedBook.fromJson(Map<String, dynamic> json) {
     final raw = json['entries'] as Map? ?? {};
@@ -125,6 +135,14 @@ class SavedBook {
       initializedSources: (json['initializedSources'] is List
               ? (json['initializedSources'] as List).whereType<String>() : <String>[])
           .where((value) => value.length <= 32).toSet(),
+      sourceSeenChapterKeys: (json['sourceSeenChapterKeys'] is Map
+          ? (json['sourceSeenChapterKeys'] as Map) : {}).map((k, v) =>
+          MapEntry(k.toString(), v is List
+              ? v.whereType<String>().where((x) => x.length <= 128).toSet()
+              : <String>{})),
+      sourceChapterDates: (json['sourceChapterDates'] is Map
+          ? (json['sourceChapterDates'] as Map) : {}).map((k, v) =>
+          MapEntry(k.toString(), v is num ? v.toInt() : 0)),
     );
   }
 }
@@ -430,11 +448,19 @@ class LibraryStore extends ChangeNotifier {
   /// Commit a successful scan before surfacing its discoveries. A failing
   /// source never marks its baseline or clears previously seen chapters.
   Future<void> recordChapterScan(String bookKey, String source,
-      Iterable<String> seenKeys) async {
+      Iterable<String> seenKeys, {Map<String, DateTime> sourceDates = const {}}) async {
     await _reload();
     final item = _books[bookKey];
-    if (item == null || item.preferredSource != source) return;
+    if (item == null || !item.entries.containsKey(source)) return;
     item.seenChapterKeys.addAll(seenKeys);
+    item.sourceSeenChapterKeys.putIfAbsent(source, () => <String>{})
+        .addAll(seenKeys);
+    for (final chapter in sourceDates.entries) {
+      if (chapter.value.year >= 2000) {
+        item.sourceChapterDates['$source|${chapter.key}'] =
+            chapter.value.toUtc().millisecondsSinceEpoch;
+      }
+    }
     item.initializedSources.add(source);
     await _save();
   }
