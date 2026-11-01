@@ -36,6 +36,7 @@ class ChapterChecker {
   final CatalogRepository repository;
   final LibraryStore library;
   static const maxNewCandidatesPerSource = 12;
+  static const maxBackgroundSourcesPerRun = 12;
 
   static bool _trustedLink(SavedBook saved, String source) {
     final entry = saved.entries[source];
@@ -108,7 +109,8 @@ class ChapterChecker {
         }
         final scanKey = ChapterScanPolicy.keyFor(saved, sourceKey, entry.id);
         if (smartSchedule &&
-            !ChapterScanPolicy.isDue(saved.status, lastAttempts[scanKey], now)) {
+            (!ChapterScanPolicy.isDue(saved.status, lastAttempts[scanKey], now) ||
+             checkedSources >= maxBackgroundSourcesPerRun)) {
           skippedSources++;
           continue;
         }

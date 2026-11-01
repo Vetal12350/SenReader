@@ -86,6 +86,28 @@ void main() {
     expect(source.scans, 1);
   });
 
+  test('large library is staggered across multiple background runs', () async {
+    final source = _ScheduleFakeSource('senkuro');
+    final library = LibraryStore();
+    await library.load();
+    for (var i = 0; i < 17; i++) {
+      await library.add(UnifiedManga(title: 'Book $i', entries: {
+        'senkuro': MangaEntry(source: 'senkuro', id: 'id$i',
+            title: 'Book $i'),
+      }));
+    }
+    final checker = ChapterChecker(repository: CatalogRepository(sources: {
+      'senkuro': source,
+    }), library: library);
+    final first = await checker.check(smartSchedule: true);
+    expect(first.checkedSources, ChapterChecker.maxBackgroundSourcesPerRun);
+    expect(first.skippedSources, 5);
+    final second = await checker.check(smartSchedule: true);
+    expect(second.checkedSources, 5);
+    expect(second.skippedSources, 12);
+    expect(source.scans, 17);
+  });
+
   test('schedule timestamps are isolated between guest and account', () async {
     final a = _ScheduleFakeSource('senkuro');
     final (library, book) = await _book({a.key: a});
