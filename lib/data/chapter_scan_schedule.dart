@@ -39,11 +39,15 @@ class ChapterBackgroundScanSummary {
 class ChapterScanScheduleStore {
   static const _prefix = 'senreader.chapter_scan_schedule.v1';
   static const _lastPrefix = 'senreader.chapter_scan_last.v1';
-  final SharedPreferencesAsync _prefs = SharedPreferencesAsync();
+  Future<SharedPreferences> _prefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload(); // Observe writes made by the WorkManager isolate.
+    return prefs;
+  }
   String _suffix(String profile) => profile.isEmpty ? '.guest' : '.user.$profile';
 
   Future<Map<String, int>> load(String profile) async {
-    final raw = await _prefs.getString('$_prefix${_suffix(profile)}');
+    final raw = (await _prefs()).getString('$_prefix${_suffix(profile)}');
     if (raw == null || raw.length > 300000) return {};
     try {
       final decoded = jsonDecode(raw);
@@ -71,11 +75,11 @@ class ChapterScanScheduleStore {
         ..clear()
         ..addEntries(oldest.take(3000));
     }
-    await _prefs.setString('$_prefix${_suffix(profile)}', jsonEncode(latest));
+    await (await _prefs()).setString('$_prefix${_suffix(profile)}', jsonEncode(latest));
   }
 
-  Future<void> recordRun(String profile, ChapterBackgroundScanSummary value) =>
-      _prefs.setString('$_lastPrefix${_suffix(profile)}', jsonEncode({
+  Future<void> recordRun(String profile, ChapterBackgroundScanSummary value) async =>
+      (await _prefs()).setString('$_lastPrefix${_suffix(profile)}', jsonEncode({
         'at': value.at.millisecondsSinceEpoch,
         'checked': value.checkedSources,
         'skipped': value.skippedSources,
@@ -84,7 +88,7 @@ class ChapterScanScheduleStore {
       }));
 
   Future<ChapterBackgroundScanSummary?> lastRun(String profile) async {
-    final raw = await _prefs.getString('$_lastPrefix${_suffix(profile)}');
+    final raw = (await _prefs()).getString('$_lastPrefix${_suffix(profile)}');
     if (raw == null) return null;
     try {
       final record = jsonDecode(raw);
