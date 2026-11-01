@@ -47,7 +47,7 @@ class SavedBook {
       [String preferred = '', String last = '']) {
     if (entries.containsKey(preferred)) return preferred;
     if (entries.containsKey(last)) return last;
-    for (final source in const ['senkuro', 'readmanga', 'remanga']) {
+    for (final source in const ['senkuro', 'readmanga']) {
       if (entries.containsKey(source)) return source;
     }
     final keys = entries.keys.toList()..sort();
