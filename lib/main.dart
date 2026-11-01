@@ -18,6 +18,7 @@ import 'data/chapter_alert_controller.dart';
 import 'ui/chapter_alert_offer.dart';
 import 'ui/settings_page.dart';
 import 'data/theme_controller.dart';
+import 'data/firebase_account_service.dart';
 import 'ui/app_theme.dart';
 
 /// Reader route destinations, separate from saved library state.
@@ -29,12 +30,14 @@ Future<void> main() async {
   await library.load();
   final themes = ThemeController();
   try { await themes.load(); } catch (_) { /* Use the existing dark default. */ }
+  final accounts = FirebaseAccountService(library);
   // Display the library immediately; native notifications/WorkManager setup
   // can take significant time and must not delay the first rendered frame.
   // The app listens for notification launch payloads as soon as it mounts.
-  runApp(SenReaderApp(library: library, themes: themes));
+  runApp(SenReaderApp(library: library, themes: themes, accounts: accounts));
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(_initializeBackgroundServices());
+    unawaited(accounts.initialize());
   });
 }
 
@@ -54,9 +57,11 @@ Future<void> _initializeBackgroundServices() async {
 }
 
 class SenReaderApp extends StatelessWidget {
-  const SenReaderApp({super.key, required this.library, required this.themes});
+  const SenReaderApp({super.key, required this.library, required this.themes,
+    this.accounts});
   final LibraryStore library;
   final ThemeController themes;
+  final FirebaseAccountService? accounts;
 
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
@@ -68,15 +73,17 @@ class SenReaderApp extends StatelessWidget {
       darkTheme: SenReaderTheme.build(Brightness.dark),
       themeMode: themes.mode,
       home: MainShell(repository: CatalogRepository(),
-          library: library, themes: themes),
+          library: library, themes: themes, accounts: accounts),
     ),
   );
 }
 
 class MainShell extends StatefulWidget {
-  const MainShell({super.key, required this.repository, required this.library, this.alerts, this.themes});
+  const MainShell({super.key, required this.repository, required this.library,
+    this.alerts, this.themes, this.accounts});
   final ChapterAlertController? alerts;
   final ThemeController? themes;
+  final FirebaseAccountService? accounts;
   final CatalogRepository repository;
   final LibraryStore library;
   @override State<MainShell> createState() => _MainShellState();
@@ -877,7 +884,7 @@ class _MainShellState extends State<MainShell> {
           IconButton(tooltip: 'Настройки', icon: const Icon(Icons.settings_outlined),
             onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsPage(
               repository: widget.repository, library: widget.library, alerts: alerts,
-               themes: widget.themes)))),
+               themes: widget.themes, accounts: widget.accounts)))),
         ],
       ),
       body: tab == 3 ? ChapterInboxPanel(
@@ -889,7 +896,8 @@ class _MainShellState extends State<MainShell> {
           title: const Text('Настройки'),
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
             SettingsPage(repository: widget.repository, library: widget.library,
-              alerts: alerts, themes: widget.themes)))),
+              alerts: alerts, themes: widget.themes,
+              accounts: widget.accounts)))),
         ListTile(leading: const Icon(Icons.notifications_active_outlined),
           title: const Text('Уведомления о главах'),
           onTap: () => setState(() => tab = 3)),
