@@ -42,10 +42,11 @@ class FakeSource implements MangaSource {
 Future<LibraryStore> makeLibrary(List<FakeSource> sources) async {
   final library = LibraryStore();
   await library.load();
-  await library.add(UnifiedManga(title: 'Example', entries: {
+  final book = UnifiedManga(title: 'Example', entries: {
     for (final source in sources)
       source.key: MangaEntry(source: source.key, id: '1', title: 'Example'),
-  }));
+  });
+  await library.setStatus(book, 'reading');
   return library;
 }
 
@@ -72,9 +73,9 @@ void main() {
       ..chapters = [const Chapter(id: '112', name: 'Глава 112')];
     final store = LibraryStore();
     await store.load();
-    await store.add(UnifiedManga(title: 'Название в каталоге',
+    await store.setStatus(UnifiedManga(title: 'Название в каталоге',
         entries: {'readmanga': const MangaEntry(source: 'readmanga',
-            id: '123', title: 'Другое название на ReadManga')}));
+            id: '123', title: 'Другое название на ReadManga')}), 'reading');
     final checker = ChapterChecker(
         repository: CatalogRepository(sources: {'readmanga': source}),
         library: store);

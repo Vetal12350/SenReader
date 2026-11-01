@@ -400,9 +400,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     _lastSuggestionsRefreshAt = now;
     final request = ++_suggestionRequest;
     final saved = widget.library.items
-      .where((item) => item.lastChapter.isNotEmpty &&
-        item.lastSource == item.preferredSource && item.status != 'dropped' &&
-        (item.status != 'viewed' || item.lastChapter.isNotEmpty)).toList()
+      .where((item) => item.status == 'reading' &&
+        item.lastChapter.isNotEmpty &&
+        item.lastSource == item.preferredSource).toList()
       ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
     final suggestions = <String, Chapter>{};
     // Two parallel source scans instead of bursts on every user gesture.

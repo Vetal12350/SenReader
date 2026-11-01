@@ -41,13 +41,15 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('policy checks reading earlier than planned or completed', () {
+  test('only reading is ever due regardless of last attempt', () {
     final now = DateTime(2026, 11, 1, 12);
     final halfHourAgo = now.subtract(const Duration(minutes: 30))
         .millisecondsSinceEpoch;
     expect(ChapterScanPolicy.isDue('reading', halfHourAgo, now), true);
-    expect(ChapterScanPolicy.isDue('planned', halfHourAgo, now), false);
-    expect(ChapterScanPolicy.isDue('completed', halfHourAgo, now), false);
+    for (final status in ['planned', 'completed', 'dropped', 'viewed']) {
+      expect(ChapterScanPolicy.isDue(status, null, now), false);
+      expect(ChapterScanPolicy.isDue(status, halfHourAgo, now), false);
+    }
     expect(ChapterScanPolicy.isDue('reading', null, now), true);
     expect(ChapterScanPolicy.isDue('reading', now.millisecondsSinceEpoch + 1000,
         now), true);
@@ -91,10 +93,10 @@ void main() {
     final library = LibraryStore();
     await library.load();
     for (var i = 0; i < 17; i++) {
-      await library.add(UnifiedManga(title: 'Book $i', entries: {
+      await library.setStatus(UnifiedManga(title: 'Book $i', entries: {
         'senkuro': MangaEntry(source: 'senkuro', id: 'id$i',
             title: 'Book $i'),
-      }));
+      }), 'reading');
     }
     final checker = ChapterChecker(repository: CatalogRepository(sources: {
       'senkuro': source,
