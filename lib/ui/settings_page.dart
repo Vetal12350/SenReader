@@ -10,14 +10,17 @@ import '../data/library_store.dart';
 import 'chapter_notifications_panel.dart';
 import 'reader_page.dart';
 import '../data/theme_controller.dart';
+import '../data/firebase_account_service.dart';
+import 'cloud_account_panel.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.repository, required this.library,
-    required this.alerts, this.themes});
+    required this.alerts, this.themes, this.accounts});
   final CatalogRepository repository;
   final LibraryStore library;
   final ChapterAlertController alerts;
   final ThemeController? themes;
+  final FirebaseAccountService? accounts;
   @override State<SettingsPage> createState() => _SettingsPageState();
 }
 
@@ -113,6 +116,10 @@ class _SettingsPageState extends State<SettingsPage> {
   @override Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('Настройки')),
     body: ListView(padding: const EdgeInsets.all(16), children: [
+      if (widget.accounts != null) ...[
+        CloudAccountPanel(accounts: widget.accounts!),
+        const SizedBox(height: 24),
+      ],
       const Text('Оформление', style: TextStyle(
         fontSize: 20, fontWeight: FontWeight.w700)),
       const SizedBox(height: 10),
