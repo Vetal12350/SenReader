@@ -106,6 +106,25 @@ void main() {
     expect(showContinueCard(record, newlyAvailable: chapter113), false);
   });
 
+  test('planned and completed titles never produce chapter suggestions', () {
+    const alert = InboxEntry(
+      key: 'title|readmanga|v0:c127', bookKey: 'title',
+      title: 'Title', coverUrl: '', source: 'readmanga',
+      chapterId: '127', chapterName: 'Глава 127 (т. 2)', createdAt: 1);
+    for (final status in ['planned', 'completed', 'viewed', 'dropped']) {
+      final record = saved(status: status);
+      record.lastChapterId = '126';
+      expect(nextAvailableChapter(record, chapters), isNull,
+          reason: 'unexpected network candidate for $status');
+      expect(eligibleNewChapter(record, chapters.first), isNull,
+          reason: 'unexpected cached candidate for $status');
+      expect(unreadInboxSuggestions([record], [alert]), isEmpty,
+          reason: 'unexpected inbox suggestion for $status');
+      expect(showContinueCard(record, newlyAvailable: chapters.first), false,
+          reason: 'unexpected Continue card for $status');
+    }
+  });
+
   test('read, hidden, alternate-source and old inbox updates do not reappear', () {
     final record = saved(last: 'Глава 112');
     record.lastChapterId = '112';
