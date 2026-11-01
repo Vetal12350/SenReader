@@ -141,6 +141,8 @@ class FirebaseAccountService extends ChangeNotifier {
 
   Future<void> refreshVerification() => _perform(() async {
     await _auth!.currentUser?.reload();
+    // Refresh the email_verified claim required by owner-only Firestore rules.
+    await _auth!.currentUser?.getIdToken(true);
     await _setUser(_auth!.currentUser);
   });
 
