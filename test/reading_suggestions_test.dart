@@ -3,6 +3,7 @@ import 'package:senreader/core/models.dart';
 import 'package:senreader/core/chapter_identity.dart';
 import 'package:senreader/data/library_store.dart';
 import 'package:senreader/data/reading_suggestions.dart';
+import 'package:senreader/data/chapter_inbox_store.dart';
 
 void main() {
   final entry = <String, MangaEntry>{
@@ -67,9 +68,95 @@ void main() {
     expect(shouldResumeCurrentChapter(record), true);
     expect(showContinueCard(record), false);
     expect(showContinueCard(record,
-      newlyAvailable: const Chapter(id: '128', name: 'Глава 128')), true);
+      newlyAvailable: const Chapter(id: '128', name: 'Глава 128 (т. 2)')), true);
     record.lastChapterId = '126';
     expect(showContinueCard(record), true);
+  });
+
+  test('new unread inbox chapter appears even without a home source scan', () {
+    final record = saved(last: 'Глава 112');
+    record.lastChapterId = '112';
+    record.lastPageCount = 14;
+    record.lastPageIndex = 13;
+    record.latestKnownChapterId = '112';
+    record.latestKnownSource = 'readmanga';
+    const latest = InboxEntry(
+      key: 'title|readmanga|v0:c113', bookKey: 'title',
+      title: 'Title', coverUrl: '', source: 'readmanga',
+      chapterId: '113', chapterName: 'Глава 113', createdAt: 1);
+    final suggestions = unreadInboxSuggestions([record], [latest]);
+    expect(suggestions[record.key]?.id, '113');
+    expect(showContinueCard(record, newlyAvailable: suggestions[record.key]), true);
+  });
+
+  test('last chapter read at 14/14 removes stale Continue suggestion', () {
+    final record = saved(last: 'Глава 112');
+    record.lastChapterId = '112';
+    record.lastPageCount = 14;
+    record.lastPageIndex = 13;
+    record.latestKnownChapterId = '113';
+    record.latestKnownSource = 'readmanga';
+    const chapter113 = Chapter(id: '113', name: 'Глава 113');
+    expect(showContinueCard(record, newlyAvailable: chapter113), true);
+    // Reader saved the newly opened chapter and completion marker.
+    record.lastChapterId = '113';
+    record.lastChapter = 'Глава 113';
+    record.readChapterKeys.add(sourceChapterKey(chapter113, 'readmanga'));
+    expect(eligibleNewChapter(record, chapter113), isNull);
+    expect(showContinueCard(record, newlyAvailable: chapter113), false);
+  });
+
+  test('planned and completed titles never produce chapter suggestions', () {
+    const alert = InboxEntry(
+      key: 'title|readmanga|v0:c127', bookKey: 'title',
+      title: 'Title', coverUrl: '', source: 'readmanga',
+      chapterId: '127', chapterName: 'Глава 127 (т. 2)', createdAt: 1);
+    for (final status in ['planned', 'completed', 'viewed', 'dropped']) {
+      final record = saved(status: status);
+      record.lastChapterId = '126';
+      expect(nextAvailableChapter(record, chapters), isNull,
+          reason: 'unexpected network candidate for $status');
+      expect(eligibleNewChapter(record, chapters.first), isNull,
+          reason: 'unexpected cached candidate for $status');
+      expect(unreadInboxSuggestions([record], [alert]), isEmpty,
+          reason: 'unexpected inbox suggestion for $status');
+      // Continue may still resume a partially opened Viewed/Planned title;
+      // a new alert may not create an additional Continue candidate.
+      expect(showContinueCard(record, newlyAvailable: chapters.first),
+          showContinueCard(record),
+          reason: 'new alert must not affect Continue for $status');
+    }
+  });
+
+  test('read, hidden, alternate-source and old inbox updates do not reappear', () {
+    final record = saved(last: 'Глава 112');
+    record.lastChapterId = '112';
+    const latest = InboxEntry(
+      key: 'title|readmanga|v0:c113', bookKey: 'title',
+      title: 'Title', coverUrl: '', source: 'readmanga',
+      chapterId: '113', chapterName: 'Глава 113', createdAt: 1);
+    expect(unreadInboxSuggestions([record], [latest.hide(10)]), isEmpty);
+    expect(unreadInboxSuggestions([record], [
+      const InboxEntry(key: 'title|senkuro|v0:c113', bookKey: 'title',
+        title: 'Title', coverUrl: '', source: 'senkuro',
+        chapterId: '113', chapterName: 'Глава 113', createdAt: 1),
+    ]), isEmpty);
+    record.readChapterKeys.add('readmanga|v0:c113');
+    expect(unreadInboxSuggestions([record], [latest]), isEmpty);
+    record.readChapterKeys.clear();
+    record.lastChapter = 'Глава 114';
+    expect(unreadInboxSuggestions([record], [latest]), isEmpty);
+  });
+
+  test('multiple inbox chapters choose earliest unread chapter', () {
+    final record = saved(last: 'Глава 112');
+    record.lastChapterId = '112';
+    final updates = [115, 113, 114].map((number) => InboxEntry(
+      key: 'title|readmanga|v0:c$number', bookKey: 'title',
+      title: 'Title', coverUrl: '', source: 'readmanga',
+      chapterId: '$number', chapterName: 'Глава $number',
+      createdAt: number));
+    expect(unreadInboxSuggestions([record], updates)[record.key]?.id, '113');
   });
 
   test('current newest chapter never appears in continue-reading', () {
