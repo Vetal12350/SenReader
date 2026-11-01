@@ -958,7 +958,7 @@ class _MainShellState extends State<MainShell> {
               controller: searchController,
               onChanged: _onSearch,
               decoration: InputDecoration(
-                hintText: 'Поиск манги и манхвы',
+                hintText: 'Поиск: Senkuro, ReadManga',
                 prefixIcon: const Icon(Icons.search),
                 filled: true,
                 border: OutlineInputBorder(
@@ -1021,7 +1021,7 @@ class _MainShellState extends State<MainShell> {
             if (tab == 1) ...[
             SectionTitle(query.isEmpty ? 'Каталог' : 'Результаты поиска',
               subtitle: query.isEmpty
-                  ? 'Senkuro' : 'Результаты доступных источников'),
+                  ? 'Senkuro' : 'Senkuro · ReadManga'),
             if (loading)
               const Padding(padding: EdgeInsets.all(32),
                 child: Center(child: CircularProgressIndicator())),
