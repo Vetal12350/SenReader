@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../data/chapter_alert_controller.dart';
+import '../data/chapter_scan_schedule.dart';
+import '../data/library_store.dart';
 
 class ChapterNotificationsPanel extends StatefulWidget {
   const ChapterNotificationsPanel({super.key, required this.alerts});
@@ -12,6 +14,7 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
   bool loading = true;
   bool enabled = false;
   String? message;
+  ChapterBackgroundScanSummary? lastRun;
 
   @override void initState() {
     super.initState();
@@ -22,9 +25,13 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
     final prefs = widget.alerts.preferences;
     final newEnabled = await prefs.enabled();
     await prefs.intervalMinutes();
+    final library = LibraryStore();
+    await library.load();
+    final last = await ChapterScanScheduleStore().lastRun(library.profileId);
     if (!mounted) return;
     setState(() {
       enabled = newEnabled;
+      lastRun = last;
       loading = false;
     });
   }
@@ -61,9 +68,26 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
           ),
           Text(
             'Проверки раз в 15 минут — по возможности Android: Doze и экономия батареи '
-            'могут задерживать их. Первое сканирование сохраняет '
-            'исходный список без уведомлений; мгновенная доставка не гарантируется.',
+            'могут задерживать их. Читаемые книги проверяются примерно раз '
+            'в 30 минут, отложенные — раз в 6 часов, прочитанные — раз в сутки. '
+            'При открытии приложения пропущенные проверки выполняются автоматически. '
+            'Мгновенная доставка не гарантируется.',
             style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+          ),
+          if (lastRun != null) Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Последняя фоновая попытка: '
+              '${lastRun!.at.day.toString().padLeft(2, '0')}.'
+              '${lastRun!.at.month.toString().padLeft(2, '0')} '
+              '${lastRun!.at.hour.toString().padLeft(2, '0')}:'
+              '${lastRun!.at.minute.toString().padLeft(2, '0')}. '
+              'Источников проверено: ${lastRun!.checkedSources}, '
+              'пропущено по расписанию: ${lastRun!.skippedSources}, '
+              'найдено глав: ${lastRun!.foundChapters}.',
+              style: TextStyle(fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
           ),
           if (message != null) Padding(
             padding: const EdgeInsets.only(top: 10),
