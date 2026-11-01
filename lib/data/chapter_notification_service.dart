@@ -96,7 +96,7 @@ class ChapterNotificationService {
       final library = LibraryStore();
       await library.load();
       final saved = library.get(release.book);
-      if (saved == null || saved.status == 'dropped' ||
+      if (saved == null || saved.status != 'reading' ||
           !saved.entries.containsKey(release.sourceKey) ||
           !await ChapterAlertPreferences().enabled()) continue;
       await ChapterInboxStore().add(normalizedTitle(release.book.title),

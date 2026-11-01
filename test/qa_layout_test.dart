@@ -107,7 +107,8 @@ void main() {
   testWidgets('library has bookmarks/filters only; Settings owns notification actions', (tester) async {
     final source = LayoutSource();
     final library = LibraryStore();
-    await library.add(source.book);
+    // Manual chapter-check action scans only titles explicitly marked Reading.
+    await library.setStatus(source.book, 'reading');
     await tester.pumpWidget(scaledApp(MainShell(
       repository: CatalogRepository(sources: {source.key: source}), library: library,
       alerts: ChapterAlertController(preferences: MemoryAlertPreferences()..shown = true),

@@ -41,13 +41,15 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('policy checks reading earlier than planned or completed', () {
+  test('only reading is ever due regardless of last attempt', () {
     final now = DateTime(2026, 11, 1, 12);
     final halfHourAgo = now.subtract(const Duration(minutes: 30))
         .millisecondsSinceEpoch;
     expect(ChapterScanPolicy.isDue('reading', halfHourAgo, now), true);
-    expect(ChapterScanPolicy.isDue('planned', halfHourAgo, now), false);
-    expect(ChapterScanPolicy.isDue('completed', halfHourAgo, now), false);
+    for (final status in ['planned', 'completed', 'dropped', 'viewed']) {
+      expect(ChapterScanPolicy.isDue(status, null, now), false);
+      expect(ChapterScanPolicy.isDue(status, halfHourAgo, now), false);
+    }
     expect(ChapterScanPolicy.isDue('reading', null, now), true);
     expect(ChapterScanPolicy.isDue('reading', now.millisecondsSinceEpoch + 1000,
         now), true);
@@ -91,10 +93,10 @@ void main() {
     final library = LibraryStore();
     await library.load();
     for (var i = 0; i < 17; i++) {
-      await library.add(UnifiedManga(title: 'Book $i', entries: {
+      await library.setStatus(UnifiedManga(title: 'Book $i', entries: {
         'senkuro': MangaEntry(source: 'senkuro', id: 'id$i',
             title: 'Book $i'),
-      }));
+      }), 'reading');
     }
     final checker = ChapterChecker(repository: CatalogRepository(sources: {
       'senkuro': source,
@@ -138,6 +140,30 @@ void main() {
     expect((await checker.check(smartSchedule: true)).checkedSources, 0);
     expect(a.scans, 1);
     expect(library.items.single.initializedSources, isEmpty);
+  });
+
+  test('scheduled scan never spends requests on Planned or Completed',
+      () async {
+    final source = _ScheduleFakeSource('senkuro');
+    final library = LibraryStore();
+    await library.load();
+    for (final (index, status) in [
+      'planned', 'completed', 'reading', 'planned', 'completed',
+    ].indexed) {
+      await library.setStatus(UnifiedManga(title: 'Status $index', entries: {
+        source.key: MangaEntry(source: source.key, id: 'item$index',
+            title: 'Status $index'),
+      }), status);
+    }
+    final checker = ChapterChecker(
+        repository: CatalogRepository(sources: {source.key: source}),
+        library: library);
+    final first = await checker.check(smartSchedule: true);
+    expect(first.checkedTitles, 1);
+    expect(first.checkedSources, 1);
+    expect(source.scans, 1);
+    expect((await checker.check()).checkedSources, 1);
+    expect(source.scans, 2);
   });
 
   test('last run persists independently for each profile', () async {
