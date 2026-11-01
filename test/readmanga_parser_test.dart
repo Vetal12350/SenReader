@@ -230,7 +230,7 @@ void main() {
     final source = ReadMangaSource(client: MockClient((request) async {
       expect(request.url.host, 'a.zazaza.me');
       return http.Response('''
-        <h1>Злодей хочет жить</h1>
+        <h1>Villain</h1>
         <table><tbody>
           <tr class="item-row"><td><a class="chapter-link cp-l"
               href="/villain/vol1/70">1 - 70</a></td>
@@ -243,7 +243,7 @@ void main() {
               <td>32.10.26</td></tr>
           <tr class="item-row"><td><a class="chapter-link cp-l"
               href="/villain/vol1/67">1 - 67</a></td>
-              <td>Дата не указана</td></tr>
+              <td>Unknown date</td></tr>
         </tbody></table>
       ''', 200);
     }));
