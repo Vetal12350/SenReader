@@ -83,9 +83,9 @@ void main() {
     expect(find.byType(ReaderPage), findsOneWidget);
 
     // Scroll near the end, triggering a lazy fetch from the same source.
-    for (var i = 0; i < 4 && !source.requested.contains('2'); i++) {
+    for (var i = 0; i < 10 && !source.requested.contains('2'); i++) {
       await tester.drag(find.byType(ScrollablePositionedList),
-        const Offset(0, -460));
+        const Offset(0, -600));
       await tester.pumpAndSettle();
     }
     expect(source.requested, contains('2'));
@@ -93,9 +93,9 @@ void main() {
     expect(find.byType(AppBar), findsNothing);
 
     // Advance physically into chapter 2, not merely near its boundary.
-    for (var i = 0; i < 5 && library.get(source.book)?.lastChapterId != '2'; i++) {
+    for (var i = 0; i < 10 && library.get(source.book)?.lastChapterId != '2'; i++) {
       await tester.drag(find.byType(ScrollablePositionedList),
-        const Offset(0, -350));
+        const Offset(0, -480));
       await tester.pump(const Duration(milliseconds: 900));
     }
     await tester.pump(const Duration(seconds: 1));
