@@ -199,6 +199,7 @@ class _ReaderPageState extends State<ReaderPage> {
   final Map<String, VoidCallback> _geometryProbes = {};
   final Set<String> _geometryFailedKeys = {};
   int? _lastGeometryVisibleIndex;
+  double? _lastGeometryViewportWidth;
   int? _lastCompletionVisibleIndex;
   final Map<String, int> _chapterReloads = {};
   final Set<String> _refreshingChapterLinks = {};
@@ -268,6 +269,22 @@ class _ReaderPageState extends State<ReaderPage> {
     _visiblePage.value = _resumePage;
     future = _loadInitialChapter();
     _positions.itemPositions.addListener(_onVisiblePages);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final width = MediaQuery.sizeOf(context).width;
+    if (_lastGeometryViewportWidth != null &&
+        _lastGeometryViewportWidth != width) {
+      // Logical heights depend on the device viewport width; rotation or
+      // split-screen resizing invalidates earlier measurements.
+      _cancelGeometryProbes();
+      _knownPageHeights.clear();
+      _geometryFailedKeys.clear();
+      _lastGeometryVisibleIndex = null;
+    }
+    _lastGeometryViewportWidth = width;
   }
 
   Future<List<PageImage>> _loadInitialChapter() async {
