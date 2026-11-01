@@ -156,7 +156,13 @@ class _DetailPageState extends State<DetailPage> {
     } catch (e) {
       if (!mounted || request != _request) return;
       final unsupported = !widget.repository.sources.containsKey(sourceKey);
-      final retry = !unsupported && _automaticRetries < 2;
+      final failure = e.toString().toLowerCase();
+      final transient = failure.contains('429') ||
+          failure.contains('временно ограничил') ||
+          failure.contains('timeout') || failure.contains('time out') ||
+          failure.contains('нет соединения') ||
+          failure.contains('socketexception');
+      final retry = !unsupported && transient && _automaticRetries < 2;
       if (retry) {
         _automaticRetries++;
         _recoveryTimer?.cancel();
