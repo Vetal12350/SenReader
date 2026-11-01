@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import '../core/source.dart';
 
 /// Coordinates Senkuro requests so a throttled response cannot cause a
 /// burst of immediate retries from concurrent UI and background operations.
@@ -35,7 +36,7 @@ class SenkuroRequestGate {
     try {
       final remaining = HttpDate.parse(text).difference(now ?? DateTime.now().toUtc());
       return remaining.isNegative ? Duration.zero : remaining;
-    } on FormatException {
+    } catch (_) {
       return null;
     }
   }
@@ -75,7 +76,7 @@ class SenkuroRequestGate {
             final delay = error.retryAfter ?? fallback;
             _delayUntil(delay);
             if (attempt >= maxRetries || delay > maxAutomaticWait) {
-              throw StateError('Senkuro временно ограничил запросы');
+              throw SourceException('Senkuro временно ограничил запросы');
             }
           } finally {
             _delayUntil(minimumSpacing);
