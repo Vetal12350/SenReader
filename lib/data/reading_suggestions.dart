@@ -90,8 +90,8 @@ Chapter? chapterToResume(SavedBook saved, Iterable<Chapter> available,
 /// A title with its last known page completed is not an active resume card
 /// unless the source confirmed a genuinely new unread chapter.
 bool showContinueCard(SavedBook saved, {Chapter? newlyAvailable}) {
-  if (saved.status != 'reading' || saved.lastChapter.isEmpty ||
-      saved.lastSource != saved.preferredSource) return false;
+  if (saved.lastChapter.isEmpty || saved.lastSource != saved.preferredSource ||
+      saved.status == 'completed' || saved.status == 'dropped') return false;
   if (eligibleNewChapter(saved, newlyAvailable) != null) return true;
   // Even when partially read, the current LAST available chapter should
   // not appear in Continue: it is not a remaining chapter to catch up on.
