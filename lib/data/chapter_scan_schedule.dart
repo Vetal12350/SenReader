@@ -1,0 +1,105 @@
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'library_store.dart';
+
+/// Source-scoped check timing stays on the device and never touches the
+/// cloud-synced library, read markers, or the active reading source.
+class ChapterScanPolicy {
+  static Duration intervalFor(String status) => switch (status) {
+    'reading' => const Duration(minutes: 30),
+    'planned' => const Duration(hours: 6),
+    'completed' => const Duration(hours: 24),
+    _ => const Duration(hours: 24),
+  };
+
+  static String keyFor(SavedBook book, String sourceKey, String sourceId) =>
+      jsonEncode([book.key, sourceKey, sourceId]);
+
+  static bool isDue(String status, int? lastAttemptMs, DateTime now) {
+    if (lastAttemptMs == null || lastAttemptMs <= 0) return true;
+    final delta = now.millisecondsSinceEpoch - lastAttemptMs;
+    // Wall-clock changes must not suppress checks indefinitely.
+    return delta < 0 || delta >= intervalFor(status).inMilliseconds;
+  }
+}
+
+class ChapterBackgroundScanSummary {
+  const ChapterBackgroundScanSummary({
+    required this.at,
+    required this.checkedSources,
+    required this.skippedSources,
+    required this.foundChapters,
+    required this.warnings,
+  });
+  final DateTime at;
+  final int checkedSources, skippedSources, foundChapters, warnings;
+}
+
+/// SharedPreferencesAsync reads fresh state from the background isolate.
+class ChapterScanScheduleStore {
+  static const _prefix = 'senreader.chapter_scan_schedule.v1';
+  static const _lastPrefix = 'senreader.chapter_scan_last.v1';
+  final SharedPreferencesAsync _prefs = SharedPreferencesAsync();
+  String _suffix(String profile) => profile.isEmpty ? '.guest' : '.user.$profile';
+
+  Future<Map<String, int>> load(String profile) async {
+    final raw = await _prefs.getString('$_prefix${_suffix(profile)}');
+    if (raw == null || raw.length > 300000) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return {};
+      return decoded.map((key, value) => MapEntry(key.toString(),
+          value is num ? value.toInt() : 0));
+    } catch (_) {
+      return {};
+    }
+  }
+
+  Future<void> recordAttempts(String profile, Map<String, int> attempts) async {
+    if (attempts.isEmpty) return;
+    final latest = await load(profile);
+    for (final entry in attempts.entries) {
+      if ((latest[entry.key] ?? 0) < entry.value) {
+        latest[entry.key] = entry.value;
+      }
+    }
+    // Bound stale entries if the user replaces many bookmarked titles.
+    if (latest.length > 3000) {
+      final oldest = latest.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      latest
+        ..clear()
+        ..addEntries(oldest.take(3000));
+    }
+    await _prefs.setString('$_prefix${_suffix(profile)}', jsonEncode(latest));
+  }
+
+  Future<void> recordRun(String profile, ChapterBackgroundScanSummary value) =>
+      _prefs.setString('$_lastPrefix${_suffix(profile)}', jsonEncode({
+        'at': value.at.millisecondsSinceEpoch,
+        'checked': value.checkedSources,
+        'skipped': value.skippedSources,
+        'found': value.foundChapters,
+        'warnings': value.warnings,
+      }));
+
+  Future<ChapterBackgroundScanSummary?> lastRun(String profile) async {
+    final raw = await _prefs.getString('$_lastPrefix${_suffix(profile)}');
+    if (raw == null) return null;
+    try {
+      final record = jsonDecode(raw);
+      if (record is! Map) return null;
+      final timestamp = (record['at'] as num?)?.toInt() ?? 0;
+      if (timestamp <= 0) return null;
+      return ChapterBackgroundScanSummary(
+        at: DateTime.fromMillisecondsSinceEpoch(timestamp),
+        checkedSources: (record['checked'] as num?)?.toInt() ?? 0,
+        skippedSources: (record['skipped'] as num?)?.toInt() ?? 0,
+        foundChapters: (record['found'] as num?)?.toInt() ?? 0,
+        warnings: (record['warnings'] as num?)?.toInt() ?? 0,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}

@@ -6,10 +6,38 @@ import 'catalog_repository.dart';
 import 'chapter_alert_preferences.dart';
 import 'chapter_checker.dart';
 import 'chapter_notification_service.dart';
+import 'chapter_scan_schedule.dart';
 import 'library_store.dart';
 
 const chapterCheckWork = 'senreader.periodic.chapter_check';
 const chapterCheckUniqueName = 'senreader.chapter-check.unique';
+
+Future<void> _performSmartScan() async {
+  final prefs = ChapterAlertPreferences();
+  if (!await prefs.enabled()) return;
+  final library = LibraryStore();
+  await library.load();
+  if (library.items.isEmpty) return;
+  final profile = library.profileId;
+  final report = await ChapterChecker(
+    repository: CatalogRepository(), library: library,
+  ).check(smartSchedule: true);
+  // If the user switched Google accounts during a foreground check, never
+  // post another profile's notifications.
+  await library.load();
+  if (library.profileId != profile) return;
+  if (report.discoveries.isNotEmpty) {
+    await ChapterNotificationService.instance.initialize(captureTaps: false);
+    await ChapterNotificationService.instance.postNewChapters(report.discoveries);
+  }
+  await ChapterScanScheduleStore().recordRun(profile,
+      ChapterBackgroundScanSummary(
+        at: DateTime.now(), checkedSources: report.checkedSources,
+        skippedSources: report.skippedSources,
+        foundChapters: report.discoveries.length,
+        warnings: report.warnings.length,
+      ));
+}
 
 @pragma('vm:entry-point')
 void chapterWorkDispatcher() {
@@ -18,31 +46,20 @@ void chapterWorkDispatcher() {
     try {
       WidgetsFlutterBinding.ensureInitialized();
       DartPluginRegistrant.ensureInitialized();
-      final settings = ChapterAlertPreferences();
-      if (!await settings.enabled()) return true;
-      final library = LibraryStore();
-      await library.load();
-      if (library.items.isEmpty) return true;
-      final report = await ChapterChecker(
-        repository: CatalogRepository(), library: library,
-      ).check();
-      if (report.discoveries.isNotEmpty) {
-        await ChapterNotificationService.instance.initialize(captureTaps: false);
-        await ChapterNotificationService.instance.postNewChapters(report.discoveries);
-      }
+      await _performSmartScan();
       return true;
     } catch (_) {
-      // Native WorkManager can reschedule transient failures. Do not clear
-      // saved baselines or leak source responses to Android logs.
+      // Native WorkManager retries transient failures. Reading remains usable.
       return false;
     }
   });
 }
 
 /// A single periodic Android task, never one task per saved title.
-/// WorkManager is opportunistic, not an instant publication-time push service.
+/// A 15-minute schedule is opportunistic; actual per-title checks are staggered.
 class ChapterBackgroundScheduler {
   static bool _initialized = false;
+  static bool _catchUpActive = false;
 
   static Future<void> initialize() async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
@@ -51,6 +68,22 @@ class ChapterBackgroundScheduler {
       _initialized = true;
     }
     await sync();
+  }
+
+  /// Catch up when the app opens or resumes: no full-library scan on every
+  /// gesture. The same on-device schedule avoids duplicate requests.
+  static Future<void> checkOnResume() async {
+    if (defaultTargetPlatform != TargetPlatform.android || _catchUpActive) {
+      return;
+    }
+    _catchUpActive = true;
+    try {
+      await _performSmartScan();
+    } catch (_) {
+      // Background work must not interfere with the foreground reader.
+    } finally {
+      _catchUpActive = false;
+    }
   }
 
   static Future<void> sync() async {

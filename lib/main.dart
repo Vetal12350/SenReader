@@ -36,8 +36,10 @@ Future<void> main() async {
   // The app listens for notification launch payloads as soon as it mounts.
   runApp(SenReaderApp(library: library, themes: themes, accounts: accounts));
   WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(_initializeBackgroundServices());
-    unawaited(accounts.initialize());
+    final services = _initializeBackgroundServices();
+    final account = accounts.initialize();
+    unawaited(Future.wait([services, account]).then((_) =>
+        ChapterBackgroundScheduler.checkOnResume()).catchError((Object _) {}));
   });
 }
 
@@ -89,7 +91,7 @@ class MainShell extends StatefulWidget {
   @override State<MainShell> createState() => _MainShellState();
 }
 
-class _MainShellState extends State<MainShell> {
+class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   int tab = 0;
 
   void _onMainTabRequest() {
@@ -197,6 +199,7 @@ class _MainShellState extends State<MainShell> {
 
   @override void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     tab = mainTabRequest.value;
     mainTabRequest.addListener(_onMainTabRequest);
     _fetch();
@@ -206,7 +209,15 @@ class _MainShellState extends State<MainShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _onNotificationTap());
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ChapterBackgroundScheduler.checkOnResume());
+    }
+  }
+
   @override void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     debounce?.cancel();
     mainTabRequest.removeListener(_onMainTabRequest);
     ChapterNotificationService.instance.openedPayload.removeListener(_onNotificationTap);

@@ -3,6 +3,7 @@ import '../core/models.dart';
 import '../core/title_matching.dart';
 import 'catalog_repository.dart';
 import 'chapter_inbox_store.dart';
+import 'chapter_scan_schedule.dart';
 import 'library_store.dart';
 
 class ChapterDiscovery {
@@ -18,11 +19,13 @@ class ChapterDiscovery {
 
 class ChapterScanReport {
   const ChapterScanReport(this.discoveries, this.warnings, this.checkedTitles,
-      {this.diagnostics = const []});
+      {this.diagnostics = const [], this.checkedSources = 0,
+       this.skippedSources = 0});
   final List<ChapterDiscovery> discoveries;
   final List<String> warnings;
   final int checkedTitles;
   final List<String> diagnostics;
+  final int checkedSources, skippedSources;
 }
 
 /// Checks each precisely title-linked source without moving the reader's
@@ -52,10 +55,20 @@ class ChapterChecker {
     });
   }
 
-  Future<ChapterScanReport> check({bool diagnostics = false}) async {
+  /// Manual scans are always exhaustive; only background scans are scheduled.
+  Future<ChapterScanReport> check({bool diagnostics = false,
+      bool smartSchedule = false}) async {
     final discoveries = <ChapterDiscovery>[];
     final warnings = <String>[];
     final scanDetails = <String>[];
+    final now = DateTime.now();
+    final scanProfile = library.profileId;
+    final schedule = smartSchedule ? ChapterScanScheduleStore() : null;
+    final lastAttempts = schedule == null ? <String, int>{}
+        : await schedule.load(scanProfile);
+    final attempts = <String, int>{};
+    var checkedSources = 0;
+    var skippedSources = 0;
     final originalSource = <String, String>{};
     // Archived and active inbox entries are both proof of earlier delivery.
     final delivered = <String>{};
@@ -65,7 +78,17 @@ class ChapterChecker {
       if (canonical != null) delivered.add('${entry.bookKey}|$canonical');
     }
     var checked = 0;
-    for (final saved in List<SavedBook>.of(library.items)) {
+    final savedBooks = List<SavedBook>.of(library.items);
+    if (smartSchedule) {
+      int priority(SavedBook book) => switch (book.status) {
+        'reading' => 0,
+        'planned' => 1,
+        'completed' => 2,
+        _ => 3,
+      };
+      savedBooks.sort((a, b) => priority(a).compareTo(priority(b)));
+    }
+    for (final saved in savedBooks) {
       if (saved.status == 'viewed' || saved.status == 'dropped') continue;
       checked++;
       originalSource[saved.key] = saved.preferredSource;
@@ -83,8 +106,18 @@ class ChapterChecker {
           }
           continue;
         }
+        final scanKey = ChapterScanPolicy.keyFor(saved, sourceKey, entry.id);
+        if (smartSchedule &&
+            !ChapterScanPolicy.isDue(saved.status, lastAttempts[scanKey], now)) {
+          skippedSources++;
+          continue;
+        }
+        if (smartSchedule) attempts[scanKey] = now.millisecondsSinceEpoch;
+        checkedSources++;
         try {
-          final detail = await source.detail(entry);
+          final detail = smartSchedule
+              ? await source.detail(entry).timeout(const Duration(seconds: 18))
+              : await source.detail(entry);
           await library.load();
           var current = library.get(book);
           if (current == null ||
@@ -280,10 +313,14 @@ class ChapterChecker {
       }
     }
     await library.load();
+    if (schedule != null && library.profileId == scanProfile) {
+      await schedule.recordAttempts(scanProfile, attempts);
+    }
     discoveries.removeWhere((d) =>
         library.get(d.book)?.preferredSource !=
             originalSource[normalizedTitle(d.book.title)]);
     return ChapterScanReport(discoveries, warnings, checked,
-        diagnostics: scanDetails);
+        diagnostics: scanDetails, checkedSources: checkedSources,
+        skippedSources: skippedSources);
   }
 }
