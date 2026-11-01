@@ -79,6 +79,54 @@ void main() {
     expect(library.items.single.seenChapterKeys, {'v0:c1', 'v0:c2'});
   });
 
+  test('first account scan catches a recently published unread chapter after 112',
+      () async {
+    final oldDate = DateTime.now().subtract(const Duration(days: 7));
+    final newDate = DateTime.now().subtract(const Duration(hours: 2));
+    final source = FakeSource('readmanga')..chapters = [
+      Chapter(id: '113', name: 'Глава 113', publishedAt: newDate),
+      Chapter(id: '112', name: 'Глава 112', publishedAt: oldDate),
+    ];
+    final library = await makeLibrary([source]);
+    await library.switchProfile('googleUser');
+    final book = UnifiedManga(title: 'Example', entries: {
+      'readmanga': const MangaEntry(
+          source: 'readmanga', id: '1', title: 'Example'),
+    });
+    await library.setStatus(book, 'reading');
+    await library.markRead(book, source.chapters.last, 'readmanga');
+    final checker = ChapterChecker(repository: CatalogRepository(sources: {
+      'readmanga': source,
+    }), library: library);
+    final first = await checker.check();
+    expect(first.discoveries.map((d) => d.canonicalKey), ['v0:c113']);
+    expect(library.items.single.initializedSources, contains('readmanga'));
+    expect((await checker.check()).discoveries, isEmpty);
+    final reopened = LibraryStore();
+    await reopened.load();
+    expect(reopened.profileId, 'googleUser');
+    expect(reopened.items.single.seenChapterKeys, contains('v0:c113'));
+    expect(reopened.isChapterRead(book, source.chapters.last, 'readmanga'), true);
+  });
+
+  test('first scan does not alert old unread chapters', () async {
+    final source = FakeSource('readmanga')..chapters = [
+      Chapter(id: '113', name: 'Глава 113',
+          publishedAt: DateTime.now().subtract(const Duration(days: 7))),
+      const Chapter(id: '112', name: 'Глава 112'),
+    ];
+    final library = await makeLibrary([source]);
+    await library.setStatus(library.items.single.toUnified(), 'reading');
+    await library.markRead(library.items.single.toUnified(),
+        source.chapters.last, 'readmanga');
+    final report = await ChapterChecker(
+      repository: CatalogRepository(sources: {'readmanga': source}),
+      library: library).check();
+    expect(report.discoveries, isEmpty);
+    expect(source.pageCalls, 0);
+    expect(library.items.single.seenChapterKeys, contains('v0:c113'));
+  });
+
   test('one new fractional chapter is notified exactly once after restart', () async {
     final source = FakeSource('senkuro')
       ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
