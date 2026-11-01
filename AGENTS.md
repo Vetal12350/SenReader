@@ -3,7 +3,7 @@
 ## Project and owner requirements
 - This is a **personal, private, local-first Android manga/manhwa reader**, not a social platform.
 - Tech: Flutter/Dart; Android APK is built and tested in GitHub Actions.
-- Public sources currently supported: Senkuro, ReadManga and ReManga. Preserve strict separation of source adapters.
+- Public sources currently supported: Senkuro and ReadManga. ReManga was removed; keep historical bookmarks/backup entries intact and offer explicit source replacement. Preserve strict separation of source adapters.
 - **Do not** add community profiles, social activity, comments, friends, Shikimori or MyAnimeList integration. Do not introduce a server or account requirement without an explicit new user request.
 - User-visible interface language: Russian. Development discussion may be in Russian.
 - The local Codex Control Center Worker is intentionally not required. **Never add the `codex-local` label or require an always-on PC** for Cloud tasks.
