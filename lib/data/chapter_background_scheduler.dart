@@ -12,7 +12,7 @@ import 'library_store.dart';
 const chapterCheckWork = 'senreader.periodic.chapter_check';
 const chapterCheckUniqueName = 'senreader.chapter-check.unique';
 
-Future<void> _performSmartScan() async {
+Future<void> _performSmartScan({bool foreground = false}) async {
   final prefs = ChapterAlertPreferences();
   if (!await prefs.enabled()) return;
   final library = LibraryStore();
@@ -27,7 +27,7 @@ Future<void> _performSmartScan() async {
   await library.load();
   if (library.profileId != profile) return;
   if (report.discoveries.isNotEmpty) {
-    await ChapterNotificationService.instance.initialize(captureTaps: false);
+    await ChapterNotificationService.instance.initialize(captureTaps: foreground);
     await ChapterNotificationService.instance.postNewChapters(report.discoveries);
   }
   await ChapterScanScheduleStore().recordRun(profile,
@@ -78,7 +78,7 @@ class ChapterBackgroundScheduler {
     }
     _catchUpActive = true;
     try {
-      await _performSmartScan();
+      await _performSmartScan(foreground: true);
     } catch (_) {
       // Background work must not interfere with the foreground reader.
     } finally {

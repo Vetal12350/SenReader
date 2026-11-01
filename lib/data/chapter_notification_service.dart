@@ -85,9 +85,11 @@ class ChapterNotificationService {
   }
 
   Future<int> postNewChapters(List<ChapterDiscovery> releases) async {
-    if (!await ChapterAlertPreferences().enabled() || !await hasPermission()) {
-      return 0;
-    }
+    if (!await ChapterAlertPreferences().enabled()) return 0;
+    // Keep the app's own inbox even if Android permission was revoked after
+    // notification scheduling. A successful scan must not silently consume
+    // an update with no visible record.
+    final canPostSystemNotification = await hasPermission();
     var posted = 0;
     for (final release in releases) {
       // A source may have changed while the checker or Android was waiting.
@@ -100,6 +102,7 @@ class ChapterNotificationService {
       await ChapterInboxStore().add(normalizedTitle(release.book.title),
         release.book.title, release.book.coverUrl,
         release.sourceKey, release.chapter);
+      if (!canPostSystemNotification) continue;
       await _plugin.show(
         id: notificationId(release),
         title: release.book.title,
