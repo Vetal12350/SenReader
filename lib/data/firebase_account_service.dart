@@ -47,13 +47,19 @@ class FirebaseAccountService extends ChangeNotifier {
 
   Future<void> initialize() async {
     if (ready || busy) return;
-    if (!configured) { ready = true; notifyListeners(); return; }
+    if (!configured) {
+      await library.switchProfile(null);
+      ready = true;
+      notifyListeners();
+      return;
+    }
     busy = true;
     notifyListeners();
     try {
       await Firebase.initializeApp(options: SenReaderFirebaseConfig.options);
       _auth = FirebaseAuth.instance;
       cloud = CloudLibrarySync(library, FirebaseFirestore.instance);
+      cloud!.addListener(notifyListeners);
       _authListener = _auth!.authStateChanges().listen(
           (next) => unawaited(_setUser(next)));
       ready = true;
@@ -188,6 +194,7 @@ class FirebaseAccountService extends ChangeNotifier {
 
   @override void dispose() {
     unawaited(_authListener?.cancel());
+    cloud?.removeListener(notifyListeners);
     cloud?.dispose();
     super.dispose();
   }
