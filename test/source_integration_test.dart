@@ -99,7 +99,10 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: DetailPage(
         book: legacy, repository: repo, library: library)));
     await tester.pumpAndSettle();
+    await revealInScrollable(tester,
+        find.textContaining('больше не поддерживается'));
     expect(find.textContaining('больше не поддерживается'), findsOneWidget);
+    await revealInScrollable(tester, find.text('Найти другой источник'));
     expect(library.items.single.preferredSource, 'remanga');
     await tester.tap(find.text('Найти другой источник'));
     await tester.pumpAndSettle();
