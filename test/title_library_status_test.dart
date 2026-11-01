@@ -33,7 +33,7 @@ class _SearchableTitleSource extends _TitleSource {
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  testWidgets('title has only compact source action, library management stays in status menu', (tester) async {
+  testWidgets('title has no manual source action, library management stays in status menu', (tester) async {
     final source = _TitleSource();
     final book = UnifiedManga(title: source.entry.title,
       entries: {source.key: source.entry});
@@ -45,8 +45,8 @@ void main() {
     )));
     await tester.pumpAndSettle();
     final appBar = tester.widget<AppBar>(find.byType(AppBar));
-    expect(appBar.actions, hasLength(1));
-    expect(find.byTooltip('Сменить источник'), findsOneWidget);
+    expect(appBar.actions, isNull);
+    expect(find.byTooltip('Сменить источник'), findsNothing);
     expect(find.byTooltip('Добавить в библиотеку'), findsNothing);
     await tester.tap(find.byTooltip('Статус произведения'));
     await tester.pumpAndSettle();
@@ -67,7 +67,7 @@ void main() {
     )));
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('title-read-button')), findsOneWidget);
-    expect(find.byTooltip('Сменить источник'), findsOneWidget);
+    expect(find.byTooltip('Сменить источник'), findsNothing);
     expect(find.byKey(const Key('chapter-search')), findsNothing);
     await tester.scrollUntilVisible(find.widgetWithText(ListTile, 'Глава 3'),
       160, scrollable: find.byType(Scrollable).first);
