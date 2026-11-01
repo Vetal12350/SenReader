@@ -154,6 +154,7 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
                 label: const Text('Привязать Google')),
             const SizedBox(height: 8),
             TextField(controller: newPassword, obscureText: true,
+              onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
                 labelText: 'Новый пароль',
                 border: OutlineInputBorder())),
