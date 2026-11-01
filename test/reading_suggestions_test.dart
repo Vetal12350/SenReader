@@ -120,8 +120,11 @@ void main() {
           reason: 'unexpected cached candidate for $status');
       expect(unreadInboxSuggestions([record], [alert]), isEmpty,
           reason: 'unexpected inbox suggestion for $status');
-      expect(showContinueCard(record, newlyAvailable: chapters.first), false,
-          reason: 'unexpected Continue card for $status');
+      // Continue may still resume a partially opened Viewed/Planned title;
+      // a new alert may not create an additional Continue candidate.
+      expect(showContinueCard(record, newlyAvailable: chapters.first),
+          showContinueCard(record),
+          reason: 'new alert must not affect Continue for $status');
     }
   });
 
