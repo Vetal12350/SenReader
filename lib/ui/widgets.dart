@@ -125,7 +125,7 @@ class MangaTile extends StatelessWidget {
                     (key) => key == 'senkuro' || key == 'readmanga').length > 1
                   ? '2 источника'
                   : book.entries.containsKey('senkuro') ? 'Senkuro'
-                  : book.entries.containsKey('readmanga') ? 'ReadManga'
+                  : book.entries.containsKey('readmanga') ? 'Доп. источник'
                   : 'Источник удалён',
                 maxLines: 1, overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: Colors.white)),

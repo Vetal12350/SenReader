@@ -46,7 +46,7 @@ class _DetailPageState extends State<DetailPage> {
     selected = saved?.preferredSource ?? SavedBook.chooseSource(book.entries);
     _firstLoad = _load();
     // Do not launch two other-source searches on every reopen of a saved title.
-    if (saved == null || saved.entries.length < 2) {
+    if (saved == null || saved.lastChapter.isEmpty || saved.entries.length < 2) {
       _discoverOther();
     }
   }
@@ -78,7 +78,8 @@ class _DetailPageState extends State<DetailPage> {
           unawaited(_load());
         }
       }
-      if (mounted && !loading && (detail?.chapters.isEmpty == true || error != null)) {
+      if (mounted && !loading && (detail?.chapters.isEmpty == true ||
+          (error != null && !widget.repository.sources.containsKey(selected)))) {
         _fallback();
       }
     } catch (_) {
