@@ -31,16 +31,25 @@ class _VisibleChapterPage {
 
 /// A failed CDN image is retried in place rather than requiring route
 /// navigation. Keep its state tied to the chapter/page, not viewport rebuilds.
+/// Decode at screen resolution rather than full remote image resolution.
+/// 1600 physical pixels retains detail on high-density Android displays.
+int readerDecodeWidth(double logicalWidth, double pixelRatio) =>
+    (logicalWidth * pixelRatio).ceil().clamp(1, 1600).toInt();
+
 class _RetryableReaderImage extends StatefulWidget {
   const _RetryableReaderImage({super.key, required this.page,
     required this.pageIndex, required this.width,
     required this.height, required this.fit, required this.onLoaded,
-    required this.onRefreshLinks});
+    required this.onRefreshLinks, required this.decodeWidth,
+    required this.knownHeight, required this.onMeasuredHeight});
   final PageImage page;
   final int pageIndex;
   final double width;
   final double? height;
   final BoxFit fit;
+  final int decodeWidth;
+  final double? knownHeight;
+  final ValueChanged<double> onMeasuredHeight;
   final VoidCallback onLoaded;
   final Future<void> Function() onRefreshLinks;
 
@@ -51,8 +60,11 @@ class _RetryableReaderImage extends StatefulWidget {
 class _RetryableReaderImageState extends State<_RetryableReaderImage> {
   int _attempt = 0;
   Timer? _retryTimer;
+  final GlobalKey _imageKey = GlobalKey();
+  bool _measureScheduled = false;
+  bool _measured = false;
 
-  void _retry(NetworkImage image) {
+  void _retry(ImageProvider image) {
     _retryTimer?.cancel();
     _retryTimer = null;
     // Evict any failed network image from Flutter's image cache.
@@ -62,7 +74,7 @@ class _RetryableReaderImageState extends State<_RetryableReaderImage> {
     }());
   }
 
-  void _scheduleRetry(NetworkImage image) {
+  void _scheduleRetry(ImageProvider image) {
     if (_attempt >= 2 || _retryTimer != null) return;
     _retryTimer = Timer(
       Duration(milliseconds: _attempt == 0 ? 450 : 1100),
@@ -76,6 +88,8 @@ class _RetryableReaderImageState extends State<_RetryableReaderImage> {
       _retryTimer?.cancel();
       _retryTimer = null;
       _attempt = 0;
+      _measured = false;
+      _measureScheduled = false;
     }
   }
 
@@ -85,18 +99,36 @@ class _RetryableReaderImageState extends State<_RetryableReaderImage> {
   }
 
   @override Widget build(BuildContext context) {
-    final provider = NetworkImage(widget.page.url,
-      headers: widget.page.headers);
+    final provider = ResizeImage.resizeIfNeeded(widget.decodeWidth, null,
+      NetworkImage(widget.page.url, headers: widget.page.headers));
     return Image(
       key: ValueKey('reader-image-attempt-$_attempt'),
-      image: provider, width: widget.width, height: widget.height,
-      fit: widget.fit,
+      image: provider, width: widget.width,
+      height: widget.height ?? widget.knownHeight,
+      fit: widget.fit, filterQuality: FilterQuality.low,
       frameBuilder: (context, child, frame, wasSync) {
-        if (frame != null) widget.onLoaded();
-        return frame == null
-          ? const SizedBox(height: 170,
-              child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
-          : child;
+        if (frame != null) {
+          widget.onLoaded();
+          if (!_measured && !_measureScheduled && widget.height == null) {
+            _measureScheduled = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _measureScheduled = false;
+              if (!mounted) return;
+              final measured = _imageKey.currentContext?.size?.height;
+              if (measured != null && measured.isFinite && measured > 0) {
+                _measured = true;
+                widget.onMeasuredHeight(measured);
+              }
+            });
+          }
+          return KeyedSubtree(key: _imageKey, child: child);
+        }
+        // Preserve the previous layout when the image cache evicts a bitmap.
+        // The former fixed 170px tile caused scroll corrections on return.
+        return SizedBox(
+          height: widget.height ?? widget.knownHeight ?? widget.width * 1.5,
+          child: const Center(
+            child: CircularProgressIndicator(strokeWidth: 2)));
       },
       errorBuilder: (context, error, stack) {
         _scheduleRetry(provider);
@@ -146,6 +178,11 @@ class _ReaderPageState extends State<ReaderPage> {
   Future<void> _saveChain = Future<void>.value();
   final List<_ChapterSegment> _segments = [];
   final Set<String> _loadedPageKeys = {};
+  final Set<String> _loadingPageKeys = {};
+  // Stores page heights for the whole active chapter; prevents sliver
+  // layout reflow when already-loaded pages are recycled off-screen.
+  final Map<String, double> _knownPageHeights = {};
+  int? _lastCompletionVisibleIndex;
   final Map<String, int> _chapterReloads = {};
   final Set<String> _refreshingChapterLinks = {};
   final Set<String> _autoCompletedChapters = {};
@@ -384,12 +421,24 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   void _registerLoadedPage(_VisibleChapterPage item) {
-    if (_loadedPageKeys.contains(item.key)) return;
+    if (_loadedPageKeys.contains(item.key) ||
+        !_loadingPageKeys.add(item.key)) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadingPageKeys.remove(item.key);
       if (!mounted) return;
       _loadedPageKeys.add(item.key);
       _autoCompletePassedChapters(_positions.itemPositions.value);
     });
+  }
+
+  void _rememberHeight(String pageKey, double height) {
+    if (!height.isFinite || height < 1 || height > 50000) return;
+    // No setState: a newly decoded image is already in the tree. This
+    // metadata is read only when its sliver widget is later recreated.
+    _knownPageHeights[pageKey] = height;
+    if (_knownPageHeights.length > 600) {
+      _knownPageHeights.remove(_knownPageHeights.keys.first);
+    }
   }
 
   void _onVisiblePages() {
@@ -411,7 +460,13 @@ class _ReaderPageState extends State<ReaderPage> {
       }
     }
 
-    _autoCompletePassedChapters(visible);
+    // A full completion scan on every pixel of a long image can trigger
+    // expensive work while dragging. Run it when a new item enters view.
+    final firstIndex = visible.isEmpty ? null : visible.first.index;
+    if (firstIndex != _lastCompletionVisibleIndex) {
+      _lastCompletionVisibleIndex = firstIndex;
+      _autoCompletePassedChapters(visible);
+    }
     if (nearLastPartEnd && !_nextLoading && !_nextScheduled &&
         !_atSeriesEnd && _nextError == null) {
       _nextScheduled = true;
@@ -470,6 +525,7 @@ class _ReaderPageState extends State<ReaderPage> {
         _chapterReloads[chapter.id] = (_chapterReloads[chapter.id] ?? 0) + 1;
         if (_activeChapter.id == chapter.id) _pageCount = pages.length;
         _loadedPageKeys.removeWhere((key) => key.startsWith('${chapter.id}|'));
+        _loadingPageKeys.removeWhere((key) => key.startsWith('${chapter.id}|'));
       });
     } catch (_) {
       if (mounted) {
@@ -944,12 +1000,15 @@ class _ReaderPageState extends State<ReaderPage> {
                 // At the absolute bottom, the last image still occupies part
                 // of the viewport above the footer. Requiring it to disappear
                 // would make last-chapter auto-read impossible.
+                final firstReach = !_reachedScrollableEnd;
                 _reachedScrollableEnd = notice.metrics.maxScrollExtent > 0 &&
                     notice.metrics.extentAfter <= 4;
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  if (mounted) _autoCompletePassedChapters(
-                    _positions.itemPositions.value);
-                });
+                if (firstReach && _reachedScrollableEnd) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) _autoCompletePassedChapters(
+                      _positions.itemPositions.value);
+                  });
+                }
               }
               return false;
             },
@@ -1031,6 +1090,12 @@ class _ReaderPageState extends State<ReaderPage> {
                 width: MediaQuery.sizeOf(context).width,
                 height: _fitHeight ? MediaQuery.sizeOf(context).height : null,
                 fit: _fitHeight ? BoxFit.contain : BoxFit.fitWidth,
+                decodeWidth: readerDecodeWidth(
+                  MediaQuery.sizeOf(context).width,
+                  MediaQuery.devicePixelRatioOf(context)),
+                knownHeight: _fitHeight ? null : _knownPageHeights[item.key],
+                onMeasuredHeight: (height) =>
+                  _rememberHeight(item.key, height),
                 onLoaded: () => _registerLoadedPage(item),
                 onRefreshLinks: () => _refreshChapterImages(item.chapter),
               );
