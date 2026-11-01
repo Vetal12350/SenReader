@@ -120,9 +120,13 @@ class MangaTile extends StatelessWidget {
             Positioned(left: 6, bottom: 6, child: Container(
               decoration: BoxDecoration(color: const Color(0xD916161D), borderRadius: BorderRadius.circular(7)),
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-              child: Text(book.entries.length > 1 ? '${book.entries.length} источника' :
-                book.primary.source == 'senkuro' ? 'Senkuro' :
-                book.primary.source == 'remanga' ? 'ReManga' : 'ReadManga',
+              child: Text(
+                book.entries.keys.where(
+                    (key) => key == 'senkuro' || key == 'readmanga').length > 1
+                  ? '2 источника'
+                  : book.entries.containsKey('senkuro') ? 'Senkuro'
+                  : book.entries.containsKey('readmanga') ? 'ReadManga'
+                  : 'Источник удалён',
                 maxLines: 1, overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: Colors.white)),
             )),
