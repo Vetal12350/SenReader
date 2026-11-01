@@ -68,7 +68,7 @@ void main() {
     expect(shouldResumeCurrentChapter(record), true);
     expect(showContinueCard(record), false);
     expect(showContinueCard(record,
-      newlyAvailable: const Chapter(id: '128', name: 'Глава 128')), true);
+      newlyAvailable: const Chapter(id: '128', name: 'Глава 128 (т. 2)')), true);
     record.lastChapterId = '126';
     expect(showContinueCard(record), true);
   });
