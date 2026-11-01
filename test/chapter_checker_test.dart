@@ -104,26 +104,24 @@ void main() {
     expect(restored.items.single.seenChapterKeys, contains('v0:c1.5'));
   });
 
-  test('only active source is fetched and a new canonical chapter alerts once', () async {
+  test('both linked sources are scanned, identical new chapter alerts once', () async {
     final senkuro = FakeSource('senkuro')
       ..chapters = [const Chapter(id: 'first', name: 'Глава 3')];
-    final remanga = FakeSource('remanga')
-      ..chapters = [const Chapter(id: 'another', name: 'Глава 3: Other')];
-    final library = await makeLibrary([senkuro, remanga]);
-    final checker = ChapterChecker(
-      repository: CatalogRepository(sources: {
-        'senkuro': senkuro, 'remanga': remanga,
-      }), library: library);
+    final readmanga = FakeSource('readmanga')
+      ..chapters = [const Chapter(id: 'other', name: 'Глава 3')];
+    final library = await makeLibrary([senkuro, readmanga]);
+    final checker = ChapterChecker(repository: CatalogRepository(sources: {
+      'senkuro': senkuro, 'readmanga': readmanga,
+    }), library: library);
     expect((await checker.check()).discoveries, isEmpty);
-    senkuro.chapters = [const Chapter(id: 's4', name: 'Глава 4: New')];
-    remanga.chapters = [const Chapter(id: 'r4', name: 'Глава 4')];
+    expect(library.items.single.initializedSources,
+        containsAll(['senkuro', 'readmanga']));
+    senkuro.chapters = [const Chapter(id: 's4', name: 'Глава 4')];
+    readmanga.chapters = [const Chapter(id: 'r4', name: 'Глава 4')];
     final result = await checker.check();
-    expect(result.discoveries.length, 1);
-    expect(result.discoveries.single.canonicalKey, 'v0:c4');
+    expect(result.discoveries.map((d) => d.canonicalKey), ['v0:c4']);
+    expect(readmanga.detailCalls, greaterThan(1));
     expect((await checker.check()).discoveries, isEmpty);
-    expect(remanga.detailCalls, 0);
-    expect(remanga.pageCalls, 0);
-    expect(remanga.searchCalls, 0);
   });
 
   test('changed subtitle does not alert and offline source preserves baseline', () async {
