@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:senreader/data/senkuro_request_gate.dart';
 import 'package:senreader/data/senkuro_source.dart';
+import 'package:senreader/core/source.dart';
 
 http.Response _success() => http.Response(
     jsonEncode({'data': {'mangas': {'edges': []}}}), 200);
@@ -56,7 +57,7 @@ void main() {
         sleeper: (_) async {},
       ),
     );
-    await expectLater(source.popular(), throwsA(isA<StateError>()));
+    await expectLater(source.popular(), throwsA(isA<SourceException>()));
     expect(calls, 2);
   });
 
