@@ -1,6 +1,7 @@
 import '../core/models.dart';
 import '../core/source.dart';
 import '../core/title_matching.dart';
+import '../core/chapter_identity.dart';
 import 'readmanga_source.dart';
 import 'senkuro_source.dart';
 
@@ -22,7 +23,7 @@ class CatalogRepository {
           ? await source.popular()
           : await source.search(query.trim());
       } catch (e) {
-        warnings.add('${source.name}: $e');
+        warnings.add('${source.name}: временно недоступен');
         return <MangaEntry>[];
       }
     });
@@ -36,36 +37,55 @@ class CatalogRepository {
     );
   }
 
-  /// Choose only among verified chapter lists; never overwrite a user's
-  /// explicitly saved preferred source. A tie keeps the current source.
+  /// Prefer the greatest *numbered* chapter, never the number of HTML rows.
+  /// Only a verified public HTTPS page list can make a different source win.
+  /// On timeouts or ambiguous numbering retain the current source.
   Future<String> mostCompleteSource(UnifiedManga book, String current,
       {int? currentChapterCount}) async {
-    if (book.entries.length < 2) return current;
-    final counts = await Future.wait(book.entries.entries.map((entry) async {
-      if (entry.key == current && currentChapterCount != null) {
-        return (entry.key, currentChapterCount);
-      }
+    if (!book.entries.containsKey(current) || book.entries.length < 2) {
+      return current;
+    }
+    final latest = await Future.wait(book.entries.entries.map((entry) async {
       final source = sources[entry.key];
-      if (source == null) return (entry.key, -1);
+      if (source == null) return (entry.key, null as Chapter?);
       try {
-        final detail = await source.detail(entry.value)
-          .timeout(const Duration(seconds: 12));
-        return (entry.key, detail.chapters.length);
+        final chapters = (await source.detail(entry.value)
+            .timeout(const Duration(seconds: 12))).chapters;
+        Chapter? newest;
+        for (final chapter in chapters) {
+          if (canonicalChapterKey(chapter) == null) continue;
+          if (newest == null ||
+              (compareChapterChronology(chapter, newest) ?? 0) > 0) {
+            newest = chapter;
+          }
+        }
+        return (entry.key, newest);
       } catch (_) {
-        return (entry.key, -1);
+        return (entry.key, null as Chapter?);
       }
     }));
-    final currentCount = counts.where((item) => item.$1 == current)
-      .map((item) => item.$2).firstOrNull ?? -1;
-    var winner = current;
-    var maxCount = currentCount;
-    for (final item in counts) {
-      if (item.$2 > maxCount && item.$2 > 0) {
-        maxCount = item.$2;
-        winner = item.$1;
+    final currentLatest = latest.where((e) => e.$1 == current).firstOrNull?.$2;
+    if (currentLatest == null) return current;
+    final newer = latest.where((e) =>
+        e.$1 != current && e.$2 != null &&
+        (compareChapterChronology(e.$2!, currentLatest) ?? 0) > 0).toList()
+      ..sort((a, b) => compareChapterChronology(b.$2!, a.$2!) ?? 0);
+    for (final candidate in newer) {
+      final source = sources[candidate.$1];
+      if (source == null) continue;
+      try {
+        final pages = await source.pages(candidate.$2!)
+            .timeout(const Duration(seconds: 12));
+        if (pages.any((image) {
+          final uri = Uri.tryParse(image.url);
+          return uri != null && uri.scheme == 'https' &&
+              uri.host.isNotEmpty;
+        })) return candidate.$1;
+      } catch (_) {
+        // An inaccessible new chapter must not replace a readable version.
       }
     }
-    return winner;
+    return current;
   }
 
   // A matching title can come from multiple sites, but never assume localization

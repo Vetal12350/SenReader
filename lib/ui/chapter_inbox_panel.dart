@@ -58,7 +58,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
   Future<void> _open(InboxEntry entry) async {
     await widget.library.load();
     final saved = widget.library.items.where((x) => x.key == entry.bookKey).firstOrNull;
-    if (saved == null || saved.preferredSource != entry.source) return;
+    if (saved == null || !saved.entries.containsKey(entry.source)) return;
     final source = widget.repository.sources[entry.source];
     final manga = saved.entries[entry.source];
     if (source == null || manga == null) return;

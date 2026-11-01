@@ -16,7 +16,7 @@ class _ChapterCountSource implements MangaSource {
       for (var index = 1; index <= count; index++)
         Chapter(id: '$index', name: 'Глава $index'),
     ]);
-  @override Future<List<PageImage>> pages(Chapter chapter) async => [];
+  @override Future<List<PageImage>> pages(Chapter chapter) async => [const PageImage('https://example.test/p.jpg')];
 }
 
 void main() {
@@ -25,7 +25,7 @@ void main() {
     'readmanga': const MangaEntry(source: 'readmanga', id: 'b', title: 'Series'),
     'remanga': const MangaEntry(source: 'remanga', id: 'c', title: 'Series'),
   });
-  test('new title prefers source with the largest confirmed chapter count', () async {
+  test('new title prefers the source whose highest numbered chapter is newer', () async {
     final repo = CatalogRepository(sources: {
       'senkuro': _ChapterCountSource('senkuro', 10),
       'readmanga': _ChapterCountSource('readmanga', 50),
@@ -33,7 +33,7 @@ void main() {
     });
     expect(await repo.mostCompleteSource(book, 'senkuro'), 'readmanga');
   });
-  test('equal chapter counts retain existing source', () async {
+  test('equal latest chapter numbers retain the current source', () async {
     final repo = CatalogRepository(sources: {
       'senkuro': _ChapterCountSource('senkuro', 30),
       'readmanga': _ChapterCountSource('readmanga', 30),

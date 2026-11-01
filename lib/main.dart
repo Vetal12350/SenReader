@@ -830,14 +830,14 @@ class _MainShellState extends State<MainShell> {
     }
     if (saved == null) return;
     final sourceKey = info['source']!;
-    if (saved.preferredSource != sourceKey) return;
+    if (!saved.entries.containsKey(sourceKey)) return;
     final entry = saved.entries[sourceKey];
     final source = widget.repository.sources[sourceKey];
     if (entry == null || source == null) return;
     try {
       final detail = await source.detail(entry);
       await widget.library.load();
-      if (widget.library.get(saved.toUnified())?.preferredSource != sourceKey) return;
+      if (!(widget.library.get(saved.toUnified())?.entries.containsKey(sourceKey) ?? false)) return;
       Chapter? matched;
       for (final chapter in detail.chapters) {
         if (chapter.id == info['chapter'] &&
@@ -958,7 +958,7 @@ class _MainShellState extends State<MainShell> {
               controller: searchController,
               onChanged: _onSearch,
               decoration: InputDecoration(
-                hintText: 'Поиск: Senkuro, ReManga, ReadManga',
+                hintText: 'Поиск: Senkuro, ReadManga',
                 prefixIcon: const Icon(Icons.search),
                 filled: true,
                 border: OutlineInputBorder(
@@ -1021,7 +1021,7 @@ class _MainShellState extends State<MainShell> {
             if (tab == 1) ...[
             SectionTitle(query.isEmpty ? 'Каталог' : 'Результаты поиска',
               subtitle: query.isEmpty
-                  ? 'Senkuro' : 'Senkuro · ReManga · ReadManga'),
+                  ? 'Senkuro' : 'Senkuro · ReadManga'),
             if (loading)
               const Padding(padding: EdgeInsets.all(32),
                 child: Center(child: CircularProgressIndicator())),

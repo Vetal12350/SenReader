@@ -45,19 +45,7 @@ Future<void> revealInScrollable(WidgetTester tester, Finder finder,
   await tester.pumpAndSettle();
 }
 
-Future<void> selectSource(WidgetTester tester, String source) async {
-  await tester.tap(find.byTooltip('Сменить источник'));
-  // Avoid pumpAndSettle here: a previous source can still have an unresolved
-  // request and a live loading spinner while the popup itself is animating.
-  await tester.pump();
-  await tester.pump(const Duration(milliseconds: 350));
-  // Tap the actual popup item, not the possibly offset label in its overlay.
-  final menuItem = find.byWidgetPredicate((widget) =>
-      widget is CheckedPopupMenuItem<String> && widget.value == source);
-  expect(menuItem, findsOneWidget);
-  await tester.tap(menuItem);
-  await tester.pumpAndSettle();
-}
+
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -87,7 +75,7 @@ void main() {
   });
 
 
-  testWidgets('legacy ReManga bookmark survives removal and can switch manually',
+  testWidgets('legacy ReManga bookmark is preserved and replaced automatically',
       (tester) async {
     final old = const MangaEntry(
         source: 'remanga', id: 'old', title: 'Example');
@@ -99,39 +87,29 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: DetailPage(
         book: legacy, repository: repo, library: library)));
     await tester.pumpAndSettle();
-    await revealInScrollable(tester,
-        find.textContaining('больше не поддерживается'));
-    expect(find.textContaining('больше не поддерживается'), findsOneWidget);
-    await revealInScrollable(tester, find.text('Найти другой источник'));
-    expect(library.items.single.preferredSource, 'remanga');
-    await tester.tap(find.text('Найти другой источник'));
-    await tester.pumpAndSettle();
+    expect(library.items.single.entries.keys, contains('remanga'));
     expect(library.items.single.entries.keys, contains('senkuro'));
-    expect(library.items.single.preferredSource, 'remanga');
-    await selectSource(tester, 'senkuro');
     expect(library.items.single.preferredSource, 'senkuro');
     await revealInScrollable(tester, find.text('Readable chapter'));
     expect(find.text('Readable chapter'), findsOneWidget);
+    expect(find.byTooltip('Сменить источник'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('unsaved fallback tries each source once; manual picker stops fallback', (tester) async {
+  testWidgets('network failure does not switch to a different translation', (tester) async {
     final sources = [FixtureSource('senkuro', fails: true),
-      FixtureSource('readmanga'), FixtureSource('remanga', readable: true)];
+      FixtureSource('readmanga', readable: true)];
     final repo = CatalogRepository(sources: {for (final s in sources) s.key: s});
-    final book = UnifiedManga(title: 'Example', entries: {for (final s in sources) s.key: s.entry});
+    final book = UnifiedManga(title: 'Example',
+      entries: {for (final s in sources) s.key: s.entry});
     final library = LibraryStore();
-    await tester.pumpWidget(MaterialApp(home: DetailPage(book: book, repository: repo, library: library)));
+    await tester.pumpWidget(MaterialApp(home: DetailPage(
+      book: book, repository: repo, library: library)));
     await tester.pumpAndSettle();
-    expect(sources.map((s) => s.detailCalls), [1, 1, 1]);
-    expect(find.byType(ChoiceChip), findsNothing);
-    expect(find.byType(PopupMenuButton<String>), findsNWidgets(2));
-    await revealInScrollable(tester, find.text('Readable chapter'));
-    expect(find.text('Readable chapter'), findsOneWidget);
-    await selectSource(tester, 'readmanga');
-    expect(sources[1].detailCalls, 2);
-    expect(sources[2].detailCalls, 1);
+    expect(sources.map((s) => s.detailCalls), [1, 0]);
+    expect(find.byTooltip('Сменить источник'), findsNothing);
     expect(library.items, isEmpty);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('all unavailable sources terminate without a loop', (tester) async {
@@ -162,48 +140,50 @@ void main() {
     expect(remanga.detailCalls, 1);
   });
 
-  testWidgets('saved source failure never falls back; explicit choice survives reopening', (tester) async {
+  testWidgets('saved progress prevents automatic source switching after failure',
+      (tester) async {
     final senkuro = FixtureSource('senkuro', fails: true);
-    final remanga = FixtureSource('remanga', readable: true);
+    final readmanga = FixtureSource('readmanga', readable: true);
     final book = UnifiedManga(title: 'Example', entries: {
-      'senkuro': senkuro.entry, 'remanga': remanga.entry,
+      'senkuro': senkuro.entry, 'readmanga': readmanga.entry,
     });
-    final repo = CatalogRepository(sources: {'senkuro': senkuro, 'remanga': remanga});
+    final repo = CatalogRepository(sources: {
+      'senkuro': senkuro, 'readmanga': readmanga,
+    });
     final library = LibraryStore();
     await library.add(book);
-    await tester.pumpWidget(MaterialApp(home: DetailPage(book: book,
-      repository: repo, library: library)));
+    await library.savePosition(book, const Chapter(id: 'old', name: 'Глава 7'),
+      'senkuro', pageIndex: 3, pageCount: 10);
+    await tester.pumpWidget(MaterialApp(home: DetailPage(
+      book: book, repository: repo, library: library)));
     await tester.pumpAndSettle();
     expect(senkuro.detailCalls, 1);
-    expect(remanga.detailCalls, 0);
+    expect(readmanga.detailCalls, 0);
     expect(library.items.single.preferredSource, 'senkuro');
-    await selectSource(tester, 'remanga');
-    expect(library.items.single.preferredSource, 'remanga');
-    final restored = LibraryStore();
-    await restored.load();
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pumpWidget(MaterialApp(home: DetailPage(book: book,
-      repository: repo, library: restored)));
-    await tester.pumpAndSettle();
-    expect(senkuro.detailCalls, 1);
-    expect(remanga.detailCalls, 2);
-    expect(restored.items.single.entries.length, 2);
+    expect(library.items.single.lastChapter, 'Глава 7');
+    expect(library.items.single.lastPageIndex, 3);
+    expect(find.byTooltip('Сменить источник'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('stale detail response cannot overwrite explicit source selection', (tester) async {
-    final senkuro = FixtureSource('senkuro')..pending = Completer<MangaDetail>();
-    final remanga = FixtureSource('remanga', readable: true);
+  testWidgets('empty initial source falls back automatically without manual choice',
+      (tester) async {
+    final senkuro = FixtureSource('senkuro');
+    final readmanga = FixtureSource('readmanga', readable: true);
+    final book = UnifiedManga(title: 'Example', entries: {
+      'senkuro': senkuro.entry, 'readmanga': readmanga.entry,
+    });
     await tester.pumpWidget(MaterialApp(home: DetailPage(
-      book: UnifiedManga(title: 'Example', entries: {'senkuro': senkuro.entry, 'remanga': remanga.entry}),
-      repository: CatalogRepository(sources: {'senkuro': senkuro, 'remanga': remanga}), library: LibraryStore())));
-    await tester.pump();
-    await selectSource(tester, 'remanga');
-    senkuro.pending!.complete(MangaDetail(entry: senkuro.entry, chapters: []));
+      book: book,
+      repository: CatalogRepository(sources: {
+        'senkuro': senkuro, 'readmanga': readmanga,
+      }), library: LibraryStore())));
     await tester.pumpAndSettle();
+    expect(senkuro.detailCalls, greaterThan(0));
+    expect(readmanga.detailCalls, greaterThan(0));
     await revealInScrollable(tester, find.text('Readable chapter'));
     expect(find.text('Readable chapter'), findsOneWidget);
-    expect(remanga.detailCalls, 1);
+    expect(find.byTooltip('Сменить источник'), findsNothing);
   });
 
   test('v1 bookmarks and progress survive adding ReManga and reload', () async {

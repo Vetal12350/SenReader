@@ -127,7 +127,7 @@ void main() {
     expect(restored.isChapterRead(book, chapters[2], 'remanga'), false);
   });
 
-  test('stale reader and scan cannot change active preference or resume', () async {
+  test('stale reader cannot change preference or resume; source scans are independent', () async {
     final foreground = LibraryStore();
     await foreground.savePosition(book, chapters[2], 'senkuro', pageIndex: 3, pageCount: 9);
     final stale = LibraryStore();
@@ -139,7 +139,7 @@ void main() {
     await foreground.load();
     expect(foreground.items.single.preferredSource, 'remanga');
     expect(foreground.items.single.lastPageIndex, 3);
-    expect(foreground.items.single.seenChapterKeys, isEmpty);
+    expect(foreground.items.single.seenChapterKeys, contains('v0:c999'));
     expect(foreground.isChapterRead(book, chapters.first, 'senkuro'), false);
   });
 

@@ -94,13 +94,13 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _open(ChapterDiscovery discovery) async {
     final saved = widget.library.get(discovery.book);
-    if (saved == null || saved.preferredSource != discovery.sourceKey) return;
+    if (saved == null || !saved.entries.containsKey(discovery.sourceKey)) return;
     final source = widget.repository.sources[discovery.sourceKey];
     final entry = saved.entries[discovery.sourceKey];
     if (source == null || entry == null) return;
     try {
       final detail = await source.detail(entry);
-      if (!mounted || widget.library.get(discovery.book)?.preferredSource != discovery.sourceKey) return;
+      if (!mounted || !(widget.library.get(discovery.book)?.entries.containsKey(discovery.sourceKey) ?? false)) return;
       if (!detail.chapters.any((chapter) => chapter.id == discovery.chapter.id)) return;
       await Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
         book: saved.toUnified(), chapter: discovery.chapter,

@@ -16,7 +16,7 @@
 - Do not commit secrets, signing certificates, API tokens, user accounts, bookmarks or downloaded manga media.
 
 ## Architecture and product behavior
-- Preserve **one user-selected active source per saved title**. Do not silently change it on network errors. Inaccessible, paid or protected material remains inaccessible; do not bypass auth, CAPTCHA, DRM or payment restrictions.
+- Preserve **one active source per saved title**. Automatic selection is allowed only before there is saved reading progress, based on the newest verified readable numbered chapter. Never switch on transient network errors; never project read markers or page progress onto another translation. Automatically check both confidently title-linked sources for new chapters, without duplicate notifications. Inaccessible, paid or protected material remains inaccessible; do not bypass auth, CAPTCHA, DRM or payment restrictions.
 - Reading progress and `read` markers are different. Scrolling or opening an image must not mark a chapter as completed automatically without the agreed behavior.
 - Preserve local-first functionality without sign-in or a backend.
 - Never manufacture author/character/related-title metadata, ratings, popularity charts, chapter lists or unavailable content. Only display source-backed data.
