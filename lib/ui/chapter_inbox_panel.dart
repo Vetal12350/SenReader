@@ -26,6 +26,8 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
   bool loading = true;
   bool checking = false;
   String? error;
+  String? lastScanSummary;
+  List<String> lastScanDetails = const [];
   @override void initState() { super.initState(); _refresh(); }
   Future<void> _refresh() async {
     final next = await _store.load();
@@ -41,12 +43,18 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     try {
       await widget.library.load();
       final report = await ChapterChecker(repository: widget.repository,
-        library: widget.library).check();
+        library: widget.library).check(diagnostics: true);
       for (final discovery in report.discoveries) {
         await _store.add(normalizedTitle(discovery.book.title),
           discovery.book.title, discovery.book.coverUrl,
           discovery.sourceKey, discovery.chapter);
       }
+      if (mounted) setState(() {
+        lastScanSummary = 'Проверено книг: ${report.checkedTitles}, '
+            'новых глав: ${report.discoveries.length}, '
+            'предупреждений: ${report.warnings.length}';
+        lastScanDetails = [...report.diagnostics, ...report.warnings];
+      });
       await _refresh();
     } catch (_) {
       if (mounted) setState(() => error = 'Не удалось проверить обновления.');
@@ -122,6 +130,33 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
       if (error != null)
         Padding(padding: const EdgeInsets.all(12), child: Text(error!,
           style: TextStyle(color: theme.colorScheme.error))),
+      if (lastScanSummary != null)
+        Padding(padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(lastScanSummary!, style: theme.textTheme.bodySmall),
+              if (lastScanDetails.isNotEmpty)
+                TextButton.icon(
+                  icon: const Icon(Icons.receipt_long_outlined, size: 18),
+                  label: const Text('Отчёт о проверке'),
+                  onPressed: () => showModalBottomSheet<void>(
+                    context: context, isScrollControlled: true,
+                    builder: (context) => SafeArea(child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        const Text('Проверка источников',
+                          style: TextStyle(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 12),
+                        Flexible(child: SingleChildScrollView(child:
+                          SelectableText(lastScanDetails.join('\n\n')))),
+                        const SizedBox(height: 8),
+                      ]),
+                    )),
+                  ),
+                ),
+            ],
+          ),
+        ),
       if (loading)
         const Expanded(child: Center(child: CircularProgressIndicator()))
       else Expanded(child: visible.isEmpty

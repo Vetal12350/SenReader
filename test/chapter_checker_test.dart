@@ -66,6 +66,41 @@ void main() {
         isNull);
   });
 
+  test('a saved preferred ReadManga link remains trusted after title change',
+      () async {
+    final source = FakeSource('readmanga')
+      ..chapters = [const Chapter(id: '112', name: 'Глава 112')];
+    final store = LibraryStore();
+    await store.load();
+    await store.add(UnifiedManga(title: 'Название в каталоге',
+        entries: {'readmanga': const MangaEntry(source: 'readmanga',
+            id: '123', title: 'Другое название на ReadManga')}));
+    final checker = ChapterChecker(
+        repository: CatalogRepository(sources: {'readmanga': source}),
+        library: store);
+    final baseline = await checker.check(diagnostics: true);
+    expect(baseline.discoveries, isEmpty);
+    expect(baseline.diagnostics.single, contains('Глава 112'));
+    expect(store.items.single.initializedSources, contains('readmanga'));
+    source.chapters = [const Chapter(id: '113', name: 'Глава 113')];
+    final next = await checker.check();
+    expect(next.discoveries.map((item) => item.canonicalKey), ['v0:c113']);
+  });
+
+  test('manual report notes missing chapter publication date and status',
+      () async {
+    final source = FakeSource('readmanga')
+      ..chapters = [const Chapter(id: '113', name: 'Глава 113')];
+    final store = await makeLibrary([source]);
+    final checker = ChapterChecker(
+        repository: CatalogRepository(sources: {'readmanga': source}),
+        library: store);
+    final result = await checker.check(diagnostics: true);
+    expect(result.diagnostics.single, contains('дата неизвестна'));
+    expect(result.diagnostics.single, contains('известна: нет'));
+    expect(result.diagnostics.single, contains('прочитана: нет'));
+  });
+
   test('first successful source scan creates baseline without alerts', () async {
     final source = FakeSource('senkuro')
       ..chapters = [const Chapter(id: 'x', name: 'Глава 1'),
