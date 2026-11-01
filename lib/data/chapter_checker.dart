@@ -17,10 +17,12 @@ class ChapterDiscovery {
 }
 
 class ChapterScanReport {
-  const ChapterScanReport(this.discoveries, this.warnings, this.checkedTitles);
+  const ChapterScanReport(this.discoveries, this.warnings, this.checkedTitles,
+      {this.diagnostics = const []});
   final List<ChapterDiscovery> discoveries;
   final List<String> warnings;
   final int checkedTitles;
+  final List<String> diagnostics;
 }
 
 /// Checks each precisely title-linked source without moving the reader's
@@ -34,8 +36,8 @@ class ChapterChecker {
 
   static bool _trustedLink(SavedBook saved, String source) {
     final entry = saved.entries[source];
-    return entry != null &&
-        normalizedTitle(entry.title) == normalizedTitle(saved.title);
+    return entry != null && (source == saved.preferredSource ||
+        normalizedTitle(entry.title) == normalizedTitle(saved.title));
   }
 
   static bool _alreadyRead(SavedBook saved, String key) {
@@ -50,9 +52,10 @@ class ChapterChecker {
     });
   }
 
-  Future<ChapterScanReport> check() async {
+  Future<ChapterScanReport> check({bool diagnostics = false}) async {
     final discoveries = <ChapterDiscovery>[];
     final warnings = <String>[];
+    final scanDetails = <String>[];
     final originalSource = <String, String>{};
     // Archived and active inbox entries are both proof of earlier delivery.
     final delivered = <String>{};
@@ -75,6 +78,9 @@ class ChapterChecker {
         final source = repository.sources[sourceKey];
         final entry = book.entries[sourceKey];
         if (source == null || entry == null || !_trustedLink(saved, sourceKey)) {
+          if (diagnostics && sourceKey == saved.preferredSource) {
+            scanDetails.add('${saved.title}: основной источник не найден');
+          }
           continue;
         }
         try {
@@ -93,6 +99,30 @@ class ChapterChecker {
           for (final e in chapters.entries) {
             final date = e.value.publishedAt;
             if (date != null) dates[e.key] = date;
+          }
+          if (diagnostics && sourceKey == current.preferredSource) {
+            final newest = chapters.values.toList()
+              ..sort((a, b) => compareChapterChronology(b, a) ?? 0);
+            final chapter = newest.firstOrNull;
+            if (chapter == null) {
+              scanDetails.add('${saved.title} · ${source.name}: '
+                  'главы не распознаны');
+            } else {
+              final canonical = canonicalChapterKey(chapter)!;
+              final date = chapter.publishedAt;
+              final published = date == null ? 'дата неизвестна' :
+                  '${date.day.toString().padLeft(2, '0')}.'
+                  '${date.month.toString().padLeft(2, '0')}.'
+                  '${date.year}';
+              final seen = current.seenChapterKeys.contains(canonical);
+              final read = library.isChapterRead(book, chapter, sourceKey);
+              final alerted = delivered.contains('${current.key}|$canonical');
+              scanDetails.add('${saved.title} · ${source.name}: '
+                  '${chapter.name} ($published), '
+                  'известна: ${seen ? 'да' : 'нет'}, '
+                  'прочитана: ${read ? 'да' : 'нет'}, '
+                  'уведомление было: ${alerted ? 'да' : 'нет'}');
+            }
           }
           if (!current.initializedSources.contains(sourceKey)) {
             // The initial scan normally establishes a silent baseline. But
@@ -242,6 +272,10 @@ class ChapterChecker {
               .map((key) => '${current!.key}|$key'));
         } catch (_) {
           warnings.add(saved.title + ': один из источников недоступен');
+          if (diagnostics && sourceKey == saved.preferredSource) {
+            scanDetails.add('${saved.title} · ${source.name}: '
+                'не удалось загрузить главы');
+          }
         }
       }
     }
@@ -249,6 +283,7 @@ class ChapterChecker {
     discoveries.removeWhere((d) =>
         library.get(d.book)?.preferredSource !=
             originalSource[normalizedTitle(d.book.title)]);
-    return ChapterScanReport(discoveries, warnings, checked);
+    return ChapterScanReport(discoveries, warnings, checked,
+        diagnostics: scanDetails);
   }
 }
