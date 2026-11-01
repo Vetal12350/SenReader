@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/library/{bookId} {
+      // No public catalog or shared library. Every document belongs to one
+      // authenticated, email-verified account.
+      allow get, list: if request.auth != null &&
+          request.auth.uid == uid && request.auth.token.email_verified == true;
+
+      allow create, update: if request.auth != null &&
+          request.auth.uid == uid && request.auth.token.email_verified == true &&
+          request.resource.data.keys().hasOnly(
+            ['key', 'editedAt', 'deleted', 'book']) &&
+          request.resource.data.key is string &&
+          request.resource.data.key.size() > 0 &&
+          request.resource.data.key.size() < 1024 &&
+          request.resource.data.editedAt is int &&
+          request.resource.data.editedAt > 0 &&
+          request.resource.data.deleted is bool &&
+          (!request.resource.data.keys().hasAny(['book']) ||
+            request.resource.data.book is map);
+      // Deletion must be a revisioned tombstone, never a hard delete.
+      allow delete: if false;
+    }
+  }
+}

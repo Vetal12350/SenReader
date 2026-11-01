@@ -71,11 +71,35 @@ jobs:
         run: flutter pub get
       - name: Unit tests
         run: flutter test
+      - name: Configure optional Firebase client identifiers
+        shell: bash
+        env:
+          FIREBASE_API_KEY: ${{ vars.SENREADER_FIREBASE_API_KEY }}
+          FIREBASE_APP_ID: ${{ vars.SENREADER_FIREBASE_APP_ID }}
+          FIREBASE_PROJECT_ID: ${{ vars.SENREADER_FIREBASE_PROJECT_ID }}
+          FIREBASE_SENDER_ID: ${{ vars.SENREADER_FIREBASE_SENDER_ID }}
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.SENREADER_GOOGLE_WEB_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          echo '{}' > firebase-build-flags.json
+          if [[ -n "$FIREBASE_API_KEY" && -n "$FIREBASE_APP_ID" && -n "$FIREBASE_PROJECT_ID" && -n "$FIREBASE_SENDER_ID" ]]; then
+            python3 - <<'PY'
+          import json, os
+          names = ['FIREBASE_API_KEY', 'FIREBASE_APP_ID', 'FIREBASE_PROJECT_ID', 'FIREBASE_SENDER_ID', 'GOOGLE_WEB_CLIENT_ID']
+          data = {'SENREADER_' + key: os.environ.get(key, '') for key in names[:4]}
+          data['SENREADER_GOOGLE_WEB_CLIENT_ID'] = os.environ.get('GOOGLE_WEB_CLIENT_ID', '')
+          with open('firebase-build-flags.json', 'w') as stream:
+              json.dump(data, stream)
+          PY
+          elif [[ -n "$FIREBASE_API_KEY" || -n "$FIREBASE_APP_ID" || -n "$FIREBASE_PROJECT_ID" || -n "$FIREBASE_SENDER_ID" ]]; then
+            echo 'Partial Firebase configuration: refusing partial cloud mode.' >&2
+            exit 1
+          fi
       - name: Build debug APK
-        run: flutter build apk --debug
+        run: flutter build apk --debug --dart-define-from-file=firebase-build-flags.json
       - name: Build persistently signed release APK
         if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.SENREADER_STABLE_SIGNING == 'true'
-        run: flutter build apk --release --build-number "$GITHUB_RUN_NUMBER"
+        run: flutter build apk --release --build-number "$GITHUB_RUN_NUMBER" --dart-define-from-file=firebase-build-flags.json
       - name: Publish APK artifact
         uses: actions/upload-artifact@v4
         with:

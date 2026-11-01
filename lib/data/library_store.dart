@@ -14,6 +14,7 @@ class SavedBook {
     Set<String>? readChapterKeys, Set<String>? seenChapterKeys,
     Set<String>? initializedSources,
     this.favorite = false,
+    this.syncEditedAt = 0,
     this.lastMarkedChapter = '',
     this.latestKnownChapterId = '',
     this.latestKnownSource = '',
@@ -66,6 +67,7 @@ class SavedBook {
   String preferredSource;
   String status; // viewed, planned, reading, completed, dropped
   bool favorite;
+  int syncEditedAt;
   String lastChapterId;
   int lastPageIndex;
   int lastPageCount;
@@ -84,6 +86,7 @@ class SavedBook {
     'latestKnownChapterId': latestKnownChapterId,
     'latestKnownSource': latestKnownSource,
     'favorite': favorite,
+    'syncEditedAt': syncEditedAt,
     'preferredSource': preferredSource,
     'readHistoryVersion': 2,
     'lastChapterId': lastChapterId, 'lastPageIndex': lastPageIndex,
@@ -105,6 +108,7 @@ class SavedBook {
       preferredSource: json['preferredSource'] as String? ?? '',
       readHistoryVersion: (json['readHistoryVersion'] as num?)?.toInt() ?? 1,
       favorite: json['favorite'] == true,
+      syncEditedAt: (json['syncEditedAt'] as num?)?.toInt() ?? 0,
       status: ['viewed', 'planned', 'reading', 'completed', 'dropped'].contains(json['status'])
           ? json['status'] as String
           : ((json['lastChapter'] as String? ?? '').isEmpty ? 'planned' : 'reading'),
@@ -133,7 +137,43 @@ class LibraryBackupPreview {
 
 class LibraryStore extends ChangeNotifier {
   static const storageKey = 'senreader.library.v1';
+  static const activeProfileKey = 'senreader.active.profile.v1';
   final Map<String, SavedBook> _books = {};
+  final Map<String, int> _tombstones = {};
+  final Map<String, String> _lastSavedPayload = {};
+  String _storageKey = storageKey;
+  String get profileId => _storageKey == storageKey ? '' :
+      _storageKey.substring(storageKey.length + '.user.'.length);
+  String get _deletedKey => '$_storageKey.deleted';
+  static String _comparisonPayload(SavedBook book) =>
+      jsonEncode(book.toJson()..remove('syncEditedAt'));
+
+  Future<void> switchProfile(String? uid) async {
+    final id = uid ?? '';
+    if (id.isNotEmpty && !RegExp(r'^[a-zA-Z0-9_-]{1,128}$').hasMatch(id)) {
+      throw ArgumentError('Invalid account identifier');
+    }
+    final target = id.isEmpty ? storageKey : '$storageKey.user.$id';
+    if (target == _storageKey) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(activeProfileKey, id);
+    _storageKey = target;
+    _books.clear();
+    _tombstones.clear();
+    _lastSavedPayload.clear();
+    await _reload();
+    notifyListeners();
+  }
+
+  Future<({int added, int skipped})> importGuestLibrary() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final raw = prefs.getString(storageKey);
+    if (raw == null || raw.isEmpty) return (added: 0, skipped: 0);
+    final parsed = jsonDecode(raw);
+    if (parsed is! List) throw const FormatException('Invalid guest data');
+    return importBackup(jsonEncode({'format': _backupFormat, 'books': parsed}));
+  }
   List<SavedBook> get items => _books.values.toList();
 
   static const _backupFormat = 'senreader.library.backup.v1';
@@ -195,6 +235,9 @@ class LibraryStore extends ChangeNotifier {
 
 
   Future<void> load() async {
+    final prefs = await SharedPreferences.getInstance();
+    final id = prefs.getString(activeProfileKey) ?? '';
+    _storageKey = id.isEmpty ? storageKey : '$storageKey.user.$id';
     await _reload();
     notifyListeners();
   }
@@ -203,7 +246,8 @@ class LibraryStore extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     // Background WorkManager and the foreground have separate plugin caches.
     await prefs.reload();
-    final raw = prefs.getString(storageKey);
+    final raw = prefs.getString(_storageKey);
+    _books.clear();
     if (raw != null) {
       try {
         final decoded = jsonDecode(raw);
@@ -213,21 +257,103 @@ class LibraryStore extends ChangeNotifier {
             final book = SavedBook.fromJson(Map<String, dynamic>.from(item as Map));
             if (book.key.isNotEmpty) restored[book.key] = book;
           }
-          _books..clear()..addAll(restored);
+          _books.addAll(restored);
         }
       } catch (_) {
         // Preserve malformed storage (do not overwrite it until user changes the library).
       }
     }
+    _tombstones.clear();
+    final rawDeleted = prefs.getString(_deletedKey);
+    if (rawDeleted != null) {
+      try {
+        final decoded = jsonDecode(rawDeleted);
+        if (decoded is Map) {
+          for (final entry in decoded.entries) {
+            if (entry.key is String && entry.value is num &&
+                (entry.value as num).toInt() > 0) {
+              _tombstones[entry.key as String] = (entry.value as num).toInt();
+            }
+          }
+        }
+      } catch (_) { /* Ignore malformed tombstones. */ }
+    }
+    _lastSavedPayload
+      ..clear()
+      ..addEntries(_books.entries.map((entry) =>
+        MapEntry(entry.key, _comparisonPayload(entry.value))));
   }
 
   bool has(UnifiedManga book) => _books.containsKey(normalizedTitle(book.title));
   SavedBook? get(UnifiedManga book) => _books[normalizedTitle(book.title)];
 
-  Future<void> _save() async {
+  Future<void> _save({bool fromCloud = false}) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(storageKey, jsonEncode(_books.values.map((e) => e.toJson()).toList()));
+    if (!fromCloud) {
+      var clock = DateTime.now().microsecondsSinceEpoch;
+      for (final entry in _books.entries) {
+        if (_lastSavedPayload[entry.key] != _comparisonPayload(entry.value)) {
+          clock = clock > entry.value.syncEditedAt ? clock : entry.value.syncEditedAt + 1;
+          entry.value.syncEditedAt = clock++;
+          _tombstones.remove(entry.key);
+        }
+      }
+      for (final key in _lastSavedPayload.keys) {
+        if (!_books.containsKey(key)) _tombstones[key] = clock++;
+      }
+    }
+    await prefs.setString(_storageKey,
+      jsonEncode(_books.values.map((e) => e.toJson()).toList()));
+    await prefs.setString(_deletedKey, jsonEncode(_tombstones));
+    _lastSavedPayload
+      ..clear()
+      ..addEntries(_books.entries.map((entry) =>
+        MapEntry(entry.key, _comparisonPayload(entry.value))));
     notifyListeners();
+  }
+
+  Future<Map<String, Map<String, dynamic>>> exportCloudRecords() async {
+    await _reload();
+    return {
+      for (final item in _books.entries)
+        item.key: {'editedAt': item.value.syncEditedAt,
+          'deleted': false, 'book': item.value.toJson()},
+      for (final removed in _tombstones.entries)
+        if (!_books.containsKey(removed.key))
+          removed.key: {'editedAt': removed.value, 'deleted': true},
+    };
+  }
+
+  Future<int> mergeCloudRecords(Map<String, Map<String, dynamic>> cloud) async {
+    await _reload();
+    var changed = 0;
+    for (final remote in cloud.entries) {
+      final revision = (remote.value['editedAt'] as num?)?.toInt() ?? 0;
+      if (revision <= 0) continue;
+      final localRevision = _books[remote.key]?.syncEditedAt ??
+          _tombstones[remote.key] ?? 0;
+      if (revision <= localRevision) continue;
+      if (remote.value['deleted'] == true) {
+        _books.remove(remote.key);
+        _tombstones[remote.key] = revision;
+      } else {
+        final raw = remote.value['book'];
+        if (raw is! Map) continue;
+        try {
+          final book = SavedBook.fromJson(Map<String, dynamic>.from(raw));
+          if (book.key != remote.key || book.entries.isEmpty ||
+              book.entries.length > 8 ||
+              book.entries.entries.any((e) => e.key.isEmpty ||
+                e.value.id.isEmpty || e.value.source != e.key)) continue;
+          book.syncEditedAt = revision;
+          _books[remote.key] = book;
+          _tombstones.remove(remote.key);
+        } catch (_) { continue; }
+      }
+      changed++;
+    }
+    if (changed > 0) await _save(fromCloud: true);
+    return changed;
   }
 
   /// Upgrade only the verified source rating on already-saved titles.
