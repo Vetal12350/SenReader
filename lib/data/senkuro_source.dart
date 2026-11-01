@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'senkuro_request_gate.dart';
 import '../core/models.dart';
 import '../core/source.dart';
 
@@ -15,16 +16,19 @@ class SenkuroCatalogLabel {
 /// GraphQL schema based on the Apache-2.0 mangayomi-ru-sources adapter.
 class SenkuroSource implements MangaSource {
   SenkuroSource({http.Client? client,
-      Duration timeout = const Duration(seconds: 18)})
-      : _client = client, _timeout = timeout;
+      Duration timeout = const Duration(seconds: 18),
+      SenkuroRequestGate? requestGate})
+      : _client = client, _timeout = timeout,
+        _requestGate = requestGate ?? SenkuroRequestGate();
   final http.Client? _client;
   final Duration _timeout;
+  final SenkuroRequestGate _requestGate;
   // Reuse HTTP connections across GraphQL calls instead of negotiating a new
   // TLS connection for every chapter page, status and title lookup.
   late final http.Client _session = _client ?? http.Client();
   final Map<String, Future<MangaDetail>> _inFlightDetails = {};
   final Map<String, ({DateTime until, MangaDetail data})> _cachedDetails = {};
-  static const _detailTtl = Duration(seconds: 45);
+  static const _detailTtl = Duration(minutes: 3);
   static const _maxCachedDetails = 20;
   bool? _chapterDatesSupported;
   static const _maxResponseBytes = 4 * 1024 * 1024;
@@ -316,7 +320,12 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
   }
 }''';
 
-  Future<Map<String, dynamic>> _gql(String operation, String query, Map<String, dynamic> variables) async {
+  Future<Map<String, dynamic>> _gql(String operation, String query,
+      Map<String, dynamic> variables) =>
+      _requestGate.run(() => _gqlOnce(operation, query, variables));
+
+  Future<Map<String, dynamic>> _gqlOnce(String operation, String query,
+      Map<String, dynamic> variables) async {
     // Keep the client alive for this source instance: a title page requires
     // several requests and closing every connection made navigation slow.
     final client = _session;
@@ -334,6 +343,10 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
       final response = await client.send(request).timeout(_timeout);
       // Reject oversized/failed responses before opening a stream iterator.
       // Cancelling an iterator which was never subscribed can await forever.
+      if (response.statusCode == 429) {
+        throw SenkuroRateLimited(SenkuroRequestGate.parseRetryAfter(
+          response.headers['retry-after']));
+      }
       if (response.statusCode != 200) {
         throw SourceException('Senkuro: HTTP ${response.statusCode}. Возможно, доступ ограничен.');
       }
@@ -372,6 +385,8 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
       if (data is! Map<String, dynamic>) throw _invalidResponse();
       return data;
     } on SourceException {
+      rethrow;
+    } on SenkuroRateLimited {
       rethrow;
     } on FormatException {
       throw _invalidResponse();

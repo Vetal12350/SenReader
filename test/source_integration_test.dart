@@ -63,8 +63,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  test('default repository configures exactly three sources', () {
-    expect(CatalogRepository().sources.keys, ['senkuro', 'readmanga', 'remanga']);
+  test('default repository makes requests only to Senkuro and ReadManga', () {
+    expect(CatalogRepository().sources.keys, ['senkuro', 'readmanga']);
+    expect(CatalogRepository().sources.containsKey('remanga'), false);
   });
 
   test('catalog and search isolate failures and merge only exact normalized titles', () async {
@@ -83,6 +84,35 @@ void main() {
     final book = UnifiedManga(title: 'Example', entries: {'readmanga': sources[1].entry});
     expect((await repo.findOtherSources(book)).entries.keys, ['readmanga']);
     expect((await exactRepo.findOtherSources(book)).entries.keys, ['readmanga', 'remanga']);
+  });
+
+
+  testWidgets('legacy ReManga bookmark survives removal and can switch manually',
+      (tester) async {
+    final old = const MangaEntry(
+        source: 'remanga', id: 'old', title: 'Example');
+    final legacy = UnifiedManga(title: 'Example', entries: {'remanga': old});
+    final library = LibraryStore();
+    await library.setStatus(legacy, 'reading', preferredSource: 'remanga');
+    final senkuro = FixtureSource('senkuro', readable: true);
+    final repo = CatalogRepository(sources: {'senkuro': senkuro});
+    await tester.pumpWidget(MaterialApp(home: DetailPage(
+        book: legacy, repository: repo, library: library)));
+    await tester.pumpAndSettle();
+    await revealInScrollable(tester,
+        find.textContaining('больше не поддерживается'));
+    expect(find.textContaining('больше не поддерживается'), findsOneWidget);
+    await revealInScrollable(tester, find.text('Найти другой источник'));
+    expect(library.items.single.preferredSource, 'remanga');
+    await tester.tap(find.text('Найти другой источник'));
+    await tester.pumpAndSettle();
+    expect(library.items.single.entries.keys, contains('senkuro'));
+    expect(library.items.single.preferredSource, 'remanga');
+    await selectSource(tester, 'senkuro');
+    expect(library.items.single.preferredSource, 'senkuro');
+    await revealInScrollable(tester, find.text('Readable chapter'));
+    expect(find.text('Readable chapter'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('unsaved fallback tries each source once; manual picker stops fallback', (tester) async {
@@ -111,8 +141,9 @@ void main() {
       repository: CatalogRepository(sources: {for (final s in sources) s.key: s}), library: LibraryStore())));
     await tester.pumpAndSettle();
     expect(sources.map((s) => s.detailCalls), [1, 1, 1]);
-    await revealInScrollable(tester, find.text('Повторить'));
-    expect(find.text('Повторить'), findsOneWidget);
+    await revealInScrollable(tester,
+        find.text('Главы временно недоступны. Попробуйте открыть их позже.'));
+    expect(find.text('Повторить'), findsNothing);
   });
 
   testWidgets('late discovery retries only newly matched sources', (tester) async {

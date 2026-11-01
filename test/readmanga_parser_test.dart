@@ -225,4 +225,37 @@ void main() {
     expect(tenPointScore('7.2'), 7.2);
   });
 
+
+  test('ReadManga uses real chapter upload dates shown on the website', () async {
+    final source = ReadMangaSource(client: MockClient((request) async {
+      expect(request.url.host, 'a.zazaza.me');
+      return http.Response('''
+        <h1>Villain</h1>
+        <table><tbody>
+          <tr class="item-row"><td><a class="chapter-link cp-l"
+              href="/villain/vol1/70">1 - 70</a></td>
+              <td class="text-muted">31.10.26</td></tr>
+          <tr class="item-row"><td><a class="chapter-link cp-l"
+              href="/villain/vol1/69">1 - 69</a></td>
+              <td><time datetime="2026-10-18T12:30:00+03:00">18.10.26</time></td></tr>
+          <tr class="item-row"><td><a class="chapter-link cp-l"
+              href="/villain/vol1/68">1 - 68</a></td>
+              <td>32.10.26</td></tr>
+          <tr class="item-row"><td><a class="chapter-link cp-l"
+              href="/villain/vol1/67">1 - 67</a></td>
+              <td>Unknown date</td></tr>
+        </tbody></table>
+      ''', 200);
+    }));
+    final detail = await source.detail(const MangaEntry(
+        source: 'readmanga', id: '/villain', title: 'Злодей хочет жить'));
+    expect(detail.chapters, hasLength(4));
+    expect(detail.chapters[0].publishedAt, DateTime(2026, 10, 31));
+    expect(detail.chapters[1].publishedAt, isNotNull);
+    expect(detail.chapters[1].publishedAt!.year, 2026);
+    expect(detail.chapters[2].publishedAt, isNull);
+    expect(detail.chapters[3].publishedAt, isNull);
+    expect(detail.chapters.first.name, contains('70'));
+  });
+
 }

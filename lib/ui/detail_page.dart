@@ -27,6 +27,9 @@ class _DetailPageState extends State<DetailPage> {
   Future<List<MangaEntry>>? _similarFuture;
   bool loading = true;
   String? error;
+  String? _loadedDetailSource;
+  Timer? _recoveryTimer;
+  int _automaticRetries = 0;
   bool showChapters = true;
   bool _descriptionExpanded = false;
   bool newestFirst = true;
@@ -35,6 +38,8 @@ class _DetailPageState extends State<DetailPage> {
   int _request = 0;
   Future<void>? _firstLoad;
   bool _explicitSelection = false;
+  bool _findingReplacement = false;
+  String? _replacementMessage;
   late final ChapterAlertController alerts = widget.alerts ?? ChapterAlertController();
   @override void initState() {
     super.initState();
@@ -47,6 +52,31 @@ class _DetailPageState extends State<DetailPage> {
     if (saved == null || (saved.status == 'viewed' &&
         saved.lastChapter.isEmpty && book.entries.length < 3)) {
       _discoverOther();
+    }
+  }
+
+  /// Historical ReManga records remain in saved storage, but the removed
+  /// provider is never queried. Let users explicitly find a live replacement.
+  Future<void> _findReplacement() async {
+    if (_findingReplacement) return;
+    setState(() { _findingReplacement = true; _replacementMessage = null; });
+    try {
+      final found = await widget.repository.findOtherSources(book);
+      if (!mounted) return;
+      if (widget.library.has(found)) await widget.library.add(found);
+      if (!mounted) return;
+      setState(() {
+        book = found;
+        _replacementMessage = found.entries.keys.any(
+                widget.repository.sources.containsKey)
+            ? 'Выбери Senkuro или ReadManga в меню источников выше.'
+            : 'Совпадений не найдено. Закладка и прогресс сохранены.';
+      });
+    } catch (_) {
+      if (mounted) setState(() =>
+          _replacementMessage = 'Поиск недоступен. Попробуй ещё раз.');
+    } finally {
+      if (mounted) setState(() => _findingReplacement = false);
     }
   }
 
@@ -82,16 +112,30 @@ class _DetailPageState extends State<DetailPage> {
     }
   }
 
+  @override void dispose() {
+    _recoveryTimer?.cancel();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     final request = ++_request;
     final sourceKey = selected;
     _attempted.add(sourceKey);
-    setState(() { loading = true; error = null; detail = null; _similarFuture = null; });
+    setState(() {
+      loading = true;
+      error = null;
+      // A refresh must not discard chapters already loaded from this source.
+      if (_loadedDetailSource != sourceKey) detail = null;
+      _similarFuture = null;
+    });
     try {
       final source = widget.repository.sources[sourceKey];
       if (source == null) throw StateError('Источник $sourceKey недоступен');
       final next = await source.detail(book.entries[sourceKey]!);
       if (!mounted || request != _request) return;
+      _recoveryTimer?.cancel();
+      _automaticRetries = 0;
+      _loadedDetailSource = sourceKey;
       setState(() { loading = false; detail = next; });
       // Preserve source-backed score on previously saved cards. Serialize
       // these metadata writes so they cannot overwrite reading progress.
@@ -111,10 +155,27 @@ class _DetailPageState extends State<DetailPage> {
       }
     } catch (e) {
       if (!mounted || request != _request) return;
+      final unsupported = !widget.repository.sources.containsKey(sourceKey);
+      final failure = e.toString().toLowerCase();
+      final transient = failure.contains('429') ||
+          failure.contains('временно ограничил') ||
+          failure.contains('timeout') || failure.contains('time out') ||
+          failure.contains('нет соединения') ||
+          failure.contains('socketexception');
+      final retry = !unsupported && transient && _automaticRetries < 2;
+      if (retry) {
+        _automaticRetries++;
+        _recoveryTimer?.cancel();
+        _recoveryTimer = Timer(Duration(seconds: 15 * _automaticRetries), () {
+          if (mounted && selected == sourceKey) unawaited(_load());
+        });
+      }
       setState(() {
-        loading = false;
-        error = '$e';
-        _warnings.add('${widget.repository.sources[sourceKey]?.name ?? sourceKey}: $e');
+        // Show a spinner only before the first successful chapter list.
+        loading = retry && detail == null;
+        // Never show raw HTTP/GraphQL/Socket errors to readers.
+        error = unsupported ? 'Источник недоступен' :
+            retry || detail != null ? null : 'Временная ошибка';
       });
       _fallback();
     }
@@ -133,6 +194,8 @@ class _DetailPageState extends State<DetailPage> {
 
   Future<void> _select(String value) async {
     if (selected == value) return;
+    _recoveryTimer?.cancel();
+    _automaticRetries = 0;
     setState(() {
       selected = value;
       _explicitSelection = true;
@@ -200,12 +263,6 @@ class _DetailPageState extends State<DetailPage> {
                 ])),
         ]);
       });
-  }
-
-  void _retry() {
-    _attempted.clear();
-    _warnings.clear();
-    _load();
   }
 
 
@@ -435,15 +492,22 @@ class _DetailPageState extends State<DetailPage> {
               ])),
           ),
         const SizedBox(height: 18),
-        // A failed alternative source is not an error when another source works.
-        if (!loading && detail == null)
-          for (final warning in _warnings.take(2))
-            Text(warning, style: const TextStyle(color: Color(0xFFFFBE80))),
         if (loading) const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator())),
         if (error != null) ...[
-          Text('Не удалось получить главы: $error', style: const TextStyle(color: Color(0xFFFFBE80))),
-          const SizedBox(height: 10),
-          OutlinedButton.icon(onPressed: _retry, icon: const Icon(Icons.refresh), label: const Text('Повторить')),
+          if (!widget.repository.sources.containsKey(selected)) ...[
+            const Text('Этот источник больше не поддерживается. '
+                'Прежние закладки и отметки чтения сохранены. '
+                'Можно найти тайтл на одном из двух действующих сайтов.'),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _findingReplacement ? null : _findReplacement,
+              icon: const Icon(Icons.search),
+              label: Text(_findingReplacement
+                  ? 'Поиск источников...' : 'Найти другой источник'),
+            ),
+            if (_replacementMessage != null) Text(_replacementMessage!),
+          ] else
+          const Text('Главы временно недоступны. Попробуйте открыть их позже.'),
         ],
         if (detail != null) ...[
           SizedBox(width: double.infinity, child: SegmentedButton<bool>(
@@ -534,7 +598,7 @@ class _DetailPageState extends State<DetailPage> {
         PopupMenuButton<String>(
           tooltip: 'Сменить источник', icon: const Icon(Icons.source_outlined),
           initialValue: selected, onSelected: _select,
-          itemBuilder: (context) => [for (final source in book.entries.keys)
+          itemBuilder: (context) => [for (final source in book.entries.keys.where(widget.repository.sources.containsKey))
             CheckedPopupMenuItem(value: source, checked: selected == source,
               child: Text(widget.repository.sources[source]?.name ?? source))],
         ),

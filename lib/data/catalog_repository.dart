@@ -3,13 +3,11 @@ import '../core/source.dart';
 import '../core/title_matching.dart';
 import 'readmanga_source.dart';
 import 'senkuro_source.dart';
-import 'remanga_source.dart';
 
 class CatalogRepository {
   CatalogRepository({Map<String, MangaSource>? sources}) : sources = sources ?? {
     'senkuro': SenkuroSource(),
     'readmanga': ReadMangaSource(),
-    'remanga': ReMangaSource(),
   };
   final Map<String, MangaSource> sources;
 
