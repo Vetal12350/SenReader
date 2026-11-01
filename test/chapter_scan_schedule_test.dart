@@ -75,6 +75,17 @@ void main() {
     expect(library.get(book)?.preferredSource, 'senkuro');
   });
 
+  test('manual refresh schedules subsequent background work', () async {
+    final source = _ScheduleFakeSource('senkuro');
+    final (library, book) = await _book({source.key: source});
+    await library.setStatus(book, 'reading');
+    final checker = ChapterChecker(repository:
+        CatalogRepository(sources: {source.key: source}), library: library);
+    expect((await checker.check()).checkedSources, 1);
+    expect((await checker.check(smartSchedule: true)).checkedSources, 0);
+    expect(source.scans, 1);
+  });
+
   test('schedule timestamps are isolated between guest and account', () async {
     final a = _ScheduleFakeSource('senkuro');
     final (library, book) = await _book({a.key: a});

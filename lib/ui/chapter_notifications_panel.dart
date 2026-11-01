@@ -77,7 +77,7 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
           if (lastRun != null) Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Text(
-              'Последняя фоновая проверка: '
+              'Последняя фоновая попытка: '
               '${lastRun!.at.day.toString().padLeft(2, '0')}.'
               '${lastRun!.at.month.toString().padLeft(2, '0')} '
               '${lastRun!.at.hour.toString().padLeft(2, '0')}:'

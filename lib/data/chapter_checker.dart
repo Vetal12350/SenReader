@@ -63,9 +63,9 @@ class ChapterChecker {
     final scanDetails = <String>[];
     final now = DateTime.now();
     final scanProfile = library.profileId;
-    final schedule = smartSchedule ? ChapterScanScheduleStore() : null;
-    final lastAttempts = schedule == null ? <String, int>{}
-        : await schedule.load(scanProfile);
+    final schedule = ChapterScanScheduleStore();
+    final lastAttempts = smartSchedule
+        ? await schedule.load(scanProfile) : <String, int>{};
     final attempts = <String, int>{};
     var checkedSources = 0;
     var skippedSources = 0;
@@ -112,7 +112,9 @@ class ChapterChecker {
           skippedSources++;
           continue;
         }
-        if (smartSchedule) attempts[scanKey] = now.millisecondsSinceEpoch;
+        // A manual full refresh also postpones the next redundant
+        // background scan of the same source.
+        attempts[scanKey] = now.millisecondsSinceEpoch;
         checkedSources++;
         try {
           final detail = smartSchedule
@@ -313,7 +315,7 @@ class ChapterChecker {
       }
     }
     await library.load();
-    if (schedule != null && library.profileId == scanProfile) {
+    if (library.profileId == scanProfile) {
       await schedule.recordAttempts(scanProfile, attempts);
     }
     discoveries.removeWhere((d) =>
