@@ -38,6 +38,7 @@ class CloudLibrarySync extends ChangeNotifier {
     if (_uid == next && library.profileId == next) return;
     await _subscription?.cancel();
     _subscription = null;
+    library.removeListener(_onLocalLibraryChange);
     _debounce?.cancel();
     _connected = false;
     _uid = next;
@@ -160,7 +161,8 @@ class CloudLibrarySync extends ChangeNotifier {
     library.removeListener(_onLocalLibraryChange);
     await _subscription?.cancel();
     _subscription = null;
-    await _chain.catchError((Object _) {});
+    await _chain.catchError((Object _) {}).timeout(
+      const Duration(seconds: 3), onTimeout: () {});
     _uid = '';
     _connected = false;
     await library.switchProfile(null);
