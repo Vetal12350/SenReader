@@ -37,9 +37,6 @@ class _DetailPageState extends State<DetailPage> {
   final List<String> _warnings = [];
   int _request = 0;
   Future<void>? _firstLoad;
-  bool _explicitSelection = false;
-  bool _findingReplacement = false;
-  String? _replacementMessage;
   late final ChapterAlertController alerts = widget.alerts ?? ChapterAlertController();
   @override void initState() {
     super.initState();
@@ -49,34 +46,8 @@ class _DetailPageState extends State<DetailPage> {
     selected = saved?.preferredSource ?? SavedBook.chooseSource(book.entries);
     _firstLoad = _load();
     // Do not launch two other-source searches on every reopen of a saved title.
-    if (saved == null || (saved.status == 'viewed' &&
-        saved.lastChapter.isEmpty && book.entries.length < 3)) {
+    if (saved == null || saved.entries.length < 2) {
       _discoverOther();
-    }
-  }
-
-  /// Historical ReManga records remain in saved storage, but the removed
-  /// provider is never queried. Let users explicitly find a live replacement.
-  Future<void> _findReplacement() async {
-    if (_findingReplacement) return;
-    setState(() { _findingReplacement = true; _replacementMessage = null; });
-    try {
-      final found = await widget.repository.findOtherSources(book);
-      if (!mounted) return;
-      if (widget.library.has(found)) await widget.library.add(found);
-      if (!mounted) return;
-      setState(() {
-        book = found;
-        _replacementMessage = found.entries.keys.any(
-                widget.repository.sources.containsKey)
-            ? 'Подходящий источник найден. Проверяем доступные главы.'
-            : 'Совпадений не найдено. Закладка и прогресс сохранены.';
-      });
-    } catch (_) {
-      if (mounted) setState(() =>
-          _replacementMessage = 'Поиск недоступен. Попробуй ещё раз.');
-    } finally {
-      if (mounted) setState(() => _findingReplacement = false);
     }
   }
 
@@ -89,17 +60,20 @@ class _DetailPageState extends State<DetailPage> {
       // Do not race the first detail request or duplicate fallback retries.
       await _firstLoad;
       if (!mounted) return;
-      // Only auto-choose on a fresh title. Existing reading history or an
-      // explicit source preference must not silently change translations.
+      // Auto-select only before the first saved reading position. Never
+      // project an existing page index onto a different translation.
       final saved = widget.library.get(next);
-      if (!_explicitSelection && _attempted.length == 1 &&
+      if (_attempted.length == 1 &&
           detail?.chapters.isNotEmpty == true &&
-          (saved == null || (saved.status == 'viewed' &&
-             saved.lastChapter.isEmpty))) {
+          (saved?.lastChapter.isEmpty ?? true)) {
         final preferred = await widget.repository.mostCompleteSource(
-          next, selected, currentChapterCount: detail!.chapters.length);
-        if (mounted && !_explicitSelection && preferred != selected &&
+            next, selected);
+        if (mounted && preferred != selected &&
             (widget.library.get(next)?.lastChapter.isEmpty ?? true)) {
+          if (saved != null) {
+            await widget.library.setPreferredSource(next, preferred);
+          }
+          if (!mounted) return;
           setState(() => selected = preferred);
           unawaited(_load());
         }
@@ -177,34 +151,22 @@ class _DetailPageState extends State<DetailPage> {
         error = unsupported ? 'Источник недоступен' :
             retry || detail != null ? null : 'Временная ошибка';
       });
-      _fallback();
+      if (unsupported) _fallback();
     }
   }
 
   void _fallback() {
-    if (widget.library.has(book) || _explicitSelection) return;
+    if (widget.library.get(book)?.lastChapter.isNotEmpty == true) return;
     for (final source in book.entries.keys) {
       if (!_attempted.contains(source) && widget.repository.sources.containsKey(source)) {
         setState(() => selected = source);
-        _load();
+        if (widget.library.has(book)) {
+          unawaited(widget.library.setPreferredSource(book, source));
+        }
+        unawaited(_load());
         return;
       }
     }
-  }
-
-  Future<void> _select(String value) async {
-    if (selected == value) return;
-    _recoveryTimer?.cancel();
-    _automaticRetries = 0;
-    setState(() {
-      selected = value;
-      _explicitSelection = true;
-      _attempted.clear();
-      _warnings.clear();
-    });
-    final pending = _load();
-    await widget.library.setPreferredSource(book, value);
-    await pending;
   }
 
   /// An optional, label-based discovery block from real Senkuro catalog data.
@@ -494,20 +456,11 @@ class _DetailPageState extends State<DetailPage> {
         const SizedBox(height: 18),
         if (loading) const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator())),
         if (error != null) ...[
-          if (!widget.repository.sources.containsKey(selected)) ...[
-            const Text('Этот источник больше не поддерживается. '
-                'Прежние закладки и отметки чтения сохранены. '
-                'Можно найти тайтл на одном из двух действующих сайтов.'),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _findingReplacement ? null : _findReplacement,
-              icon: const Icon(Icons.search),
-              label: Text(_findingReplacement
-                  ? 'Поиск источников...' : 'Найти другой источник'),
-            ),
-            if (_replacementMessage != null) Text(_replacementMessage!),
-          ] else
-          const Text('Главы временно недоступны. Попробуйте открыть их позже.'),
+          if (!widget.repository.sources.containsKey(selected))
+            const Text('Старый источник недоступен. Закладки и история '
+                'сохранены; подходящие варианты ищутся автоматически.')
+          else
+            const Text('Главы временно недоступны. Попробуйте открыть их позже.'),
         ],
         if (detail != null) ...[
           SizedBox(width: double.infinity, child: SegmentedButton<bool>(
