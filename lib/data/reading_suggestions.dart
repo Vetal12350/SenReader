@@ -6,9 +6,9 @@ import 'library_store.dart';
 /// Only source-backed, chronologically newer unread chapters qualify for
 /// "Продолжить чтение". A finished current chapter alone is not a suggestion.
 Chapter? nextAvailableChapter(SavedBook saved, Iterable<Chapter> chapters) {
-  if (saved.lastChapter.isEmpty || saved.lastSource.isEmpty ||
-      saved.preferredSource != saved.lastSource ||
-      saved.status == 'dropped' || saved.status == 'viewed') return null;
+  if (saved.status != 'reading' || saved.lastChapter.isEmpty ||
+      saved.lastSource.isEmpty ||
+      saved.preferredSource != saved.lastSource) return null;
   final baseline = Chapter(
     id: saved.lastChapterId, name: saved.lastChapter);
   if (canonicalChapterKey(baseline) == null) return null;
@@ -25,10 +25,9 @@ Chapter? nextAvailableChapter(SavedBook saved, Iterable<Chapter> chapters) {
 /// opened/read, or when the saved chapter advances to the same number.
 /// This guard is also used when the home page was not refreshed.
 Chapter? eligibleNewChapter(SavedBook saved, Chapter? candidate) {
-  if (candidate == null || saved.lastChapter.isEmpty ||
-      saved.lastSource.isEmpty || saved.lastSource != saved.preferredSource ||
-      saved.status == 'completed' || saved.status == 'dropped' ||
-      saved.status == 'viewed') return null;
+  if (candidate == null || saved.status != 'reading' ||
+      saved.lastChapter.isEmpty || saved.lastSource.isEmpty ||
+      saved.lastSource != saved.preferredSource) return null;
   final last = Chapter(id: saved.lastChapterId, name: saved.lastChapter);
   final order = compareChapterChronology(candidate, last);
   if (order == null || order <= 0) return null;
@@ -91,9 +90,8 @@ Chapter? chapterToResume(SavedBook saved, Iterable<Chapter> available,
 /// A title with its last known page completed is not an active resume card
 /// unless the source confirmed a genuinely new unread chapter.
 bool showContinueCard(SavedBook saved, {Chapter? newlyAvailable}) {
-  if (saved.lastChapter.isEmpty || saved.lastSource != saved.preferredSource ||
-      saved.status == 'completed' || saved.status == 'dropped' ||
-      (saved.status == 'viewed' && saved.lastChapter.isEmpty)) return false;
+  if (saved.status != 'reading' || saved.lastChapter.isEmpty ||
+      saved.lastSource != saved.preferredSource) return false;
   if (eligibleNewChapter(saved, newlyAvailable) != null) return true;
   // Even when partially read, the current LAST available chapter should
   // not appear in Continue: it is not a remaining chapter to catch up on.
