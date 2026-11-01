@@ -18,7 +18,7 @@ class ReadMangaSource implements MangaSource {
   static const baseUrl = 'https://a.zazaza.me';
   static const legacyHost = '3.readmanga.ru';
   @override String get key => 'readmanga';
-  @override String get name => 'ReadManga';
+  @override String get name => 'Дополнительный источник';
   // Grouple's current public ReadManga image endpoint expects a general
   // search-engine referer. A site referer is sometimes served a removed-page
   // image instead of manga content, even with a successful HTTP status.

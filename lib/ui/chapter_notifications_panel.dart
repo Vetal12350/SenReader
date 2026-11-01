@@ -55,7 +55,7 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Уведомлять о новых главах'),
-            subtitle: const Text('Только выбранный источник каждой книги'),
+            subtitle: const Text('Автопроверка доступных источников без повторов'),
             value: enabled,
             onChanged: loading ? null : _toggle,
           ),

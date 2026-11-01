@@ -69,7 +69,7 @@ class _DetailPageState extends State<DetailPage> {
         book = found;
         _replacementMessage = found.entries.keys.any(
                 widget.repository.sources.containsKey)
-            ? 'Выбери Senkuro или ReadManga в меню источников выше.'
+            ? 'Подходящий источник найден. Проверяем доступные главы.'
             : 'Совпадений не найдено. Закладка и прогресс сохранены.';
       });
     } catch (_) {
@@ -594,15 +594,8 @@ class _DetailPageState extends State<DetailPage> {
         ],
       ];
     return Scaffold(
-      appBar: AppBar(title: const Text(''), actions: [
-        PopupMenuButton<String>(
-          tooltip: 'Сменить источник', icon: const Icon(Icons.source_outlined),
-          initialValue: selected, onSelected: _select,
-          itemBuilder: (context) => [for (final source in book.entries.keys.where(widget.repository.sources.containsKey))
-            CheckedPopupMenuItem(value: source, checked: selected == source,
-              child: Text(widget.repository.sources[source]?.name ?? source))],
-        ),
-      ]),
+      appBar: AppBar(title: const Text('')),
+
       body: ListView.builder(
         padding: const EdgeInsets.all(16),
         itemCount: staticContent.length +

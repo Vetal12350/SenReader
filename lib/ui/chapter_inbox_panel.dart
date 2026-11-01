@@ -160,7 +160,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
                       Wrap(spacing: 8, crossAxisAlignment:
                           WrapCrossAlignment.center, children: [
                         Text(entry.source == 'senkuro' ? 'Senkuro' :
-                          entry.source == 'readmanga' ? 'ReadManga' : 'Удалённый источник',
+                          entry.source == 'readmanga' ? 'Дополнительный источник' : 'Удалённый источник',
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: theme.colorScheme.primary)),
                         Text(_dateLabel(entry.createdAt),

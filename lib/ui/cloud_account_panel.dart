@@ -152,6 +152,7 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
                   () => _run(accounts.linkGoogle),
                 icon: const Icon(Icons.link),
                 label: const Text('Привязать Google')),
+            if (user.providerData.any((p) => p.providerId == 'password')) ...[
             const SizedBox(height: 8),
             TextField(controller: newPassword, obscureText: true,
               onChanged: (_) => setState(() {}),
@@ -162,6 +163,7 @@ class _CloudAccountPanelState extends State<CloudAccountPanel> {
                 ? null : () => _run(() => accounts.updatePassword(newPassword.text),
                   success: 'Пароль обновлён.'),
               child: const Text('Сменить пароль')),
+            ],
           ],
           OutlinedButton(onPressed: accounts.busy ? null :
             () => _run(accounts.signOut),
