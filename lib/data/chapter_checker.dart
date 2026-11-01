@@ -2,6 +2,7 @@ import '../core/chapter_identity.dart';
 import '../core/models.dart';
 import '../core/title_matching.dart';
 import 'catalog_repository.dart';
+import 'chapter_inbox_store.dart';
 import 'library_store.dart';
 
 class ChapterDiscovery {
@@ -53,6 +54,13 @@ class ChapterChecker {
     final discoveries = <ChapterDiscovery>[];
     final warnings = <String>[];
     final originalSource = <String, String>{};
+    // Archived and active inbox entries are both proof of earlier delivery.
+    final delivered = <String>{};
+    for (final entry in await ChapterInboxStore().load()) {
+      final canonical = canonicalChapterKey(
+          Chapter(id: entry.chapterId, name: entry.chapterName));
+      if (canonical != null) delivered.add('${entry.bookKey}|$canonical');
+    }
     var checked = 0;
     for (final saved in List<SavedBook>.of(library.items)) {
       if (saved.status == 'viewed' || saved.status == 'dropped') continue;
@@ -87,9 +95,101 @@ class ChapterChecker {
             if (date != null) dates[e.key] = date;
           }
           if (!current.initializedSources.contains(sourceKey)) {
+            // The initial scan normally establishes a silent baseline. But
+            // for an actively read title, a recently published chapter newer
+            // than the last completed chapter is a real update even if the
+            // first scan happens after its publication.
+            final readChapters = chapters.values.where(
+                (chapter) => library.isChapterRead(book, chapter, sourceKey) &&
+                    canonicalChapterKey(chapter) != null).toList()
+              ..sort((a, b) => compareChapterChronology(b, a) ?? 0);
+            final lastRead = readChapters.firstOrNull;
+            final recent = <String, Chapter>{};
+            final unverifiedRecent = <String>{};
+            if (sourceKey == current.preferredSource &&
+                current.status == 'reading' && lastRead != null) {
+              final now = DateTime.now().toUtc();
+              final candidates = chapters.entries.where((item) {
+                final posted = item.value.publishedAt?.toUtc();
+                if (posted == null || current!.seenChapterKeys.contains(item.key) ||
+                    _alreadyRead(current, item.key)) return false;
+                final age = now.difference(posted);
+                return !age.isNegative && age <= const Duration(hours: 36) &&
+                    (compareChapterChronology(item.value, lastRead) ?? 0) > 0;
+              }).toList()
+                ..sort((a, b) =>
+                    compareChapterChronology(b.value, a.value) ?? 0);
+              for (final candidate in candidates.take(2)) {
+                try {
+                  final pages = await source.pages(candidate.value);
+                  if (pages.any((p) {
+                    final uri = Uri.tryParse(p.url);
+                    return uri != null && uri.scheme == 'https' &&
+                        uri.host.isNotEmpty;
+                  })) {
+                    recent[candidate.key] = candidate.value;
+                  } else {
+                    unverifiedRecent.add(candidate.key);
+                  }
+                } catch (_) {
+                  // Keep this recent chapter unseen so a later scan retries.
+                  unverifiedRecent.add(candidate.key);
+                }
+              }
+            }
+            await library.load();
+            current = library.get(book);
+            if (current == null ||
+                current.preferredSource != originalSource[saved.key] ||
+                current.entries[sourceKey]?.id != entry.id) continue;
             await library.recordChapterScan(current.key, sourceKey,
-                chapters.keys, sourceDates: dates);
+                chapters.keys.where((key) => !unverifiedRecent.contains(key)),
+                sourceDates: dates);
+            discoveries.addAll([
+              for (final chapter in recent.entries)
+                ChapterDiscovery(book: book, sourceKey: sourceKey,
+                    chapter: chapter.value, canonicalKey: chapter.key),
+            ]);
             continue;
+          }
+          // Recover just-published, unread chapters swallowed by earlier
+          // versions' silent first scan. A recovery must not replay any
+          // chapter already shown in the inbox (including archived entries).
+          final recovered = <String, Chapter>{};
+          if (sourceKey == current.preferredSource &&
+              current.status == 'reading') {
+            final read = chapters.values.where((ch) =>
+                canonicalChapterKey(ch) != null &&
+                library.isChapterRead(book, ch, sourceKey)).toList()
+              ..sort((a, b) => compareChapterChronology(b, a) ?? 0);
+            final lastRead = read.firstOrNull;
+            if (lastRead != null) {
+              final now = DateTime.now().toUtc();
+              final missed = chapters.entries.where((item) {
+                final time = item.value.publishedAt?.toUtc();
+                if (time == null || !current!.seenChapterKeys.contains(item.key) ||
+                    delivered.contains('${current.key}|${item.key}') ||
+                    _alreadyRead(current, item.key)) return false;
+                final age = now.difference(time);
+                return !age.isNegative && age <= const Duration(hours: 36) &&
+                    (compareChapterChronology(item.value, lastRead) ?? 0) > 0;
+              }).toList()
+                ..sort((a, b) =>
+                    compareChapterChronology(b.value, a.value) ?? 0);
+              for (final item in missed.take(2)) {
+                try {
+                  final pages = await source.pages(item.value)
+                      .timeout(const Duration(seconds: 12));
+                  if (pages.any((p) {
+                    final uri = Uri.tryParse(p.url);
+                    return uri != null && uri.scheme == 'https' &&
+                        uri.host.isNotEmpty;
+                  })) recovered[item.key] = item.value;
+                } catch (_) {
+                  warnings.add(saved.title + ': проверка главы отложена');
+                }
+              }
+            }
           }
           final verified = <String, Chapter>{};
           var attempts = 0;
@@ -115,7 +215,7 @@ class ChapterChecker {
               warnings.add(saved.title + ': глава временно недоступна');
             }
           }
-          if (verified.isEmpty) continue;
+          if (verified.isEmpty && recovered.isEmpty) continue;
           await library.load();
           current = library.get(book);
           if (current == null ||
@@ -124,15 +224,22 @@ class ChapterChecker {
           final newKeys = verified.keys.where((key) =>
               !current!.seenChapterKeys.contains(key) &&
               !_alreadyRead(current, key)).toSet();
-          if (newKeys.isEmpty) continue;
+          if (newKeys.isEmpty && recovered.isEmpty) continue;
           // Durable dedup is saved before any notification is exposed.
-          await library.recordChapterScan(current.key, sourceKey,
-              newKeys, sourceDates: dates);
+          if (newKeys.isNotEmpty) {
+            await library.recordChapterScan(current.key, sourceKey,
+                newKeys, sourceDates: dates);
+          }
           discoveries.addAll([
             for (final key in newKeys)
               ChapterDiscovery(book: book, sourceKey: sourceKey,
                   chapter: verified[key]!, canonicalKey: key),
+            for (final chapter in recovered.entries)
+              ChapterDiscovery(book: book, sourceKey: sourceKey,
+                  chapter: chapter.value, canonicalKey: chapter.key),
           ]);
+          delivered.addAll([...newKeys, ...recovered.keys]
+              .map((key) => '${current!.key}|$key'));
         } catch (_) {
           warnings.add(saved.title + ': один из источников недоступен');
         }
