@@ -141,8 +141,9 @@ void main() {
       repository: CatalogRepository(sources: {for (final s in sources) s.key: s}), library: LibraryStore())));
     await tester.pumpAndSettle();
     expect(sources.map((s) => s.detailCalls), [1, 1, 1]);
-    await revealInScrollable(tester, find.text('Повторить'));
-    expect(find.text('Повторить'), findsOneWidget);
+    await revealInScrollable(tester,
+        find.text('Главы временно недоступны. Попробуйте открыть их позже.'));
+    expect(find.text('Повторить'), findsNothing);
   });
 
   testWidgets('late discovery retries only newly matched sources', (tester) async {

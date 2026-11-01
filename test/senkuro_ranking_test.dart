@@ -132,8 +132,8 @@ void main() {
     expect(await source.popular(), isEmpty);
   });
 
-  test('HTTP restrictions fail once without retries', () async {
-    for (final status in [302, 403, 429, 500]) {
+  test('non-rate-limit HTTP restrictions fail once without retries', () async {
+    for (final status in [302, 403, 500]) {
       var calls = 0;
       final source = SenkuroSource(client: MockClient((_) async {
         calls++;
