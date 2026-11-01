@@ -402,8 +402,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     final saved = widget.library.items
       .where((item) => item.lastChapter.isNotEmpty &&
         item.lastSource == item.preferredSource &&
-        item.status != 'completed' && item.status != 'dropped' &&
-        item.status != 'viewed').toList()
+        item.status == 'reading').toList()
       ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
     // All 68+ saved titles can have discovered updates, even if Home only
     // performs network checks on its 12 most-recently-read titles.
@@ -440,6 +439,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
           final fresh = nextAvailableChapter(item, detail.chapters);
           final current = widget.library.get(item.toUnified());
           if (fresh != null && current != null &&
+              current.status == 'reading' &&
               current.preferredSource == item.preferredSource &&
               current.lastChapterId == item.lastChapterId &&
               current.lastSource == item.lastSource) {
