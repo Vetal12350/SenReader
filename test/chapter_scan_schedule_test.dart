@@ -142,6 +142,30 @@ void main() {
     expect(library.items.single.initializedSources, isEmpty);
   });
 
+  test('scheduled scan never spends requests on Planned or Completed',
+      () async {
+    final source = _ScheduleFakeSource('senkuro');
+    final library = LibraryStore();
+    await library.load();
+    for (final (index, status) in [
+      'planned', 'completed', 'reading', 'planned', 'completed',
+    ].indexed) {
+      await library.setStatus(UnifiedManga(title: 'Status $index', entries: {
+        source.key: MangaEntry(source: source.key, id: 'item$index',
+            title: 'Status $index'),
+      }), status);
+    }
+    final checker = ChapterChecker(
+        repository: CatalogRepository(sources: {source.key: source}),
+        library: library);
+    final first = await checker.check(smartSchedule: true);
+    expect(first.checkedTitles, 1);
+    expect(first.checkedSources, 1);
+    expect(source.scans, 1);
+    expect((await checker.check()).checkedSources, 1);
+    expect(source.scans, 2);
+  });
+
   test('last run persists independently for each profile', () async {
     final store = ChapterScanScheduleStore();
     final summary = ChapterBackgroundScanSummary(

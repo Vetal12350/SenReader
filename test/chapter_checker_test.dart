@@ -341,6 +341,59 @@ void main() {
     expect((await checker.check()).discoveries, isEmpty);
   });
 
+  test('only Reading titles are scanned in manual and automatic modes', () async {
+    final source = FakeSource('senkuro')
+      ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final library = await makeLibrary([source]);
+    final book = library.items.single.toUnified();
+    final checker = ChapterChecker(repository: CatalogRepository(sources: {
+      source.key: source,
+    }), library: library);
+    for (final status in ['planned', 'completed', 'dropped', 'viewed']) {
+      await library.setStatus(book, status);
+      final manual = await checker.check(diagnostics: true);
+      final background = await checker.check(smartSchedule: true);
+      expect(manual.checkedTitles, 0, reason: status);
+      expect(manual.checkedSources, 0, reason: status);
+      expect(manual.discoveries, isEmpty, reason: status);
+      expect(background.checkedSources, 0, reason: status);
+      expect(source.detailCalls, 0, reason: status);
+      expect(library.get(book)!.initializedSources, isEmpty, reason: status);
+    }
+    await library.setStatus(book, 'reading');
+    expect((await checker.check()).checkedSources, 1);
+    expect(source.detailCalls, 1);
+    source.chapters = [const Chapter(id: '2', name: 'Глава 2')];
+    await library.setStatus(book, 'completed');
+    expect((await checker.check()).checkedSources, 0);
+    expect((await checker.check(smartSchedule: true)).checkedSources, 0);
+    expect(source.detailCalls, 1);
+    expect(library.get(book)!.seenChapterKeys, isNot(contains('v0:c2')));
+    await library.setStatus(book, 'reading');
+    expect((await checker.check()).discoveries.single.canonicalKey, 'v0:c2');
+  });
+
+  test('switch to Completed while chapter loads prevents alerts and seen marks',
+      () async {
+    final source = _DelayedPagesSource('senkuro')
+      ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final library = await makeLibrary([source]);
+    final book = library.items.single.toUnified();
+    final checker = ChapterChecker(repository: CatalogRepository(sources: {
+      'senkuro': source,
+    }), library: library);
+    await checker.check();
+    source.chapters = [const Chapter(id: '2', name: 'Глава 2')];
+    source.pending = Completer<List<PageImage>>();
+    final checking = checker.check();
+    await source.started.future;
+    await library.setStatus(book, 'completed');
+    source.pending!.complete([const PageImage('https://cdn.example.com/2.jpg')]);
+    expect((await checking).discoveries, isEmpty);
+    expect(library.get(book)!.seenChapterKeys, isNot(contains('v0:c2')));
+    expect(library.get(book)!.status, 'completed');
+  });
+
   test('old v1 bookmarks and reading progress remain unchanged on load', () async {
     SharedPreferences.setMockInitialValues({
       LibraryStore.storageKey:
