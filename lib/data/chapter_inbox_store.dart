@@ -53,15 +53,20 @@ class ChapterInboxStore {
   Future<Database> _database() async {
     final path = databasePathOverride ??
         '${await getDatabasesPath()}/senreader_chapter_inbox_v2.db';
-    final db = await openDatabase(path, version: 2, onCreate: (db, _) async {
+    final db = await openDatabase(path, version: 3, onCreate: (db, _) async {
       await db.execute('CREATE TABLE inbox (profile TEXT NOT NULL, '
           'identity TEXT NOT NULL, payload TEXT NOT NULL, '
           'systemClaimed INTEGER NOT NULL DEFAULT 0, '
+          'systemLease INTEGER NOT NULL DEFAULT 0, systemToken INTEGER NOT NULL DEFAULT 0, '
           'PRIMARY KEY(profile, identity))');
       await db.execute('CREATE TABLE migration (id TEXT PRIMARY KEY)');
       await _createScanState(db);
     }, onUpgrade: (db, oldVersion, _) async {
       if (oldVersion < 2) await _createScanState(db);
+      if (oldVersion < 3) {
+        await db.execute('ALTER TABLE inbox ADD COLUMN systemLease INTEGER NOT NULL DEFAULT 0');
+        await db.execute('ALTER TABLE inbox ADD COLUMN systemToken INTEGER NOT NULL DEFAULT 0');
+      }
     });
     // Once migrated, avoid decoding the entire legacy JSON for every
     // inbox load/insert. The old preference itself remains untouched.
@@ -195,6 +200,34 @@ class ChapterInboxStore {
       whereArgs: [profile, identity]) == 1;
   }
 
+  /// A finite claim survives process death. Acknowledgement follows OS delivery.
+  Future<int?> beginSystemDelivery(InboxEntry entry, {int? now}) async {
+    final profile = await _profile();
+    final db = await _database();
+    final at = now ?? DateTime.now().millisecondsSinceEpoch;
+    return db.transaction((t) async {
+      final rows = await t.query('inbox', where:
+        'profile = ? AND identity = ? AND systemClaimed = 0 AND systemLease <= ?',
+        whereArgs: [profile, _identity(entry), at]);
+      if (rows.isEmpty) return null;
+      final row = rows.single;
+      if (InboxEntry.fromJson(jsonDecode(row['payload'] as String)
+          as Map<String, dynamic>).hidden) return null;
+      final token = (row['systemToken'] as int) + 1;
+      await t.update('inbox', {'systemLease': at + 60000, 'systemToken': token},
+        where: 'profile = ? AND identity = ?', whereArgs: [profile, _identity(entry)]);
+      return token;
+    });
+  }
+  Future<void> finishSystemDelivery(InboxEntry entry, int token,
+      {required bool delivered}) async {
+    final profile = await _profile();
+    await (await _database()).update('inbox',
+      {'systemLease': 0, if (delivered) 'systemClaimed': 1},
+      where: 'profile = ? AND identity = ? AND systemToken = ?',
+      whereArgs: [profile, _identity(entry), token]);
+  }
+
   Future<void> _change(bool Function(InboxEntry) matches, int at) async {
     final profile = await _profile();
     final db = await _database();
@@ -219,3 +252,4 @@ class ChapterInboxStore {
           e.key.substring(bookKey.length + 1)) && !e.hidden,
         DateTime.now().millisecondsSinceEpoch);
 }
+

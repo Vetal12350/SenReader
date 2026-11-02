@@ -23,6 +23,8 @@ class ChapterInboxPanel extends StatefulWidget {
 class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
   Timer? _poll;
   bool _refreshing = false;
+  int _revision = 0;
+  bool _refreshRequested = false;
   String? _displayedProfile;
   ChapterInboxStore get _store => widget.inboxStore ?? ChapterInboxStore(
       profileId: _displayedProfile ?? widget.library.profileId);
@@ -48,6 +50,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     // switch should trigger a full SQLite inbox reload; otherwise large
     // background scans would create hundreds of redundant refreshes.
     setState(() {
+      _revision++;
       _displayedProfile = widget.library.profileId;
       entries = const [];
       loading = true;
@@ -61,12 +64,13 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     super.dispose();
   }
   Future<void> _refresh() async {
-    if (_refreshing) return;
+    if (_refreshing) { _refreshRequested = true; return; }
     _refreshing = true;
+    final revision = _revision;
     try {
     final profile = widget.library.profileId;
     final next = await (widget.inboxStore ?? ChapterInboxStore(profileId: profile)).load();
-    if (mounted && widget.library.profileId == profile) {
+    if (mounted && revision == _revision && widget.library.profileId == profile) {
       var changed = loading || _displayedProfile != profile ||
           next.length != entries.length;
       if (!changed) {
@@ -86,7 +90,13 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
         widget.onChanged?.call();
       }
     }
-      } finally { _refreshing = false; }
+      } finally {
+        _refreshing = false;
+        if (mounted && (_refreshRequested || revision != _revision)) {
+          _refreshRequested = false;
+          unawaited(_refresh());
+        }
+      }
   }
 
   Future<void> _check() async {
@@ -257,10 +267,12 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
                       icon: Icon(hidden ? Icons.unarchive_outlined :
                         Icons.archive_outlined),
                       onPressed: () async {
+                        final store = _store;
+                        _revision++;
                         if (hidden) {
-                          await _store.restoreEntry(entry.key);
+                          await store.restoreEntry(entry.key);
                         } else {
-                          await _store.hideEntry(entry.key);
+                          await store.hideEntry(entry.key);
                         }
                         await _refresh();
                       }),

@@ -26,7 +26,7 @@ Future<void> _performSmartScan({bool foreground = false}) async {
   // post another profile's notifications.
   await library.load();
   if (library.profileId != profile) return;
-  if (report.discoveries.isNotEmpty) {
+  { // Also drain pending OS deliveries left by an earlier worker.
     // Local inbox delivery is independent of the Android notifications plugin.
     // A plugin initialization error must not lose discovered chapters.
     if (await prefs.systemNotificationsEnabled()) {
@@ -123,4 +123,5 @@ class ChapterBackgroundScheduler {
     );
   }
 }
+
 
