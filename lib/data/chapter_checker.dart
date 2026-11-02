@@ -281,6 +281,7 @@ class ChapterChecker {
             current = library.get(book);
             if (current == null) break;
             if (current.seenChapterKeys.contains(chapter.key) ||
+                delivered.contains('${current.key}|${chapter.key}') ||
                 _alreadyRead(current, chapter.key)) continue;
             if (LocalSourceGate.expired) {
               warnings.add(saved.title + ': проверка остальных глав отложена');
@@ -294,6 +295,9 @@ class ChapterChecker {
                 return uri != null && uri.scheme == 'https' &&
                     uri.host.isNotEmpty;
               })) continue;
+              // Checkpoint each verified release, even if the remaining candidates
+              // exceed this worker's time slice. Replay uses inbox identities.
+              await persist(book, sourceKey, [chapter.value]);
               verified[chapter.key] = chapter.value;
             } catch (_) {
               warnings.add(saved.title + ': глава временно недоступна');

@@ -49,7 +49,7 @@ class ChapterScanQueue {
     final db = await database();
     return db.transaction((t) async {
       final state = await t.query('providers', where: 'source = ?', whereArgs: [source]);
-      if (state.isNotEmpty && (state.single['next'] as int) > now) return null;
+      if (state.isNotEmpty && (state.single['next'] as int) > now + 5000) return null;
       final rows = await t.query('jobs', where:
         'profile = ? AND source = ? AND due <= ? AND lease <= ?',
         whereArgs: [profile, source, now, now], orderBy: 'turn, key', limit: 1);
