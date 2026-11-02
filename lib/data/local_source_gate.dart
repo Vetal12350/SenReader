@@ -3,12 +3,31 @@ import 'dart:async';
 import 'chapter_scan_queue.dart';
 import 'senkuro_request_gate.dart';
 
-/// Shared by every production HTTP caller on the device, across isolates/UIDs.
-/// Delays are conservative implementation defaults, not a claim of permission.
+/// Coordinates *automatic background chapter scans* across isolates/UIDs.
+/// Foreground, user-initiated catalog/reader requests retain their existing
+/// source-specific behavior and must not be blocked by a background 403 lease.
+/// Neither path may bypass a provider's HTTP restrictions or CAPTCHA.
 class LocalSourceGate {
   LocalSourceGate(this.source);
   final String source;
   static const deadlineKey = #senreaderScanDeadline;
+  static const backgroundScanKey = #senreaderBackgroundChapterScan;
+
+  /// A zone belongs to the scheduled scanner, not the entire app/isolate.
+  /// The foreground reader must never inherit another task's cooldown.
+  static bool get isBackgroundScan =>
+      Zone.current[backgroundScanKey] == true;
+
+  /// Apply the shared persistent gate only to automatic background checks.
+  /// Calls from the reader/catalog take the pre-existing provider path;
+  /// any HTTP 403/429 they receive is still reported, never bypassed.
+  static Future<T> runScoped<T>(String provider,
+      Future<T> Function() request,
+      {Future<T> Function()? foreground}) {
+    return isBackgroundScan
+        ? LocalSourceGate(provider).run(request)
+        : (foreground ?? request)();
+  }
   static bool get expired {
     final deadline = Zone.current[deadlineKey] as bool Function()?;
     return deadline?.call() ?? false;
