@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../core/chapter_identity.dart';
 import '../data/catalog_repository.dart';
@@ -19,6 +20,8 @@ class ChapterInboxPanel extends StatefulWidget {
 }
 
 class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
+  Timer? _poll;
+  bool _refreshing = false;
   String? _displayedProfile;
   ChapterInboxStore get _store => ChapterInboxStore(
       profileId: _displayedProfile ?? widget.library.profileId);
@@ -33,6 +36,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     super.initState();
     _displayedProfile = widget.library.profileId;
     widget.library.addListener(_libraryChanged);
+    _poll = Timer.periodic(const Duration(seconds: 2), (_) => _refresh());
     _refresh();
   }
   void _libraryChanged() {
@@ -49,10 +53,14 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     _refresh();
   }
   @override void dispose() {
+    _poll?.cancel();
     widget.library.removeListener(_libraryChanged);
     super.dispose();
   }
   Future<void> _refresh() async {
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
     final profile = widget.library.profileId;
     final next = await ChapterInboxStore(profileId: profile).load();
     if (mounted && widget.library.profileId == profile) {
@@ -61,6 +69,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
       });
       widget.onChanged?.call();
     }
+      } finally { _refreshing = false; }
   }
 
   Future<void> _check() async {
@@ -241,4 +250,5 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     ]);
   }
 }
+
 

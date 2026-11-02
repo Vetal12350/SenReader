@@ -88,7 +88,15 @@ class ChapterBackgroundScheduler {
     }
     _catchUpActive = true;
     try {
-      await _performSmartScan(foreground: true);
+      // Let WorkManager's background isolate perform parsing and database work.
+      // First-frame rendering never waits for a scan or its network requests.
+      await initialize();
+      await Workmanager().registerOneOffTask(
+        'senreader.chapter-catchup.unique', chapterCheckWork,
+        existingWorkPolicy: ExistingWorkPolicy.keep,
+        constraints: Constraints(networkType: NetworkType.connected,
+          requiresBatteryNotLow: true),
+      );
     } catch (_) {
       // Background work must not interfere with the foreground reader.
     } finally {
@@ -115,3 +123,4 @@ class ChapterBackgroundScheduler {
     );
   }
 }
+
