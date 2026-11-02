@@ -4,9 +4,9 @@ import '../data/chapter_alert_controller.dart';
 Future<void> offerChapterAlerts(BuildContext context, ChapterAlertController alerts) async {
   if (!await alerts.claimOffer() || !context.mounted) return;
   final enable = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
-    title: const Text('Включить уведомления о новых главах?'),
-    content: const Text('Проверяем только выбранный источник каждой книги. '
-        'Уведомления можно изменить в настройках.'),
+    title: const Text('Включить фоновую проверку новых глав?'),
+    content: const Text('Проверяем только книги из «Читаю», сохраняя главы внутри приложения. '
+        'Уведомления Android включаются отдельно в настройках.'),
     actions: [
       TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Не сейчас')),
       FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Включить')),
@@ -17,12 +17,12 @@ Future<void> offerChapterAlerts(BuildContext context, ChapterAlertController ale
     final enabled = await alerts.setEnabled(true);
     if (!enabled && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Уведомления выключены. Их можно включить в настройках.')));
+        content: Text('Фоновую проверку можно включить в настройках.')));
     }
   } catch (_) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Не удалось включить уведомления. Попробуй в настройках.')));
+        content: Text('Не удалось включить фоновую проверку. Попробуй в настройках.')));
     }
   }
 }
