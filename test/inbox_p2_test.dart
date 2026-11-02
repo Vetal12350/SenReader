@@ -126,6 +126,21 @@ void main() {
     expect(calls, 0);
     expect(await store.beginSystemDelivery(entry), isNull);
   });
+  test('new OS leases and acknowledgements are isolated for guest and two UIDs', () async {
+    final stores = [for (final id in ['', 'a', 'b']) ChapterInboxStore(profileId: id)];
+    final tokens = <int>[];
+    for (final store in stores) {
+      await store.add('example', 'Example', '', 'senkuro', chapter);
+      tokens.add((await store.beginSystemDelivery((await store.load()).single, now: 1000))!);
+    }
+    await stores[1].finishSystemDelivery((await stores[1].load()).single,
+      tokens[1], delivered: true);
+    expect(await stores[1].beginSystemDelivery((await stores[1].load()).single, now: 62000), isNull);
+    for (final index in [0, 2]) {
+      expect(await stores[index].beginSystemDelivery((await stores[index].load()).single,
+        now: 62000), isNotNull);
+    }
+  });
   test('SQLite v2 upgrade preserves hidden, delivered and pending rows without changing library', () async {
     final original = ChapterInboxStore.databasePathOverride!;
     ChapterInboxStore.databasePathOverride = '$original.legacy';
@@ -142,11 +157,14 @@ void main() {
     final sample = PausedInbox().rows.single;
     await db.insert('inbox', {'profile': 'a', 'identity': 'example|v0:c2',
       'payload': jsonEncode(sample.hide(5).toJson()), 'systemClaimed': 1});
+    await db.insert('inbox', {'profile': 'b', 'identity': 'example|v0:c2',
+      'payload': jsonEncode(sample.toJson()), 'systemClaimed': 0});
     await db.close();
     final store = ChapterInboxStore(profileId: 'a');
     expect((await store.load()).single.hidden, isTrue);
     expect((await store.loadScanState()).single['payload'], '{"seen":["v0:c1"]}');
     expect(await store.beginSystemDelivery(sample), isNull);
+    expect(await ChapterInboxStore(profileId: 'b').beginSystemDelivery(sample), isNotNull);
     final upgraded = await openDatabase(ChapterInboxStore.databasePathOverride!);
     expect(await upgraded.getVersion(), 3);
     await upgraded.close();
