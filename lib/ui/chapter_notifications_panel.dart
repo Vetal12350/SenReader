@@ -26,7 +26,7 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
     super.initState();
     _load();
     _diagnosticTimer = Timer.periodic(const Duration(seconds: 8),
-        (_) => unawaited(_refreshDiagnostics()));
+        (_) => unawaited(_refreshDiagnostics().catchError((Object _) {})));
   }
 
   @override void dispose() {
@@ -40,7 +40,8 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
     final last = await store.lastRun(profile);
     final worker = await store.lastRun(profile, workmanagerOnly: true);
     final registered = await store.registrationSucceeded(profile);
-    if (!mounted || await ChapterScanRunner.activeProfile() != profile) return;
+    final active = await ChapterScanRunner.activeProfile();
+    if (!mounted || active != profile) return;
     setState(() {
       lastRun = last; lastWorkerRun = worker; registrationSucceeded = registered;
     });
@@ -56,7 +57,8 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
     final worker = await ChapterScanScheduleStore().lastRun(profile,
       workmanagerOnly: true);
     final registered = await ChapterScanScheduleStore().registrationSucceeded(profile);
-    if (!mounted || await ChapterScanRunner.activeProfile() != profile) return;
+    final active = await ChapterScanRunner.activeProfile();
+    if (!mounted || active != profile) return;
     setState(() {
       enabled = newEnabled;
       systemEnabled = newSystemEnabled;
