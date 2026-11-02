@@ -36,7 +36,9 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     super.initState();
     _displayedProfile = widget.library.profileId;
     widget.library.addListener(_libraryChanged);
-    _poll = Timer.periodic(const Duration(seconds: 2), (_) => _refresh());
+    // The worker writes SQLite from another isolate; refresh local data
+    // without making network requests or rebuilding the list unnecessarily.
+    _poll = Timer.periodic(const Duration(seconds: 8), (_) => _refresh());
     _refresh();
   }
   void _libraryChanged() {
@@ -64,10 +66,24 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     final profile = widget.library.profileId;
     final next = await ChapterInboxStore(profileId: profile).load();
     if (mounted && widget.library.profileId == profile) {
-      setState(() {
-        _displayedProfile = profile; entries = next; loading = false;
-      });
-      widget.onChanged?.call();
+      var changed = loading || _displayedProfile != profile ||
+          next.length != entries.length;
+      if (!changed) {
+        for (var i = 0; i < next.length; i++) {
+          if (next[i].key != entries[i].key ||
+              next[i].hiddenAt != entries[i].hiddenAt ||
+              next[i].chapterName != entries[i].chapterName) {
+            changed = true;
+            break;
+          }
+        }
+      }
+      if (changed) {
+        setState(() {
+          _displayedProfile = profile; entries = next; loading = false;
+        });
+        widget.onChanged?.call();
+      }
     }
       } finally { _refreshing = false; }
   }
