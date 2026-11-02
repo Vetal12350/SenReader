@@ -254,7 +254,7 @@ class ChapterChecker {
                     unverifiedRecent.add(candidate.key);
                   }
                 } catch (error) {
-              failed(error);
+                  failed(error);
                   // Keep this recent chapter unseen so a later scan retries.
                   unverifiedRecent.add(candidate.key);
                   warnings.add(saved.title + ': проверка главы отложена');
@@ -312,7 +312,7 @@ class ChapterChecker {
                         uri.host.isNotEmpty;
                   })) recovered[item.key] = item.value;
                 } catch (error) {
-              failed(error);
+                  failed(error);
                   warnings.add(saved.title + ': проверка главы отложена');
                 }
               }
@@ -458,7 +458,10 @@ class ChapterChecker {
         checked += report.checkedSources;
         found.addAll(report.discoveries);
         warnings.addAll(report.warnings);
-        if (report.reason.isNotEmpty) failureReason = report.reason;
+        if (report.reason.isNotEmpty &&
+            (failureReason.isEmpty || report.reason.startsWith('http_'))) {
+          failureReason = report.reason;
+        }
         details.addAll(report.diagnostics);
         await queue.finish(profile, lease, DateTime.now().millisecondsSinceEpoch,
             success: report.warnings.isEmpty);

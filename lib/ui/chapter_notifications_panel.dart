@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../data/chapter_alert_controller.dart';
 import '../data/chapter_scan_schedule.dart';
 import '../data/chapter_scan_runner.dart';
-import '../data/library_store.dart';
 
 class ChapterNotificationsPanel extends StatefulWidget {
   const ChapterNotificationsPanel({super.key, required this.alerts});
@@ -52,13 +51,12 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
     final newEnabled = await prefs.enabled();
     final newSystemEnabled = await prefs.systemNotificationsEnabled();
     await prefs.intervalMinutes();
-    final library = LibraryStore();
-    await library.load();
-    final last = await ChapterScanScheduleStore().lastRun(library.profileId);
-    final worker = await ChapterScanScheduleStore().lastRun(library.profileId,
+    final profile = await ChapterScanRunner.activeProfile();
+    final last = await ChapterScanScheduleStore().lastRun(profile);
+    final worker = await ChapterScanScheduleStore().lastRun(profile,
       workmanagerOnly: true);
-    final registered = await ChapterScanScheduleStore().registrationSucceeded(library.profileId);
-    if (!mounted) return;
+    final registered = await ChapterScanScheduleStore().registrationSucceeded(profile);
+    if (!mounted || await ChapterScanRunner.activeProfile() != profile) return;
     setState(() {
       enabled = newEnabled;
       systemEnabled = newSystemEnabled;

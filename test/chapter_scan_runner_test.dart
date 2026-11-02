@@ -8,6 +8,7 @@ import 'package:senreader/data/catalog_repository.dart';
 import 'package:senreader/data/chapter_background_scheduler.dart';
 import 'package:senreader/data/chapter_checker.dart';
 import 'package:senreader/data/chapter_inbox_store.dart';
+import 'package:senreader/data/chapter_notification_service.dart';
 import 'package:senreader/data/chapter_scan_runner.dart';
 import 'package:senreader/data/chapter_scan_schedule.dart';
 import 'package:senreader/data/chapter_scan_queue.dart';
@@ -166,6 +167,32 @@ void main() {
       deliver: (_) async => throw StateError('native notification plugin'));
     expect(await runner.run(), isTrue);
     expect((await ChapterScanScheduleStore().lastRun(''))!.outcome, 'success');
+  });
+
+  test('OS opt-in with POST_NOTIFICATIONS denied still commits automatic releases', () async {
+    final source = FakeSource('senkuro')
+      ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final library = await makeLibrary([source]);
+    final repo = CatalogRepository(sources: {source.key: source});
+    await ChapterChecker(repository: repo, library: library).check();
+    source.chapters.add(const Chapter(id: '2', name: 'Глава 2'));
+    await (await ChapterScanQueue().database()).update('jobs', {'due': 0});
+    final prefs = MemoryAlertPreferences()..on = true..systemOn = true;
+    var posts = 0;
+    int? postedCount;
+    final runner = ChapterScanRunner(preferences: prefs, library: library,
+      repository: repo, deliver: (_) async {
+        postedCount = await ChapterNotificationService.instance.postNewChapters(const [],
+          preferences: prefs, permissionCheck: () async => false,
+          sendNotification: (_) async { posts++; });
+      });
+    expect(await runner.run(), isTrue);
+    final inbox = ChapterInboxStore(profileId: '');
+    expect((await inbox.load()).single.hidden, isFalse);
+    expect((await inbox.pendingSystemNotifications()).length, 1);
+    expect(posts, 0);
+    expect(postedCount, 0);
+    expect((await ChapterScanScheduleStore().lastRun(''))!.foundChapters, 1);
   });
 
   test('worker failure replaces the old success without recording private exception text', () async {

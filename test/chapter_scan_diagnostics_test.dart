@@ -5,6 +5,24 @@ import 'package:senreader/data/chapter_scan_schedule.dart';
 import 'package:senreader/ui/chapter_notifications_panel.dart';
 
 void main() {
+  testWidgets('long diagnostic reasons wrap on a narrow display with large text', (tester) async {
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(MaterialApp(home: MediaQuery(
+      data: const MediaQueryData(textScaler: TextScaler.linear(2)),
+      child: Scaffold(body: SingleChildScrollView(child: ChapterScanDiagnostics(
+        registrationSucceeded: false,
+        lastRun: ChapterBackgroundScanSummary(at: DateTime.now(),
+          checkedSources: 70, skippedSources: 130, foundChapters: 20, warnings: 2,
+          outcome: 'partial', reason: 'lease', nextEligibleAt: DateTime.now()),
+      ))))));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('Источников проверено: 70'), findsOneWidget);
+  });
+
   testWidgets('no run is distinguishable from a zero-result or failed run', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: Scaffold(body: ChapterScanDiagnostics())));
     expect(find.textContaining('ещё не запускалась'), findsOneWidget);
