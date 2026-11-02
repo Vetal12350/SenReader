@@ -11,19 +11,21 @@ class InboxEntry {
     required this.key, required this.bookKey, required this.title,
     required this.coverUrl, required this.source,
     required this.chapterId, required this.chapterName,
-    required this.createdAt, this.hiddenAt = 0,
+    required this.createdAt, this.hiddenAt = 0, this.sourceId = '',
   });
   final String key, bookKey, title, coverUrl, source, chapterId, chapterName;
   final int createdAt, hiddenAt;
+  final String sourceId;
   bool get hidden => hiddenAt > 0;
   InboxEntry hide(int at) => InboxEntry(key: key, bookKey: bookKey,
     title: title, coverUrl: coverUrl, source: source,
     chapterId: chapterId, chapterName: chapterName,
-    createdAt: createdAt, hiddenAt: at);
+    createdAt: createdAt, hiddenAt: at, sourceId: sourceId);
   Map<String, Object> toJson() => {
     'key': key, 'bookKey': bookKey, 'title': title, 'coverUrl': coverUrl,
     'source': source, 'chapterId': chapterId, 'chapterName': chapterName,
     'createdAt': createdAt, 'hiddenAt': hiddenAt,
+    if (sourceId.isNotEmpty) 'sourceId': sourceId,
   };
   factory InboxEntry.fromJson(Map<String, dynamic> json) => InboxEntry(
     key: json['key'] as String? ?? '', bookKey: json['bookKey'] as String? ?? '',
@@ -33,6 +35,7 @@ class InboxEntry {
     chapterName: json['chapterName'] as String? ?? '',
     createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
     hiddenAt: (json['hiddenAt'] as num?)?.toInt() ?? 0,
+    sourceId: json['sourceId'] as String? ?? '',
   );
 }
 
@@ -53,15 +56,32 @@ class ChapterInboxStore {
   Future<Database> _database() async {
     final path = databasePathOverride ??
         '${await getDatabasesPath()}/senreader_chapter_inbox_v2.db';
-    final db = await openDatabase(path, version: 2, onCreate: (db, _) async {
+    final db = await openDatabase(path, version: 4, onCreate: (db, _) async {
       await db.execute('CREATE TABLE inbox (profile TEXT NOT NULL, '
           'identity TEXT NOT NULL, payload TEXT NOT NULL, '
           'systemClaimed INTEGER NOT NULL DEFAULT 0, '
-          'PRIMARY KEY(profile, identity))');
+          'systemLease INTEGER NOT NULL DEFAULT 0, systemToken INTEGER NOT NULL DEFAULT 0, '
+          'systemQueuedAt INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(profile, identity))');
       await db.execute('CREATE TABLE migration (id TEXT PRIMARY KEY)');
+      await db.execute('CREATE INDEX IF NOT EXISTS pending_os ON inbox(profile, systemClaimed, systemQueuedAt, systemLease)');
       await _createScanState(db);
     }, onUpgrade: (db, oldVersion, _) async {
       if (oldVersion < 2) await _createScanState(db);
+      if (oldVersion < 3) {
+        await db.execute('ALTER TABLE inbox ADD COLUMN systemLease INTEGER NOT NULL DEFAULT 0');
+        await db.execute('ALTER TABLE inbox ADD COLUMN systemToken INTEGER NOT NULL DEFAULT 0');
+      }
+      if (oldVersion < 4) {
+        final columns = (await db.rawQuery('PRAGMA table_info(inbox)'))
+            .map((c) => c['name']).toSet();
+        // Accept either draft v3 shape without applying competing migrations.
+        for (final name in ['systemLease', 'systemToken', 'systemQueuedAt']) {
+          if (!columns.contains(name)) {
+            await db.execute('ALTER TABLE inbox ADD COLUMN $name INTEGER NOT NULL DEFAULT 0');
+          }
+        }
+        await db.execute('CREATE INDEX IF NOT EXISTS pending_os ON inbox(profile, systemClaimed, systemQueuedAt, systemLease)');
+      }
     });
     // Once migrated, avoid decoding the entire legacy JSON for every
     // inbox load/insert. The old preference itself remains untouched.
@@ -148,9 +168,10 @@ class ChapterInboxStore {
           ?? '${entry.source}|id:${entry.chapterId}');
 
   static Future<void> _insert(DatabaseExecutor db, String profile,
-      InboxEntry entry, {int claimed = 0}) async {
+      InboxEntry entry, {int claimed = 0, bool systemPending = false}) async {
     await db.insert('inbox', {'profile': profile, 'identity': _identity(entry),
-      'payload': jsonEncode(entry.toJson()), 'systemClaimed': claimed},
+      'payload': jsonEncode(entry.toJson()), 'systemClaimed': claimed,
+      'systemQueuedAt': systemPending ? DateTime.now().millisecondsSinceEpoch : 0},
       conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
@@ -173,14 +194,15 @@ class ChapterInboxStore {
   }
 
   Future<void> add(String bookKey, String title, String coverUrl,
-      String source, Chapter chapter) async {
+      String source, Chapter chapter,
+      {bool systemPending = false, String sourceId = ''}) async {
     final profile = await _profile();
     final db = await _database();
     final entry = InboxEntry(key: '$bookKey|${sourceChapterKey(chapter, source)}',
       bookKey: bookKey, title: title, coverUrl: coverUrl, source: source,
-      chapterId: chapter.id, chapterName: chapter.name,
+      chapterId: chapter.id, chapterName: chapter.name, sourceId: sourceId,
       createdAt: DateTime.now().millisecondsSinceEpoch);
-    await _insert(db, profile, entry);
+    await _insert(db, profile, entry, systemPending: systemPending);
   }
 
   /// At-most-once OS delivery. A crash after claiming may omit an optional
@@ -195,6 +217,59 @@ class ChapterInboxStore {
       whereArgs: [profile, identity]) == 1;
   }
 
+  Future<List<InboxEntry>> pendingSystemNotifications({int limit = 10}) async {
+    final profile = await _profile();
+    final rows = await (await _database()).query('inbox', where:
+      'profile = ? AND systemClaimed = 0 AND systemQueuedAt > 0 AND systemLease <= ?',
+      whereArgs: [profile, DateTime.now().millisecondsSinceEpoch],
+      orderBy: 'systemQueuedAt, identity', limit: limit.clamp(1, 10).toInt());
+    return rows.map((r) => InboxEntry.fromJson(jsonDecode(r['payload'] as String)
+      as Map<String, dynamic>)).toList();
+  }
+  Future<void> retireSystemDelivery(InboxEntry entry) async {
+    final profile = await _profile();
+    await (await _database()).update('inbox', {'systemQueuedAt': 0},
+      where: 'profile = ? AND identity = ?', whereArgs: [profile, _identity(entry)]);
+  }
+  Future<void> hideChapter(String book, Chapter chapter, String source) =>
+      _change((e) => e.bookKey == book && _identity(e) ==
+        '$book|${canonicalChapterKey(chapter) ?? '$source|id:${chapter.id}'}',
+        DateTime.now().millisecondsSinceEpoch);
+
+  /// A finite claim survives process death. Acknowledgement follows OS delivery.
+  Future<int?> beginSystemDelivery(InboxEntry entry, {int? now}) async {
+    final profile = await _profile();
+    final db = await _database();
+    final at = now ?? DateTime.now().millisecondsSinceEpoch;
+    return db.transaction((t) async {
+      final rows = await t.query('inbox', where:
+        'profile = ? AND identity = ? AND systemClaimed = 0 AND systemQueuedAt > 0 AND systemLease <= ?',
+        whereArgs: [profile, _identity(entry), at]);
+      if (rows.isEmpty) return null;
+      final row = rows.single;
+      if (InboxEntry.fromJson(jsonDecode(row['payload'] as String)
+          as Map<String, dynamic>).hidden) return null;
+      final token = (row['systemToken'] as int) + 1;
+      await t.update('inbox', {'systemLease': at + 60000, 'systemToken': token},
+        where: 'profile = ? AND identity = ?', whereArgs: [profile, _identity(entry)]);
+      return token;
+    });
+  }
+  Future<bool> systemDeliveryCurrent(InboxEntry entry, int token) async {
+    final profile = await _profile();
+    return (await (await _database()).query('inbox', columns: ['identity'], where:
+      'profile = ? AND identity = ? AND systemToken = ? AND systemClaimed = 0 AND systemQueuedAt > 0',
+      whereArgs: [profile, _identity(entry), token])).isNotEmpty;
+  }
+  Future<void> finishSystemDelivery(InboxEntry entry, int token,
+      {required bool delivered}) async {
+    final profile = await _profile();
+    await (await _database()).update('inbox',
+      {'systemLease': 0, if (delivered) 'systemClaimed': 1},
+      where: 'profile = ? AND identity = ? AND systemToken = ?',
+      whereArgs: [profile, _identity(entry), token]);
+  }
+
   Future<void> _change(bool Function(InboxEntry) matches, int at) async {
     final profile = await _profile();
     final db = await _database();
@@ -204,7 +279,8 @@ class ChapterInboxStore {
         final entry = InboxEntry.fromJson(jsonDecode(row['payload'] as String)
             as Map<String, dynamic>);
         if (!matches(entry)) continue;
-        await txn.update('inbox', {'payload': jsonEncode(entry.hide(at).toJson())},
+        await txn.update('inbox', {'payload': jsonEncode(entry.hide(at).toJson()),
+          if (at > 0) 'systemQueuedAt': 0},
           where: 'profile = ? AND identity = ?',
           whereArgs: [profile, row['identity']]);
       }
@@ -219,3 +295,4 @@ class ChapterInboxStore {
           e.key.substring(bookKey.length + 1)) && !e.hidden,
         DateTime.now().millisecondsSinceEpoch);
 }
+

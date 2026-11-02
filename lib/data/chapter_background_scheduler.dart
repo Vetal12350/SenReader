@@ -21,12 +21,13 @@ Future<void> _performSmartScan({bool foreground = false}) async {
   final profile = library.profileId;
   final report = await ChapterChecker(
     repository: CatalogRepository(), library: library,
+    systemNotificationsEnabled: await prefs.systemNotificationsEnabled(),
   ).check(smartSchedule: true);
   // If the user switched Google accounts during a foreground check, never
   // post another profile's notifications.
   await library.load();
   if (library.profileId != profile) return;
-  if (report.discoveries.isNotEmpty) {
+  { // Also drain pending OS deliveries left by an earlier worker.
     // Local inbox delivery is independent of the Android notifications plugin.
     // A plugin initialization error must not lose discovered chapters.
     if (await prefs.systemNotificationsEnabled()) {
@@ -123,4 +124,5 @@ class ChapterBackgroundScheduler {
     );
   }
 }
+
 
