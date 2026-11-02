@@ -11,19 +11,21 @@ class InboxEntry {
     required this.key, required this.bookKey, required this.title,
     required this.coverUrl, required this.source,
     required this.chapterId, required this.chapterName,
-    required this.createdAt, this.hiddenAt = 0,
+    required this.createdAt, this.hiddenAt = 0, this.sourceId = '',
   });
   final String key, bookKey, title, coverUrl, source, chapterId, chapterName;
   final int createdAt, hiddenAt;
+  final String sourceId;
   bool get hidden => hiddenAt > 0;
   InboxEntry hide(int at) => InboxEntry(key: key, bookKey: bookKey,
     title: title, coverUrl: coverUrl, source: source,
     chapterId: chapterId, chapterName: chapterName,
-    createdAt: createdAt, hiddenAt: at);
+    createdAt: createdAt, hiddenAt: at, sourceId: sourceId);
   Map<String, Object> toJson() => {
     'key': key, 'bookKey': bookKey, 'title': title, 'coverUrl': coverUrl,
     'source': source, 'chapterId': chapterId, 'chapterName': chapterName,
     'createdAt': createdAt, 'hiddenAt': hiddenAt,
+    if (sourceId.isNotEmpty) 'sourceId': sourceId,
   };
   factory InboxEntry.fromJson(Map<String, dynamic> json) => InboxEntry(
     key: json['key'] as String? ?? '', bookKey: json['bookKey'] as String? ?? '',
@@ -33,6 +35,7 @@ class InboxEntry {
     chapterName: json['chapterName'] as String? ?? '',
     createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
     hiddenAt: (json['hiddenAt'] as num?)?.toInt() ?? 0,
+    sourceId: json['sourceId'] as String? ?? '',
   );
 }
 
@@ -53,15 +56,18 @@ class ChapterInboxStore {
   Future<Database> _database() async {
     final path = databasePathOverride ??
         '${await getDatabasesPath()}/senreader_chapter_inbox_v2.db';
-    final db = await openDatabase(path, version: 2, onCreate: (db, _) async {
+    final db = await openDatabase(path, version: 3, onCreate: (db, _) async {
       await db.execute('CREATE TABLE inbox (profile TEXT NOT NULL, '
           'identity TEXT NOT NULL, payload TEXT NOT NULL, '
           'systemClaimed INTEGER NOT NULL DEFAULT 0, '
+          'systemQueuedAt INTEGER NOT NULL DEFAULT 0, '
           'PRIMARY KEY(profile, identity))');
       await db.execute('CREATE TABLE migration (id TEXT PRIMARY KEY)');
       await _createScanState(db);
     }, onUpgrade: (db, oldVersion, _) async {
       if (oldVersion < 2) await _createScanState(db);
+      if (oldVersion < 3) await db.execute(
+          'ALTER TABLE inbox ADD COLUMN systemQueuedAt INTEGER NOT NULL DEFAULT 0');
     });
     // Once migrated, avoid decoding the entire legacy JSON for every
     // inbox load/insert. The old preference itself remains untouched.
@@ -148,9 +154,10 @@ class ChapterInboxStore {
           ?? '${entry.source}|id:${entry.chapterId}');
 
   static Future<void> _insert(DatabaseExecutor db, String profile,
-      InboxEntry entry, {int claimed = 0}) async {
+      InboxEntry entry, {int claimed = 0, bool systemPending = false}) async {
     await db.insert('inbox', {'profile': profile, 'identity': _identity(entry),
-      'payload': jsonEncode(entry.toJson()), 'systemClaimed': claimed},
+      'payload': jsonEncode(entry.toJson()), 'systemClaimed': claimed,
+      'systemQueuedAt': systemPending ? entry.createdAt : 0},
       conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
@@ -173,15 +180,32 @@ class ChapterInboxStore {
   }
 
   Future<void> add(String bookKey, String title, String coverUrl,
-      String source, Chapter chapter) async {
+      String source, Chapter chapter,
+      {bool systemPending = false, String sourceId = ''}) async {
     final profile = await _profile();
     final db = await _database();
     final entry = InboxEntry(key: '$bookKey|${sourceChapterKey(chapter, source)}',
       bookKey: bookKey, title: title, coverUrl: coverUrl, source: source,
       chapterId: chapter.id, chapterName: chapter.name,
-      createdAt: DateTime.now().millisecondsSinceEpoch);
-    await _insert(db, profile, entry);
+      createdAt: DateTime.now().millisecondsSinceEpoch, sourceId: sourceId);
+    await _insert(db, profile, entry, systemPending: systemPending);
   }
+
+  /// Only newly opted-in deliveries are recoverable. Existing v2 rows keep
+  /// queuedAt=0, so an upgrade or first opt-in never floods historical alerts.
+  Future<List<InboxEntry>> pendingSystemNotifications() async {
+    final profile = await _profile();
+    final db = await _database();
+    final rows = await db.query('inbox', where:
+        'profile = ? AND systemClaimed = 0 AND systemQueuedAt > 0',
+        whereArgs: [profile], orderBy: 'systemQueuedAt, identity');
+    return rows.map((r) => InboxEntry.fromJson(jsonDecode(r['payload'] as String)
+        as Map<String, dynamic>)).where((e) => !e.hidden).toList();
+  }
+
+  Future<void> hideChapter(String book, Chapter chapter, String source) =>
+      _change((e) => _identity(e) == '$book|${canonicalChapterKey(chapter) ?? '$source|id:${chapter.id}'}',
+          DateTime.now().millisecondsSinceEpoch);
 
   /// At-most-once OS delivery. A crash after claiming may omit an optional
   /// system alert; the mandatory inbox is already committed and unaffected.
@@ -190,9 +214,16 @@ class ChapterInboxStore {
     final profile = await _profile();
     final db = await _database();
     final identity = '$bookKey|${canonicalChapterKey(chapter) ?? '$source|id:${chapter.id}'}';
-    return await db.update('inbox', {'systemClaimed': 1},
-      where: 'profile = ? AND identity = ? AND systemClaimed = 0',
-      whereArgs: [profile, identity]) == 1;
+    return db.transaction((txn) async {
+      final rows = await txn.query('inbox',
+          where: 'profile = ? AND identity = ? AND systemClaimed = 0',
+          whereArgs: [profile, identity]);
+      if (rows.isEmpty || InboxEntry.fromJson(jsonDecode(
+          rows.single['payload'] as String) as Map<String, dynamic>).hidden) return false;
+      return await txn.update('inbox', {'systemClaimed': 1},
+          where: 'profile = ? AND identity = ? AND systemClaimed = 0',
+          whereArgs: [profile, identity]) == 1;
+    });
   }
 
   Future<void> _change(bool Function(InboxEntry) matches, int at) async {

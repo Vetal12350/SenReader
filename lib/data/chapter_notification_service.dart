@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../core/title_matching.dart';
+import '../core/chapter_identity.dart';
+import '../core/models.dart';
 import 'chapter_alert_preferences.dart';
 import 'chapter_checker.dart';
 import 'chapter_inbox_store.dart';
@@ -98,7 +100,8 @@ class ChapterNotificationService {
 
   Future<int> postNewChapters(List<ChapterDiscovery> releases,
       {ChapterAlertPreferences? preferences,
-       Future<bool> Function()? permissionCheck}) async {
+       Future<bool> Function()? permissionCheck,
+       Future<void> Function(ChapterDiscovery)? sender}) async {
     final prefs = preferences ?? ChapterAlertPreferences();
     if (!await prefs.enabled()) return 0;
     // Internal storage is mandatory. Android permission only controls optional
@@ -111,38 +114,68 @@ class ChapterNotificationService {
         // Plugin/permission errors must not block internal updates.
       }
     }
-    var posted = 0;
+    final active = LibraryStore();
+    await active.load();
+    final profile = active.profileId;
+    final inbox = ChapterInboxStore(profileId: profile);
     for (final release in releases) {
-      // A source may have changed while the checker or Android was waiting.
-      final library = LibraryStore();
-      await library.load();
-      final saved = library.get(release.book);
+      final saved = active.get(release.book);
       if (saved == null || saved.status != 'reading' ||
           !saved.entries.containsKey(release.sourceKey) ||
-          (release.profileId != null && release.profileId != library.profileId) ||
-          !await prefs.enabled()) continue;
-      final inbox = ChapterInboxStore(profileId: library.profileId);
-      await inbox.add(normalizedTitle(release.book.title),
-        release.book.title, release.book.coverUrl,
-        release.sourceKey, release.chapter);
-      if (!canPostSystemNotification) continue;
-      if (!await inbox.claimSystemNotification(normalizedTitle(release.book.title),
-          release.chapter, release.sourceKey)) continue;
+          (release.profileId != null && release.profileId != profile)) continue;
+      await inbox.add(normalizedTitle(release.book.title), release.book.title,
+          release.book.coverUrl, release.sourceKey, release.chapter,
+          sourceId: saved.entries[release.sourceKey]!.id,
+          systemPending: await prefs.systemNotificationsEnabled());
+    }
+    if (!canPostSystemNotification) return 0;
+    var posted = 0;
+    var claimed = 0;
+    // Resume persisted deliveries even when the scanner emits no discoveries.
+    // Bound each pass and ignore historical/pre-opt-in entries.
+    for (final entry in await inbox.pendingSystemNotifications()) {
+      if (claimed >= 10) break;
+      await active.load();
+      if (active.profileId != profile || !await prefs.enabled() ||
+          !await prefs.systemNotificationsEnabled()) break;
+      final saved = active.items.where((b) => b.key == entry.bookKey).firstOrNull;
+      if (saved == null || saved.status != 'reading' ||
+          !saved.entries.containsKey(entry.source) ||
+          (entry.sourceId.isNotEmpty &&
+           saved.entries[entry.source]!.id != entry.sourceId)) continue;
+      final chapter = Chapter(id: entry.chapterId, name: entry.chapterName);
+      if (active.isChapterRead(saved.toUnified(), chapter, entry.source)) {
+        await inbox.hideChapter(entry.bookKey, chapter, entry.source);
+        continue;
+      }
+      final release = ChapterDiscovery(book: saved.toUnified(),
+          sourceKey: entry.source, chapter: chapter,
+          canonicalKey: canonicalChapterKey(chapter) ?? 'id:${chapter.id}',
+          profileId: profile);
+      if (!await inbox.claimSystemNotification(entry.bookKey, chapter, entry.source)) continue;
+      claimed++;
       try {
-        await _plugin.show(
-          id: notificationId(release),
-          title: release.book.title,
-          body: release.chapter.name,
-          notificationDetails: const NotificationDetails(
-            android: AndroidNotificationDetails(
-              'senreader_new_chapters', 'Новые главы',
-              channelDescription: 'Новые доступные главы манги и манхвы из избранного',
-              importance: Importance.defaultImportance,
-              priority: Priority.defaultPriority,
+        await active.load();
+        if (active.profileId != profile) continue;
+        if (sender != null) {
+          await sender(release);
+        } else {
+          await _plugin.show(
+            id: notificationId(release),
+            title: release.book.title,
+            body: release.chapter.name,
+            notificationDetails: const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'senreader_new_chapters', 'Новые главы',
+                channelDescription: 'Новые доступные главы манги и манхвы из избранного',
+                importance: Importance.defaultImportance,
+                priority: Priority.defaultPriority,
+                onlyAlertOnce: true,
+              ),
             ),
-          ),
-          payload: encodePayload(release),
-        );
+            payload: encodePayload(release),
+          );
+        }
         posted++;
       } catch (_) {
         // The chapter is already durably saved in the internal inbox.

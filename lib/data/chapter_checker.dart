@@ -37,7 +37,9 @@ class ChapterScanReport {
 /// Canonical chapter keys deduplicate releases across linked sources.
 class ChapterChecker {
   ChapterChecker({required this.repository, required this.library,
-    this.afterInboxCommit, this.elapsed, this.afterPair});
+    this.afterInboxCommit, this.elapsed, this.afterPair,
+    this.systemNotificationsEnabled = false});
+  final bool systemNotificationsEnabled;
   final Duration Function()? elapsed;
   final Future<void> Function()? afterPair;
   /// Fault-injection boundary for interruption regression tests.
@@ -91,7 +93,19 @@ class ChapterChecker {
       for (final chapter in chapters) {
         if (LocalSourceGate.expired) throw TimeoutException('Scan expired');
         await inbox.add(normalizedTitle(book.title), book.title,
-            book.coverUrl, source, chapter);
+            book.coverUrl, source, chapter,
+            systemPending: systemNotificationsEnabled,
+            sourceId: book.entries[source]!.id);
+        // markRead writes its markers before hiding existing inbox rows.
+        // Re-read AFTER insertion: if reading won the race before the insert,
+        // hide here; if it wins later, markRead sees and hides the inserted row.
+        await library.load();
+        final latest = library.get(book);
+        if (library.profileId == scanProfile && latest != null &&
+            (library.isChapterRead(book, chapter, source) ||
+             _alreadyRead(latest, canonicalChapterKey(chapter) ?? ''))) {
+          await inbox.hideChapter(normalizedTitle(book.title), chapter, source);
+        }
       }
       await afterInboxCommit?.call();
     }

@@ -50,7 +50,7 @@ void main() {
       expect((await store.load()).single.hidden, isFalse);
       expect(await store.claimSystemNotification('example', chapter, 'senkuro'), isTrue);
     }
-    expect(await a.claimSystemNotification('example', chapter, 'senkuro'), isTrue);
+    expect(await a.claimSystemNotification('example', chapter, 'senkuro'), isFalse);
     expect(await a.claimSystemNotification('example', chapter, 'readmanga'), isFalse);
   });
 
