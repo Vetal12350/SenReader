@@ -400,8 +400,8 @@ class ChapterChecker {
       empty = 0;
       try {
         final remaining = budget - spent();
-        final slice = remaining < const Duration(seconds: 18)
-            ? remaining : const Duration(seconds: 18);
+        final slice = remaining < const Duration(seconds: 45)
+            ? remaining : const Duration(seconds: 45);
         final pairWatch = Stopwatch()..start();
         final report = await runZoned(() => check(diagnostics: diagnostics,
           onlyBook: lease.job.book, onlySource: source).timeout(slice),

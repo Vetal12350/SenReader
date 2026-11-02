@@ -10,7 +10,7 @@ pair. A killed worker leaves a lease which expires: no task is permanently lost.
 There is no library-position or reading-activity priority. Providers alternate.
 
 Scheduled work uses a 120-second soft budget instead of a 12-source cap. The active
-pair is bounded by the remaining duration. No new production HTTP work or inbox
+pair is bounded by 45 seconds or the remaining duration, whichever is smaller. No new production HTTP work or inbox
 commit starts after the deadline. A timeout retains the finite lease; subsequent
 runs continue other eligible jobs. A delayed HTTP response may still finish in the
 transport; the deadline prevents further chained requests or inbox writes.
