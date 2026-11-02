@@ -15,13 +15,21 @@ commit starts after the deadline. A timeout retains the finite lease; subsequent
 runs continue other eligible jobs. A delayed HTTP response may still finish in the
 transport; the deadline prevents further chained requests or inbox writes.
 
-Production HTTP calls use a persistent device-wide per-provider gate: one request
-at a time, a two-second minimum interval, and an expiring request lease. Injected
-fixture clients keep their existing deterministic transport. HTTP 429 persists
-Retry-After (at least one minute; default 30 minutes); HTTP 403 defers 24 hours.
-One provider's cooldown does not block the other queue. These conservative defaults
-are not a declaration of permission or a guarantee that 429 cannot occur. Existing
-upstream access rules remain applicable; no anti-bot or CAPTCHA bypass is added.
+**Only automatic chapter scans** use the persistent device-wide per-provider
+request gate: one request at a time, a two-second minimum interval, and an
+expiring request lease. The scan zone is explicit, scoped to the WorkManager
+scanner's per-pair run, and is propagated through its asynchronous HTTP calls.
+Injected fixture clients keep their deterministic transport.
+
+HTTP 429 persists Retry-After for **background scans** (at least one minute;
+default 30 minutes); HTTP 403 defers automatic background checks for 24 hours.
+One provider's background cooldown does not block the other queue. Explicit
+foreground browsing, chapter opening and image loading use their established
+request paths, so a background 403 does not disable reading for 24 hours.
+Foreground responses still surface 403/429 normally; existing Senkuro
+request throttling/retry-after handling remains active. Neither path bypasses
+CAPTCHA, access restrictions, or provider rate limits. These defaults are not
+a declaration of permission or a guarantee that 429 cannot occur.
 
 WorkManager's existing connected/battery constraints and 15-minute opportunistic
 schedule remain. Catch-up is unawaited by UI startup and shares the same SQLite
