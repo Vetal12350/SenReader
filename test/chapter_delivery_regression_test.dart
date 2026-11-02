@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:senreader/core/models.dart';
 import 'package:senreader/data/catalog_repository.dart';
+import 'package:senreader/data/chapter_alert_preferences.dart';
 import 'package:senreader/data/chapter_checker.dart';
 import 'package:senreader/data/chapter_inbox_store.dart';
 import 'package:senreader/data/chapter_notification_service.dart';
@@ -12,6 +14,17 @@ import 'chapter_checker_test.dart' show FakeSource, makeLibrary;
 const chapter = Chapter(id: 's2', name: 'Глава 2');
 Future<void> add(ChapterInboxStore store, {String source = 'senkuro'}) =>
     store.add('example', 'Example', '', source, chapter);
+
+class PausingSource extends FakeSource {
+  PausingSource() : super('senkuro');
+  Completer<void>? paused;
+  Completer<void>? resume;
+  @override Future<List<PageImage>> pages(Chapter chapter) async {
+    paused?.complete();
+    await resume?.future;
+    return super.pages(chapter);
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -83,7 +96,38 @@ void main() {
     expect(restored.items.single.readChapterKeys, isEmpty);
   });
 
+  test('account switch during verification never delivers or marks the other UID', () async {
+    final source = PausingSource()
+      ..chapters = [const Chapter(id: 's1', name: 'Глава 1')];
+    final profile = LibraryStore();
+    await profile.switchProfile('uid-a');
+    final library = await makeLibrary([source]);
+    final book = library.items.single.toUnified();
+    final checker = ChapterChecker(repository: CatalogRepository(
+      sources: {'senkuro': source}), library: library);
+    await checker.check();
+    source.chapters = [chapter];
+    source.paused = Completer<void>();
+    source.resume = Completer<void>();
+    final scan = checker.check();
+    await source.paused!.future;
+    final other = LibraryStore();
+    await other.switchProfile('uid-b');
+    await other.setStatus(book, 'reading');
+    source.resume!.complete();
+    expect((await scan).discoveries, isEmpty);
+    expect(await ChapterInboxStore(profileId: 'uid-a').load(), isEmpty);
+    expect(await ChapterInboxStore(profileId: 'uid-b').load(), isEmpty);
+    await other.load();
+    expect(other.items.single.seenChapterKeys, isEmpty);
+    expect(other.items.single.readChapterKeys, isEmpty);
+  });
+
   test('scanner commits inbox with no notification plugin or POST_NOTIFICATIONS', () async {
+    SharedPreferences.setMockInitialValues({
+      ChapterAlertPreferences.inAppEnabledKey: true,
+      ChapterAlertPreferences.systemEnabledKey: true,
+    });
     final source = FakeSource('senkuro')
       ..chapters = [const Chapter(id: 's1', name: 'Глава 1')];
     final library = await makeLibrary([source]);

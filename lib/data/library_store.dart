@@ -545,7 +545,7 @@ class LibraryStore extends ChangeNotifier {
     // Completion and resume are independent, including the current chapter.
     await _save();
     try {
-      await ChapterInboxStore().hideReadKeys(item.key, source, item.readChapterKeys);
+      await ChapterInboxStore(profileId: profileId).hideReadKeys(item.key, source, item.readChapterKeys);
     } catch (_) {
       // An unavailable notification store must not roll back reading progress.
     }

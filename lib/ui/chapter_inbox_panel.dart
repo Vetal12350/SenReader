@@ -19,7 +19,9 @@ class ChapterInboxPanel extends StatefulWidget {
 }
 
 class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
-  final ChapterInboxStore _store = ChapterInboxStore();
+  String? _displayedProfile;
+  ChapterInboxStore get _store => ChapterInboxStore(
+      profileId: _displayedProfile ?? widget.library.profileId);
   List<InboxEntry> entries = const [];
   bool hidden = false;
   bool loading = true;
@@ -32,7 +34,12 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     widget.library.addListener(_libraryChanged);
     _refresh();
   }
-  void _libraryChanged() { _refresh(); }
+  void _libraryChanged() {
+    if (_displayedProfile != widget.library.profileId && mounted) {
+      setState(() { entries = const []; loading = true; lastScanSummary = null; });
+    }
+    _refresh();
+  }
   @override void dispose() {
     widget.library.removeListener(_libraryChanged);
     super.dispose();
@@ -41,7 +48,9 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     final profile = widget.library.profileId;
     final next = await ChapterInboxStore(profileId: profile).load();
     if (mounted && widget.library.profileId == profile) {
-      setState(() { entries = next; loading = false; });
+      setState(() {
+        _displayedProfile = profile; entries = next; loading = false;
+      });
       widget.onChanged?.call();
     }
   }
