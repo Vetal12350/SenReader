@@ -49,4 +49,17 @@ void main() {
     expect((await checker.check(smartSchedule: true)).checkedSources, 1);
     expect(library.items.single.readChapterKeys, isEmpty);
   });
+
+  test('manual success during a worker lease survives its failed completion', () async {
+    final queue = ChapterScanQueue();
+    final job = ScanJob('example', 'senkuro', '1');
+    await queue.reconcile('a', [job]);
+    final lease = (await queue.claim('a', 'senkuro', 1000))!;
+    await queue.recordManualAttempt('a', job, 2000, success: true);
+    await queue.recordManualAttempt('a', job, 3000, success: false);
+    await queue.finish('a', lease, 4000, success: false);
+    expect(await queue.claim('a', 'senkuro', 310000), isNull);
+    expect(await queue.claim('a', 'senkuro', 1802000), isNotNull);
+    expect(await queue.claim('b', 'senkuro', 1802000), isNull);
+  });
 }
