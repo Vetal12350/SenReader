@@ -179,6 +179,10 @@ class ReaderPage extends StatefulWidget {
 
 class _ReaderPageState extends State<ReaderPage> {
   late Future<List<PageImage>> future;
+  // Profile identity is fixed for the lifetime of this route, including
+  // delayed page loading, debounced position writes and disposal.
+  late final String _readerProfile;
+  bool get _sessionActive => widget.library.profileId == _readerProfile;
   final ItemPositionsListener _positions = ItemPositionsListener.create();
   final ItemScrollController _itemScroll = ItemScrollController();
   // Pixel-relative scrolling keeps movement smooth across tall webtoon images.
@@ -263,6 +267,7 @@ class _ReaderPageState extends State<ReaderPage> {
 
   @override void initState() {
     super.initState();
+    _readerProfile = widget.library.profileId;
     unawaited(_restoreReaderSettings());
     _chapters = widget.chapters;
     _activeChapter = widget.chapter;
@@ -290,7 +295,7 @@ class _ReaderPageState extends State<ReaderPage> {
   Future<List<PageImage>> _loadInitialChapter() async {
     final pages = await loadChapterPagesWithRetry(
       widget.repository.sources[widget.sourceKey]!, widget.chapter);
-      if (mounted) {
+      if (mounted && _sessionActive) {
         setState(() {
           _segments.add(_ChapterSegment(widget.chapter, pages));
           // Restored progress proves earlier pages were already traversed.
@@ -309,16 +314,21 @@ class _ReaderPageState extends State<ReaderPage> {
           if (_lastSavedKey == null && _pendingPosition == null) {
             _lastSavedKey = initial.key;
             _saveChain = _saveChain.then((_) async {
+              if (!_sessionActive) return;
               await widget.library.savePosition(widget.book, widget.chapter,
-                widget.sourceKey, pageIndex: page, pageCount: pages.length);
+                widget.sourceKey, pageIndex: page, pageCount: pages.length,
+                expectedProfile: _readerProfile);
               await widget.library.markRead(widget.book, widget.chapter,
-                widget.sourceKey, availableChapters: _chapters);
+                widget.sourceKey, availableChapters: _chapters,
+                expectedProfile: _readerProfile);
               await widget.library.recordLatestChapter(
-                widget.book, widget.sourceKey, _chapters);
+                widget.book, widget.sourceKey, _chapters,
+                expectedProfile: _readerProfile);
             }).catchError((Object _) {});
           } else {
             unawaited(widget.library.markRead(widget.book, widget.chapter,
-              widget.sourceKey, availableChapters: _chapters));
+              widget.sourceKey, availableChapters: _chapters,
+              expectedProfile: _readerProfile));
           }
         }
       }
@@ -343,6 +353,7 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   int get _resumePage {
+    if (!_sessionActive) return 0;
     final saved = widget.library.get(widget.book);
     if (saved == null || saved.lastSource != widget.sourceKey) return 0;
     if (saved.lastChapterId.isNotEmpty) {
@@ -402,7 +413,7 @@ class _ReaderPageState extends State<ReaderPage> {
   /// Only actual forward reading past successfully loaded pages completes
   /// a chapter. Simply opening its last page or an error tile does not.
   void _autoCompletePassedChapters(Iterable<ItemPosition> items) {
-    if (!_hasForwardScrolled || _segments.isEmpty) return;
+    if (!_sessionActive || !_hasForwardScrolled || _segments.isEmpty) return;
     final visible = items.where((item) =>
       item.itemTrailingEdge > 0 && item.itemLeadingEdge < 1).toList();
     if (visible.isEmpty) return;
@@ -448,7 +459,7 @@ class _ReaderPageState extends State<ReaderPage> {
           await _flushPosition();
           if (_manuallyUnreadChapters.contains(chapter.id)) return;
           await widget.library.markRead(widget.book, chapter, widget.sourceKey,
-            availableChapters: _chapters);
+            availableChapters: _chapters, expectedProfile: _readerProfile);
         }).catchError((Object _) {
           // A failed persistence write must not permanently suppress a retry.
           _autoCompletedChapters.remove(chapter.id);
@@ -612,6 +623,7 @@ class _ReaderPageState extends State<ReaderPage> {
     _saveChain = _saveChain.then((_) => widget.library.savePosition(
       widget.book, pending.chapter, widget.sourceKey,
       pageIndex: pending.index, pageCount: pending.total,
+      expectedProfile: _readerProfile,
     )).catchError((Object _) {});
     return _saveChain;
   }
@@ -699,19 +711,21 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _mark() async {
+    if (!_sessionActive) return;
     _saveTimer?.cancel();
     await _flushPosition();
     await widget.library.markRead(widget.book, _activeChapter, widget.sourceKey,
-      availableChapters: _chapters);
+      availableChapters: _chapters, expectedProfile: _readerProfile);
   }
 
   Future<void> _toggleRead() async {
+    if (!_sessionActive) return;
     final chapter = _activeChapter;
     if (widget.library.isChapterRead(widget.book, chapter, widget.sourceKey)) {
       _manuallyUnreadChapters.add(chapter.id);
       await _autoMarkChain;
       await widget.library.unmarkRead(widget.book, chapter, widget.sourceKey,
-        availableChapters: _chapters);
+        availableChapters: _chapters, expectedProfile: _readerProfile);
     } else {
       _manuallyUnreadChapters.remove(chapter.id);
       await _mark();
@@ -719,11 +733,12 @@ class _ReaderPageState extends State<ReaderPage> {
   }
 
   Future<void> _go(Chapter chapter) async {
+    if (!_sessionActive) return;
     _stopAutoScroll();
     if (chapter.id == _activeChapter.id) return;
     _saveTimer?.cancel();
     await _flushPosition();
-    if (!mounted) return;
+    if (!mounted || !_sessionActive) return;
     await Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => ReaderPage(
       book: widget.book, chapter: chapter, sourceKey: widget.sourceKey,
       repository: widget.repository, library: widget.library, chapters: _chapters,
