@@ -59,7 +59,7 @@ class ReadMangaSource implements MangaSource {
   Uri canonicalChapterUri(String path) => _absolute(path);
 
   Future<String> _html(Uri uri) => _client != null ? _htmlOnce(uri) :
-      LocalSourceGate('readmanga').run(() => _htmlOnce(uri));
+      LocalSourceGate.runScoped('readmanga', () => _htmlOnce(uri));
 
   Future<String> _htmlOnce(Uri uri) async {
     if (uri.scheme != 'https' || uri.host != Uri.parse(baseUrl).host) {
@@ -77,8 +77,10 @@ class ReadMangaSource implements MangaSource {
     } catch (e) {
       throw SourceException('Нет соединения с ReadManga ($e)');
     }
-    if (_client == null) await LocalSourceGate('readmanga').response(
-        response.statusCode, response.headers['retry-after']);
+    if (_client == null && LocalSourceGate.isBackgroundScan) {
+      await LocalSourceGate('readmanga').response(
+          response.statusCode, response.headers['retry-after']);
+    }
     if (response.statusCode != 200) {
       throw SourceException('HTTP ${response.statusCode}. Сайт или зеркало недоступны.');
     }
@@ -283,7 +285,8 @@ class ReadMangaSource implements MangaSource {
   /// chapter images are downloaded by this preflight.
   Future<List<int>> _sampleImage(http.Client client, PageImage page) =>
       _client != null ? _sampleImageOnce(client, page) :
-      LocalSourceGate('readmanga').run(() => _sampleImageOnce(client, page));
+      LocalSourceGate.runScoped('readmanga',
+          () => _sampleImageOnce(client, page));
 
   Future<List<int>> _sampleImageOnce(http.Client client, PageImage page) async {
     final uri = Uri.tryParse(page.url);
@@ -296,8 +299,10 @@ class ReadMangaSource implements MangaSource {
       request.headers.addAll(page.headers);
       final response = await client.send(request)
           .timeout(const Duration(seconds: 15));
-      if (_client == null) await LocalSourceGate('readmanga').response(
-          response.statusCode, response.headers['retry-after']);
+      if (_client == null && LocalSourceGate.isBackgroundScan) {
+        await LocalSourceGate('readmanga').response(
+            response.statusCode, response.headers['retry-after']);
+      }
       if (response.statusCode != 200 && response.statusCode != 206) {
         throw SourceException('ReadManga: изображение недоступно (HTTP ${response.statusCode}).');
       }
