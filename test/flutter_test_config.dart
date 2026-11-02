@@ -5,6 +5,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:senreader/data/chapter_inbox_store.dart';
+import 'package:senreader/data/chapter_scan_queue.dart';
 
 Future<void> testExecutable(FutureOr<void> Function() testMain) async {
   sqfliteFfiInit();
@@ -19,10 +20,13 @@ Future<void> testExecutable(FutureOr<void> Function() testMain) async {
     SharedPreferences.setMockInitialValues({});
     // Open real filesystem handles outside testWidgets' fake-async zone.
     await ChapterInboxStore(profileId: '').load();
+    await ChapterScanQueue().database();
     addTearDown(() async {
       await databaseFactory.deleteDatabase(ChapterInboxStore.databasePathOverride!);
+      await databaseFactory.deleteDatabase('${ChapterInboxStore.databasePathOverride}.queue');
       await dir.delete(recursive: true);
     });
   });
   await testMain();
 }
+

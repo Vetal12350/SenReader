@@ -404,8 +404,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         item.lastSource == item.preferredSource &&
         item.status == 'reading').toList()
       ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
-    // All 68+ saved titles can have discovered updates, even if Home only
-    // performs network checks on its 12 most-recently-read titles.
+    // Home renders durable inbox results; network discovery uses the fair queue.
     final inbox = await ChapterInboxStore().load();
     if (!mounted || request != _suggestionRequest) return;
     final suggestions = unreadInboxSuggestions(saved, inbox);
@@ -420,49 +419,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     }
     setState(() { _newChapters..clear()..addAll(suggestions); });
 
-    final now = DateTime.now();
-    if (!force && _lastSuggestionsRefreshAt != null &&
-        now.difference(_lastSuggestionsRefreshAt!) <
-            const Duration(minutes: 15)) return;
-    _lastSuggestionsRefreshAt = now;
-    // Home network discovery is intentionally bounded to avoid bursts.
-    // Local notifications already cover the rest of the library.
-    for (var i = 0; i < saved.length && i < 12; i += 2) {
-      final verified = <(SavedBook, List<Chapter>)>[];
-      await Future.wait(saved.skip(i).take(2).map((item) async {
-        final entry = item.entries[item.preferredSource];
-        final source = widget.repository.sources[item.preferredSource];
-        if (entry == null || source == null) return;
-        try {
-          final detail = await source.detail(entry);
-          verified.add((item, detail.chapters));
-          final fresh = nextAvailableChapter(item, detail.chapters);
-          final current = widget.library.get(item.toUnified());
-          if (fresh != null && current != null &&
-              current.status == 'reading' &&
-              current.preferredSource == item.preferredSource &&
-              current.lastChapterId == item.lastChapterId &&
-              current.lastSource == item.lastSource) {
-            final previous = suggestions[item.key];
-            if (previous == null ||
-                (compareChapterChronology(fresh, previous) ?? 1) < 0) {
-              suggestions[item.key] = fresh;
-            }
-          }
-        } catch (_) {
-          // Network failures never produce false-positive suggestions.
-        }
-      }));
-      if (!mounted || request != _suggestionRequest) return;
-      // Serialize local SharedPreferences writes to protect progress.
-      for (final (item, chapters) in verified) {
-        await widget.library.recordLatestChapter(
-            item.toUnified(), item.preferredSource, chapters);
-      }
-    }
-    if (mounted && request == _suggestionRequest) {
-      setState(() { _newChapters..clear()..addAll(suggestions); });
-    }
+
   }
 
   void _onSearch(String value) {
@@ -1120,3 +1077,4 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     );
   }
 }
+

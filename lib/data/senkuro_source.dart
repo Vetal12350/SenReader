@@ -1,3 +1,4 @@
+import 'local_source_gate.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
@@ -322,7 +323,8 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
 
   Future<Map<String, dynamic>> _gql(String operation, String query,
       Map<String, dynamic> variables) =>
-      _requestGate.run(() => _gqlOnce(operation, query, variables));
+      _client != null ? _requestGate.run(() => _gqlOnce(operation, query, variables)) :
+      LocalSourceGate('senkuro').run(() => _gqlOnce(operation, query, variables));
 
   Future<Map<String, dynamic>> _gqlOnce(String operation, String query,
       Map<String, dynamic> variables) async {
@@ -341,6 +343,8 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
           })
         ..body = jsonEncode({'operationName': operation, 'query': query, 'variables': variables});
       final response = await client.send(request).timeout(_timeout);
+      if (_client == null) await LocalSourceGate('senkuro').response(
+          response.statusCode, response.headers['retry-after']);
       // Reject oversized/failed responses before opening a stream iterator.
       // Cancelling an iterator which was never subscribed can await forever.
       if (response.statusCode == 429) {
@@ -637,3 +641,4 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
     return result;
   }
 }
+

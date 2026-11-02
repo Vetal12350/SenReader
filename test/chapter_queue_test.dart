@@ -1,0 +1,78 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:senreader/core/models.dart';
+import 'package:senreader/data/chapter_scan_queue.dart';
+import 'package:senreader/data/local_source_gate.dart';
+import 'package:senreader/data/catalog_repository.dart';
+import 'package:senreader/data/chapter_checker.dart';
+import 'package:senreader/data/library_store.dart';
+import 'chapter_checker_test.dart' show FakeSource;
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+  for (final count in [70, 200]) {
+    test('$count jobs survive restart, interruption and retain equal turns', () async {
+      final jobs = [for (var i = 0; i < count; i++) ScanJob('book$i', 'senkuro', '$i')];
+      final q = ChapterScanQueue();
+      await q.reconcile('a', jobs);
+      final visited = <String>{};
+      final abandoned = (await q.claim('a', 'senkuro', 1000))!;
+      visited.add(abandoned.job.key);
+      for (var i = 1; i < count; i++) {
+        final next = (await ChapterScanQueue().claim('a', 'senkuro', 1000 + i))!;
+        expect(visited.add(next.job.key), isTrue);
+        await q.finish('a', next, 1000 + i, success: true);
+      }
+      expect(await q.claim('a', 'senkuro', 2000), isNull);
+      final retry = (await q.claim('a', 'senkuro', 302000))!;
+      expect(retry.job.key, abandoned.job.key);
+      await q.finish('a', abandoned, 302001, success: true); // stale owner
+      expect(await q.claim('a', 'senkuro', 302002), isNull);
+      expect(visited.length, count);
+    });
+  }
+  test('budget replaces count cap; next run continues with remaining books', () async {
+    final source = FakeSource('senkuro')
+      ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final library = LibraryStore();
+    await library.load();
+    for (var i = 0; i < 70; i++) {
+      await library.setStatus(UnifiedManga(title: 'Book $i', entries: {
+        source.key: MangaEntry(source: source.key, id: '$i', title: 'Book $i'),
+      }), 'reading');
+    }
+    var done = 0;
+    final checker = ChapterChecker(repository: CatalogRepository(sources: {
+      source.key: source}), library: library,
+      elapsed: () => Duration(seconds: done), afterPair: () async { done++; });
+    expect((await checker.check(smartSchedule: true,
+      budget: const Duration(seconds: 20))).checkedSources, 20);
+    final next = await ChapterChecker(repository: checker.repository,
+      library: library).check(smartSchedule: true);
+    expect(next.checkedSources, 50);
+    expect(source.detailCalls, 70);
+  });
+  test('429 cooldown survives restart and UID switch; other provider remains eligible', () async {
+    final q = ChapterScanQueue();
+    final db = await q.database();
+    await q.reconcile('a', [ScanJob('x', 'senkuro', '1'), ScanJob('x', 'readmanga', '1')]);
+    await q.reconcile('b', [ScanJob('x', 'senkuro', '1')]);
+    await db.insert('providers', {'source': 'senkuro'});
+    await LocalSourceGate('senkuro').response(429, '3600');
+    final now = DateTime.now().millisecondsSinceEpoch;
+    expect(await ChapterScanQueue().claim('a', 'senkuro', now), isNull);
+    expect(await ChapterScanQueue().claim('b', 'senkuro', now), isNull);
+    expect(await q.claim('a', 'readmanga', now), isNotNull);
+  });
+  test('offline retries preserve queue and profile isolation without OS permissions', () async {
+    final q = ChapterScanQueue();
+    await q.reconcile('', [ScanJob('x', 'readmanga', '1')]);
+    await q.reconcile('uid', [ScanJob('x', 'readmanga', '1')]);
+    final job = (await q.claim('', 'readmanga', 1000))!;
+    await q.finish('', job, 1000, success: false);
+    expect(await q.claim('', 'readmanga', 2000), isNull);
+    expect(await q.claim('uid', 'readmanga', 2000), isNotNull);
+    expect(await q.claim('', 'readmanga', 302000), isNotNull);
+  });
+}
