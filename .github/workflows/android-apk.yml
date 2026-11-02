@@ -97,25 +97,9 @@ jobs:
           fi
       - name: Build debug APK
         run: flutter build apk --debug --dart-define-from-file=firebase-build-flags.json
-      - name: Build persistently signed release APK
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && env.SENREADER_STABLE_SIGNING == 'true'
-        run: flutter build apk --release --build-number "$GITHUB_RUN_NUMBER" --dart-define-from-file=firebase-build-flags.json
-      - name: Publish APK artifact
-        # PRs only need tests + build verification; their ephemeral debug APKs
-        # cannot update installed signed releases and waste artifact quota.
-        # Main keeps its existing signed-APK publishing pipeline unchanged.
-        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-        uses: actions/upload-artifact@v4
-        with:
-          name: SenReader-debug-APK
-          path: |
-            build/app/outputs/flutter-apk/app-debug.apk
-            build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: error
-          retention-days: 1
-
-  # Run with elevated permissions ONLY after the build+tests succeed on main.
-  # Pull-request code never receives a write-capable token.
+  # This job is main-only, after successful read-only test/build verification.
+  # No Actions artifacts: publish a signed APK directly to GitHub Releases,
+  # even when the temporary Actions artifact storage quota is exhausted.
   publish-direct-apk:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: build
@@ -123,33 +107,87 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Download verified APK from this workflow
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
         with:
-          name: SenReader-debug-APK
-          path: apk
-      - name: Publish direct APK link (no ZIP required)
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Android wrapper
+        run: |
+          flutter create --project-name senreader --org app.senreader --platforms android .
+          rm -f test/widget_test.dart
+      - name: Require existing persistent release signing
+        env:
+          SIGNING_KEY: ${{ secrets.SENREADER_SIGNING_KEY_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SENREADER_SIGNING_STORE_PASSWORD }}
+          SIGNING_ALIAS: ${{ secrets.SENREADER_SIGNING_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SENREADER_SIGNING_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$SIGNING_KEY" || -z "$SIGNING_STORE_PASSWORD" || -z "$SIGNING_ALIAS" || -z "$SIGNING_KEY_PASSWORD" ]]; then
+            echo 'Persistent signing secrets are not configured; refusing an incompatible APK.' >&2
+            exit 1
+          fi
+          printf '%s' "$SIGNING_KEY" | base64 --decode > android/app/senreader-upload.jks
+          chmod 600 android/app/senreader-upload.jks
+          {
+            printf 'storeFile=senreader-upload.jks\n'
+            printf 'storePassword=%s\n' "$SIGNING_STORE_PASSWORD"
+            printf 'keyAlias=%s\n' "$SIGNING_ALIAS"
+            printf 'keyPassword=%s\n' "$SIGNING_KEY_PASSWORD"
+          } > android/key.properties
+          chmod 600 android/key.properties
+      - name: Prepare Android manifest and signing
+        run: python3 scripts/prepare_android.py
+      - name: Install packages
+        run: flutter pub get
+      - name: Configure optional Firebase client identifiers
+        shell: bash
+        env:
+          FIREBASE_API_KEY: ${{ vars.SENREADER_FIREBASE_API_KEY }}
+          FIREBASE_APP_ID: ${{ vars.SENREADER_FIREBASE_APP_ID }}
+          FIREBASE_PROJECT_ID: ${{ vars.SENREADER_FIREBASE_PROJECT_ID }}
+          FIREBASE_SENDER_ID: ${{ vars.SENREADER_FIREBASE_SENDER_ID }}
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.SENREADER_GOOGLE_WEB_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          echo '{}' > firebase-build-flags.json
+          if [[ -n "$FIREBASE_API_KEY" && -n "$FIREBASE_APP_ID" && -n "$FIREBASE_PROJECT_ID" && -n "$FIREBASE_SENDER_ID" ]]; then
+            python3 - <<'PY'
+          import json, os
+          names = ['FIREBASE_API_KEY', 'FIREBASE_APP_ID', 'FIREBASE_PROJECT_ID', 'FIREBASE_SENDER_ID', 'GOOGLE_WEB_CLIENT_ID']
+          data = {'SENREADER_' + key: os.environ.get(key, '') for key in names[:4]}
+          data['SENREADER_GOOGLE_WEB_CLIENT_ID'] = os.environ.get('GOOGLE_WEB_CLIENT_ID', '')
+          with open('firebase-build-flags.json', 'w') as stream:
+              json.dump(data, stream)
+          PY
+          elif [[ -n "$FIREBASE_API_KEY" || -n "$FIREBASE_APP_ID" || -n "$FIREBASE_PROJECT_ID" || -n "$FIREBASE_SENDER_ID" ]]; then
+            echo 'Partial Firebase configuration: refusing partial cloud mode.' >&2
+            exit 1
+          fi
+      - name: Build signed release APK
+        run: flutter build apk --release --build-number "$GITHUB_RUN_NUMBER" --dart-define-from-file=firebase-build-flags.json
+      - name: Publish signed APK directly (without Actions artifacts)
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           set -euo pipefail
-          test -s apk/app-debug.apk
-          cp apk/app-debug.apk SenReader-latest-debug.apk
-          if [[ -s apk/app-release.apk ]]; then
-            cp apk/app-release.apk SenReader-latest.apk
-          fi
+          test -s build/app/outputs/flutter-apk/app-release.apk
+          cp build/app/outputs/flutter-apk/app-release.apk SenReader-latest.apk
           if ! gh release view qa-latest >/dev/null 2>&1; then
             gh release create qa-latest --target "$GITHUB_SHA" \
-              --title "SenReader Android QA (прямая загрузка)" \
-              --notes "Тестовая Android-сборка. Подпись debug-APK может отличаться между запусками. Не удаляйте установленное приложение без резервной копии данных." \
+              --title "SenReader Android QA (подписанная сборка)" \
+              --notes "Подписанная сборка: $GITHUB_SHA. Устанавливайте поверх ранее подписанного APK. Перед обновлением сохраните резервную копию." \
               --prerelease
           fi
-          gh release upload qa-latest SenReader-latest-debug.apk --clobber
-          if [[ -s SenReader-latest.apk ]]; then
-            gh release upload qa-latest SenReader-latest.apk --clobber
-            gh release edit qa-latest --notes "Подписанная постоянным ключом release-сборка main, commit: ${GITHUB_SHA}. Прямая ссылка: SenReader-latest.apk. Первое обновление с ранее установленного debug APK всё равно требует миграции данных; не удаляйте приложение без проверенной резервной копии."
-          else
-            gh release edit qa-latest --notes "Проверенная debug-сборка main, commit: ${GITHUB_SHA}. Постоянный ключ пока не настроен. Не удаляйте установленную версию без резервной копии; эта debug-сборка может не обновить предыдущую."
-          fi
+          gh release upload qa-latest SenReader-latest.apk --clobber
+          gh release edit qa-latest \
+            --title "SenReader Android QA (подписанная сборка)" \
+            --notes "Подписанная сборка main, commit: $GITHUB_SHA. Скачайте SenReader-latest.apk; при ошибке несовместимости подписи не удаляйте установленную версию без резервной копии."
