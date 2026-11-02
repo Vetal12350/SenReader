@@ -65,19 +65,36 @@ class ChapterInboxStore {
     final prefs = await SharedPreferences.getInstance();
     await prefs.reload();
     final raw = prefs.getString(key);
-    if (raw != null) {
-      await db.transaction((txn) async {
-        if ((await txn.query('migration', where: 'id = ?',
-            whereArgs: ['legacy-v1'])).isNotEmpty) return;
-        final decoded = jsonDecode(raw);
-        if (decoded is! List) throw const FormatException('Invalid legacy inbox');
-        for (final value in decoded.whereType<Map>()) {
-          final entry = InboxEntry.fromJson(Map<String, dynamic>.from(value));
-          if (entry.bookKey.isEmpty || entry.key.isEmpty) continue;
-          await _insert(txn, '', entry, claimed: 1);
-        }
-        await txn.insert('migration', {'id': 'legacy-v1'});
-      });
+    // A corrupt legacy preference must never prevent a fresh SQLite inbox
+    // from working for guest or authenticated profiles. Preserve the original
+    // value untouched so it can still be recovered from a backup.
+    if (raw != null && raw.length <= 1000000) {
+      List<dynamic>? legacy;
+      try {
+        final value = jsonDecode(raw);
+        if (value is List) legacy = value;
+      } on FormatException {
+        // Old v1 data is malformed; keep using the new inbox normally.
+      }
+      if (legacy != null) {
+        await db.transaction((txn) async {
+          if ((await txn.query('migration', where: 'id = ?',
+              whereArgs: ['legacy-v1'])).isNotEmpty) return;
+          for (final value in legacy!.whereType<Map>()) {
+            try {
+              final entry = InboxEntry.fromJson(
+                  Map<String, dynamic>.from(value));
+              if (entry.bookKey.isEmpty || entry.key.isEmpty) continue;
+              await _insert(txn, '', entry, claimed: 1);
+            } on TypeError {
+              // Skip only the invalid row, preserving valid legacy updates.
+            } on FormatException {
+              // A bad legacy row must not block the entire inbox.
+            }
+          }
+          await txn.insert('migration', {'id': 'legacy-v1'});
+        });
+      }
     }
     return db;
   }
