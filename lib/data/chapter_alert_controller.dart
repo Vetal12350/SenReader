@@ -27,18 +27,30 @@ class ChapterAlertController {
     }
   }
 
+  /// Enable/disable background discovery for the internal inbox. This does
+  /// not request the Android notification permission.
   Future<bool> setEnabled(bool enabled) async {
     await preferences.setOfferShown();
-    // Fail closed on denial or a plugin/scheduler failure.
-    await preferences.setEnabled(false);
+    await preferences.setEnabled(enabled);
     try {
-      final allowed = enabled && await _requestPermission();
-      await preferences.setEnabled(allowed);
       await _sync();
-      return allowed;
+      return enabled;
     } catch (_) {
-      await preferences.setEnabled(false);
+      // Keep the settings honest if Android task registration failed.
+      if (enabled) await preferences.setEnabled(false);
       rethrow;
     }
+  }
+
+  /// OS notification permission is needed only when the user explicitly asks
+  /// for external notifications; rejecting it must not disable the in-app inbox.
+  Future<bool> setSystemNotificationsEnabled(bool enabled) async {
+    if (!enabled) {
+      await preferences.setSystemNotificationsEnabled(false);
+      return false;
+    }
+    final allowed = await _requestPermission();
+    await preferences.setSystemNotificationsEnabled(allowed);
+    return allowed;
   }
 }

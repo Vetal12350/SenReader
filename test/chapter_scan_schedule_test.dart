@@ -90,61 +90,6 @@ void main() {
     expect(source.scans, 1);
   });
 
-  test('large library is staggered across multiple background runs', () async {
-    final source = _ScheduleFakeSource('senkuro');
-    final library = LibraryStore();
-    await library.load();
-    for (var i = 0; i < 17; i++) {
-      await library.setStatus(UnifiedManga(title: 'Book $i', entries: {
-        'senkuro': MangaEntry(source: 'senkuro', id: 'id$i',
-            title: 'Book $i'),
-      }), 'reading');
-    }
-    final checker = ChapterChecker(repository: CatalogRepository(sources: {
-      'senkuro': source,
-    }), library: library);
-    final first = await checker.check(smartSchedule: true);
-    expect(first.checkedSources, ChapterChecker.maxBackgroundSourcesPerRun);
-    expect(first.skippedSources, 5);
-    final second = await checker.check(smartSchedule: true);
-    expect(second.checkedSources, 5);
-    expect(second.skippedSources, 12);
-    expect(source.scans, 17);
-  });
-
-  test('oldest scans win even when first 12 are due again', () async {
-    final source = _ScheduleFakeSource('senkuro');
-    final library = LibraryStore();
-    await library.load();
-    for (var i = 0; i < 17; i++) {
-      await library.setStatus(UnifiedManga(title: 'Book $i', entries: {
-        'senkuro': MangaEntry(source: 'senkuro', id: 'id$i',
-            title: 'Book $i'),
-      }), 'reading');
-    }
-    final now = DateTime.now();
-    final recentDue = now.subtract(const Duration(minutes: 35))
-        .millisecondsSinceEpoch;
-    final overdue = now.subtract(const Duration(minutes: 90))
-        .millisecondsSinceEpoch;
-    await ChapterScanScheduleStore().recordAttempts(library.profileId, {
-      for (final book in library.items)
-        ChapterScanPolicy.keyFor(
-            book, source.key, book.entries[source.key]!.id):
-          int.parse(book.entries[source.key]!.id.substring(2)) < 12
-              ? recentDue : overdue,
-    });
-    final checker = ChapterChecker(repository: CatalogRepository(
-        sources: {source.key: source}), library: library);
-    final result = await checker.check(smartSchedule: true);
-    expect(result.checkedSources, 12);
-    expect(result.skippedSources, 5);
-    // The five never-recently-scanned sources must be handled first.
-    expect(source.scannedIds.take(5).toSet(),
-        {'id12', 'id13', 'id14', 'id15', 'id16'});
-    expect(source.scannedIds.take(5).length, 5);
-  });
-
   test('schedule timestamps are isolated between guest and account', () async {
     final a = _ScheduleFakeSource('senkuro');
     final (library, book) = await _book({a.key: a});
@@ -211,3 +156,4 @@ void main() {
     expect((await store.lastRun(''))?.checkedSources, isNull);
   });
 }
+

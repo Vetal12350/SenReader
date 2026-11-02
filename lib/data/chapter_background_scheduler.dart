@@ -27,8 +27,18 @@ Future<void> _performSmartScan({bool foreground = false}) async {
   await library.load();
   if (library.profileId != profile) return;
   if (report.discoveries.isNotEmpty) {
-    await ChapterNotificationService.instance.initialize(captureTaps: foreground);
-    await ChapterNotificationService.instance.postNewChapters(report.discoveries);
+    // Local inbox delivery is independent of the Android notifications plugin.
+    // A plugin initialization error must not lose discovered chapters.
+    if (await prefs.systemNotificationsEnabled()) {
+      try {
+        await ChapterNotificationService.instance.initialize(
+            captureTaps: foreground);
+      } catch (_) {
+        // Continue to persist the in-app updates even without system alerts.
+      }
+    }
+    await ChapterNotificationService.instance.postNewChapters(
+        report.discoveries);
   }
   await ChapterScanScheduleStore().recordRun(profile,
       ChapterBackgroundScanSummary(
@@ -78,7 +88,15 @@ class ChapterBackgroundScheduler {
     }
     _catchUpActive = true;
     try {
-      await _performSmartScan(foreground: true);
+      // Let WorkManager's background isolate perform parsing and database work.
+      // First-frame rendering never waits for a scan or its network requests.
+      await initialize();
+      await Workmanager().registerOneOffTask(
+        'senreader.chapter-catchup.unique', chapterCheckWork,
+        existingWorkPolicy: ExistingWorkPolicy.keep,
+        constraints: Constraints(networkType: NetworkType.connected,
+          requiresBatteryNotLow: true),
+      );
     } catch (_) {
       // Background work must not interfere with the foreground reader.
     } finally {
@@ -105,3 +123,4 @@ class ChapterBackgroundScheduler {
     );
   }
 }
+

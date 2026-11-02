@@ -1,0 +1,32 @@
+import 'dart:async';
+import 'dart:io';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite/sqflite.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:senreader/data/chapter_inbox_store.dart';
+import 'package:senreader/data/chapter_scan_queue.dart';
+
+Future<void> testExecutable(FutureOr<void> Function() testMain) async {
+  sqfliteFfiInit();
+  // Keep native database calls on this test isolate so widget-test fake
+  // clocks do not wait on an unrelated FFI helper isolate. Production uses
+  // Android sqflite; SQL constraints/transactions are exercised unchanged.
+  databaseFactory = databaseFactoryFfiNoIsolate;
+  setUp(() async {
+    final dir = await Directory.systemTemp.createTemp('senreader-inbox-test-');
+    ChapterInboxStore.databasePathOverride = '${dir.path}/inbox.db';
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues({});
+    // Open real filesystem handles outside testWidgets' fake-async zone.
+    await ChapterInboxStore(profileId: '').load();
+    await ChapterScanQueue().database();
+    addTearDown(() async {
+      await databaseFactory.deleteDatabase(ChapterInboxStore.databasePathOverride!);
+      await databaseFactory.deleteDatabase('${ChapterInboxStore.databasePathOverride}.queue');
+      await dir.delete(recursive: true);
+    });
+  });
+  await testMain();
+}
+

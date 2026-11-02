@@ -133,12 +133,37 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   }
 
   int _newUpdateCount = 0;
-  Future<void> _refreshInboxCount() async {
-    final entries = await ChapterInboxStore().load();
-    if (mounted) {
-      setState(() => _newUpdateCount = entries.where((e) => !e.hidden).length);
-      if (tab == 0) unawaited(_refreshNewChapters());
+  Timer? _inboxRefreshTimer;
+  bool _isInForeground = true;
+  bool _inboxPollInFlight = false;
+
+  /// The WorkManager isolate writes SQLite without notifying Flutter widgets.
+  /// Re-read local results while the user watches Home or New Chapters.
+  /// This performs no network requests and does not start a new scan.
+  Future<void> _pollChapterInbox() async {
+    if (!mounted || !_isInForeground || _inboxPollInFlight ||
+        (tab != 0 && tab != 3)) return;
+    _inboxPollInFlight = true;
+    try {
+      await _refreshInboxCount();
+    } catch (_) {
+      // A transient database error must not interrupt normal reading.
+    } finally {
+      _inboxPollInFlight = false;
     }
+  }
+
+  Future<void> _refreshInboxCount() async {
+    final profile = widget.library.profileId;
+    final entries = await ChapterInboxStore(profileId: profile).load();
+    if (!mounted || widget.library.profileId != profile) return;
+    final count = entries.where((e) => !e.hidden).length;
+    if (count != _newUpdateCount) {
+      setState(() => _newUpdateCount = count);
+    }
+    // On Home, reload the local latest chapter identities too: even if an
+    // entry was replaced or archived, the unread count may be unchanged.
+    if (tab == 0) await _refreshNewChapters();
   }
 
   String libraryFilter = 'all';
@@ -209,21 +234,25 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     _fetch();
     if (tab == 2) unawaited(_refreshLibraryRatings());
     unawaited(_refreshInboxCount());
+    _inboxRefreshTimer = Timer.periodic(const Duration(seconds: 20),
+        (_) => unawaited(_pollChapterInbox()));
     ChapterNotificationService.instance.openedPayload.addListener(_onNotificationTap);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onNotificationTap());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    _isInForeground = state == AppLifecycleState.resumed;
+    if (_isInForeground) {
       unawaited(ChapterBackgroundScheduler.checkOnResume());
-      if (tab == 0) unawaited(_refreshNewChapters());
+      unawaited(_pollChapterInbox());
     }
   }
 
   @override void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     debounce?.cancel();
+    _inboxRefreshTimer?.cancel();
     mainTabRequest.removeListener(_onMainTabRequest);
     ChapterNotificationService.instance.openedPayload.removeListener(_onNotificationTap);
     searchController.dispose();
@@ -404,10 +433,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         item.lastSource == item.preferredSource &&
         item.status == 'reading').toList()
       ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
-    // All 68+ saved titles can have discovered updates, even if Home only
-    // performs network checks on its 12 most-recently-read titles.
-    final inbox = await ChapterInboxStore().load();
-    if (!mounted || request != _suggestionRequest) return;
+    // Home renders durable inbox results; network discovery uses the fair queue.
+    final profile = widget.library.profileId;
+    final inbox = await ChapterInboxStore(profileId: profile).load();
+    if (!mounted || request != _suggestionRequest ||
+        profile != widget.library.profileId) return;
     final suggestions = unreadInboxSuggestions(saved, inbox);
     for (final item in saved) {
       final cached = eligibleNewChapter(item, _newChapters[item.key]);
@@ -420,49 +450,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     }
     setState(() { _newChapters..clear()..addAll(suggestions); });
 
-    final now = DateTime.now();
-    if (!force && _lastSuggestionsRefreshAt != null &&
-        now.difference(_lastSuggestionsRefreshAt!) <
-            const Duration(minutes: 15)) return;
-    _lastSuggestionsRefreshAt = now;
-    // Home network discovery is intentionally bounded to avoid bursts.
-    // Local notifications already cover the rest of the library.
-    for (var i = 0; i < saved.length && i < 12; i += 2) {
-      final verified = <(SavedBook, List<Chapter>)>[];
-      await Future.wait(saved.skip(i).take(2).map((item) async {
-        final entry = item.entries[item.preferredSource];
-        final source = widget.repository.sources[item.preferredSource];
-        if (entry == null || source == null) return;
-        try {
-          final detail = await source.detail(entry);
-          verified.add((item, detail.chapters));
-          final fresh = nextAvailableChapter(item, detail.chapters);
-          final current = widget.library.get(item.toUnified());
-          if (fresh != null && current != null &&
-              current.status == 'reading' &&
-              current.preferredSource == item.preferredSource &&
-              current.lastChapterId == item.lastChapterId &&
-              current.lastSource == item.lastSource) {
-            final previous = suggestions[item.key];
-            if (previous == null ||
-                (compareChapterChronology(fresh, previous) ?? 1) < 0) {
-              suggestions[item.key] = fresh;
-            }
-          }
-        } catch (_) {
-          // Network failures never produce false-positive suggestions.
-        }
-      }));
-      if (!mounted || request != _suggestionRequest) return;
-      // Serialize local SharedPreferences writes to protect progress.
-      for (final (item, chapters) in verified) {
-        await widget.library.recordLatestChapter(
-            item.toUnified(), item.preferredSource, chapters);
-      }
-    }
-    if (mounted && request == _suggestionRequest) {
-      setState(() { _newChapters..clear()..addAll(suggestions); });
-    }
+
   }
 
   void _onSearch(String value) {
@@ -1120,3 +1108,4 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     );
   }
 }
+

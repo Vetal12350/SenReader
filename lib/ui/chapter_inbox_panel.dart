@@ -1,6 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../core/chapter_identity.dart';
-import '../core/title_matching.dart';
 import '../data/catalog_repository.dart';
 import '../data/chapter_checker.dart';
 import '../data/chapter_inbox_store.dart';
@@ -20,7 +20,11 @@ class ChapterInboxPanel extends StatefulWidget {
 }
 
 class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
-  final ChapterInboxStore _store = ChapterInboxStore();
+  Timer? _poll;
+  bool _refreshing = false;
+  String? _displayedProfile;
+  ChapterInboxStore get _store => ChapterInboxStore(
+      profileId: _displayedProfile ?? widget.library.profileId);
   List<InboxEntry> entries = const [];
   bool hidden = false;
   bool loading = true;
@@ -28,13 +32,60 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
   String? error;
   String? lastScanSummary;
   List<String> lastScanDetails = const [];
-  @override void initState() { super.initState(); _refresh(); }
+  @override void initState() {
+    super.initState();
+    _displayedProfile = widget.library.profileId;
+    widget.library.addListener(_libraryChanged);
+    // The worker writes SQLite from another isolate; refresh local data
+    // without making network requests or rebuilding the list unnecessarily.
+    _poll = Timer.periodic(const Duration(seconds: 8), (_) => _refresh());
+    _refresh();
+  }
+  void _libraryChanged() {
+    if (!mounted || _displayedProfile == widget.library.profileId) return;
+    // LibraryStore notifies after every scan save/load. Only an actual UID
+    // switch should trigger a full SQLite inbox reload; otherwise large
+    // background scans would create hundreds of redundant refreshes.
+    setState(() {
+      _displayedProfile = widget.library.profileId;
+      entries = const [];
+      loading = true;
+      lastScanSummary = null;
+    });
+    _refresh();
+  }
+  @override void dispose() {
+    _poll?.cancel();
+    widget.library.removeListener(_libraryChanged);
+    super.dispose();
+  }
   Future<void> _refresh() async {
-    final next = await _store.load();
-    if (mounted) {
-      setState(() { entries = next; loading = false; });
-      widget.onChanged?.call();
+    if (_refreshing) return;
+    _refreshing = true;
+    try {
+    final profile = widget.library.profileId;
+    final next = await ChapterInboxStore(profileId: profile).load();
+    if (mounted && widget.library.profileId == profile) {
+      var changed = loading || _displayedProfile != profile ||
+          next.length != entries.length;
+      if (!changed) {
+        for (var i = 0; i < next.length; i++) {
+          if (next[i].key != entries[i].key ||
+              next[i].hiddenAt != entries[i].hiddenAt ||
+              next[i].chapterName != entries[i].chapterName) {
+            changed = true;
+            break;
+          }
+        }
+      }
+      if (changed) {
+        setState(() {
+          _displayedProfile = profile; entries = next; loading = false;
+        });
+        widget.onChanged?.call();
+      }
     }
+      } finally { _refreshing = false; }
   }
 
   Future<void> _check() async {
@@ -44,11 +95,6 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
       await widget.library.load();
       final report = await ChapterChecker(repository: widget.repository,
         library: widget.library).check(diagnostics: true);
-      for (final discovery in report.discoveries) {
-        await _store.add(normalizedTitle(discovery.book.title),
-          discovery.book.title, discovery.book.coverUrl,
-          discovery.sourceKey, discovery.chapter);
-      }
       if (mounted) setState(() {
         lastScanSummary = 'Проверено книг: ${report.checkedTitles}, '
             'новых глав: ${report.discoveries.length}, '
@@ -220,3 +266,5 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     ]);
   }
 }
+
+

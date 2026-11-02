@@ -84,12 +84,21 @@ class ChapterNotificationService {
     return value & 0x7fffffff;
   }
 
-  Future<int> postNewChapters(List<ChapterDiscovery> releases) async {
-    if (!await ChapterAlertPreferences().enabled()) return 0;
-    // Keep the app's own inbox even if Android permission was revoked after
-    // notification scheduling. A successful scan must not silently consume
-    // an update with no visible record.
-    final canPostSystemNotification = await hasPermission();
+  Future<int> postNewChapters(List<ChapterDiscovery> releases,
+      {ChapterAlertPreferences? preferences,
+       Future<bool> Function()? permissionCheck}) async {
+    final prefs = preferences ?? ChapterAlertPreferences();
+    if (!await prefs.enabled()) return 0;
+    // Internal storage is mandatory. Android permission only controls optional
+    // system alerts and must never prevent delivery to the app's own inbox.
+    var canPostSystemNotification = false;
+    if (await prefs.systemNotificationsEnabled()) {
+      try {
+        canPostSystemNotification = await (permissionCheck ?? hasPermission)();
+      } catch (_) {
+        // Plugin/permission errors must not block internal updates.
+      }
+    }
     var posted = 0;
     for (final release in releases) {
       // A source may have changed while the checker or Android was waiting.
@@ -98,27 +107,36 @@ class ChapterNotificationService {
       final saved = library.get(release.book);
       if (saved == null || saved.status != 'reading' ||
           !saved.entries.containsKey(release.sourceKey) ||
-          !await ChapterAlertPreferences().enabled()) continue;
-      await ChapterInboxStore().add(normalizedTitle(release.book.title),
+          (release.profileId != null && release.profileId != library.profileId) ||
+          !await prefs.enabled()) continue;
+      final inbox = ChapterInboxStore(profileId: library.profileId);
+      await inbox.add(normalizedTitle(release.book.title),
         release.book.title, release.book.coverUrl,
         release.sourceKey, release.chapter);
       if (!canPostSystemNotification) continue;
-      await _plugin.show(
-        id: notificationId(release),
-        title: release.book.title,
-        body: release.chapter.name,
-        notificationDetails: const NotificationDetails(
-          android: AndroidNotificationDetails(
-            'senreader_new_chapters', 'Новые главы',
-            channelDescription: 'Новые доступные главы манги и манхвы из избранного',
-            importance: Importance.defaultImportance,
-            priority: Priority.defaultPriority,
+      if (!await inbox.claimSystemNotification(normalizedTitle(release.book.title),
+          release.chapter, release.sourceKey)) continue;
+      try {
+        await _plugin.show(
+          id: notificationId(release),
+          title: release.book.title,
+          body: release.chapter.name,
+          notificationDetails: const NotificationDetails(
+            android: AndroidNotificationDetails(
+              'senreader_new_chapters', 'Новые главы',
+              channelDescription: 'Новые доступные главы манги и манхвы из избранного',
+              importance: Importance.defaultImportance,
+              priority: Priority.defaultPriority,
+            ),
           ),
-        ),
-        payload: encodePayload(release),
-      );
-      posted++;
+          payload: encodePayload(release),
+        );
+        posted++;
+      } catch (_) {
+        // The chapter is already durably saved in the internal inbox.
+      }
     }
     return posted;
   }
 }
+
