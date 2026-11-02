@@ -405,8 +405,11 @@ class ChapterChecker {
         final pairWatch = Stopwatch()..start();
         final report = await runZoned(() => check(diagnostics: diagnostics,
           onlyBook: lease.job.book, onlySource: source).timeout(slice),
-          zoneValues: {LocalSourceGate.deadlineKey:
-            () => pairWatch.elapsed >= slice || spent() >= budget});
+          zoneValues: {
+            LocalSourceGate.backgroundScanKey: true,
+            LocalSourceGate.deadlineKey:
+                () => pairWatch.elapsed >= slice || spent() >= budget,
+          });
         checked += report.checkedSources;
         found.addAll(report.discoveries);
         warnings.addAll(report.warnings);
