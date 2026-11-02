@@ -322,8 +322,12 @@ class LibraryStore extends ChangeNotifier {
   bool has(UnifiedManga book) => _books.containsKey(normalizedTitle(book.title));
   SavedBook? get(UnifiedManga book) => _books[normalizedTitle(book.title)];
 
-  Future<void> _save({bool fromCloud = false}) async {
+  Future<void> _save({bool fromCloud = false, String? expectedProfile}) async {
     final prefs = await SharedPreferences.getInstance();
+    // Reader work may resume after a Google account switch.
+    if (expectedProfile != null && profileId != expectedProfile) return;
+    final savedStorageKey = _storageKey;
+    final savedDeletedKey = _deletedKey;
     if (!fromCloud) {
       var clock = DateTime.now().microsecondsSinceEpoch;
       for (final entry in _books.entries) {
@@ -337,9 +341,13 @@ class LibraryStore extends ChangeNotifier {
         if (!_books.containsKey(key)) _tombstones[key] = clock++;
       }
     }
-    await prefs.setString(_storageKey,
-      jsonEncode(_books.values.map((e) => e.toJson()).toList()));
-    await prefs.setString(_deletedKey, jsonEncode(_tombstones));
+    // Capture BOTH storage keys and payloads before awaiting plugin writes:
+    // a switch must never redirect a pending write into the new account.
+    final savedLibraryJson = jsonEncode(_books.values.map((e) => e.toJson()).toList());
+    final savedTombstonesJson = jsonEncode(_tombstones);
+    await prefs.setString(savedStorageKey, savedLibraryJson);
+    await prefs.setString(savedDeletedKey, savedTombstonesJson);
+    if (savedStorageKey != _storageKey) return;
     _lastSavedPayload
       ..clear()
       ..addEntries(_books.entries.map((entry) =>
@@ -480,20 +488,21 @@ class LibraryStore extends ChangeNotifier {
   /// Record the newest VERIFIED chapter after a successful source detail load.
   /// A simple view must never add a title to bookmarks.
   Future<void> recordLatestChapter(UnifiedManga book, String source,
-      Iterable<Chapter> chapters) async {
+      Iterable<Chapter> chapters, {String? expectedProfile}) async {
     final numbered = chapters.where((c) => canonicalChapterKey(c) != null)
         .toList();
     if (numbered.isEmpty) return;
     numbered.sort((a, b) => compareChapterChronology(a, b)!);
     final newest = numbered.last;
     await _reload();
+    if (expectedProfile != null && profileId != expectedProfile) return;
     final item = get(book);
     if (item == null || item.preferredSource != source) return;
     if (item.latestKnownChapterId == newest.id &&
         item.latestKnownSource == source) return;
     item.latestKnownChapterId = newest.id;
     item.latestKnownSource = source;
-    await _save();
+    await _save(expectedProfile: expectedProfile);
   }
 
   bool isChapterRead(UnifiedManga book, Chapter chapter, String source) {
@@ -505,8 +514,10 @@ class LibraryStore extends ChangeNotifier {
 
   /// Save where the reader stopped; do not mark the chapter completed.
   Future<void> savePosition(UnifiedManga book, Chapter chapter, String source,
-      {required int pageIndex, required int pageCount}) async {
+      {required int pageIndex, required int pageCount,
+       String? expectedProfile}) async {
     await _reload();
+    if (expectedProfile != null && profileId != expectedProfile) return;
     final key = normalizedTitle(book.title);
     final item = _books.putIfAbsent(key,
         () => SavedBook(title: book.title, entries: {...book.entries},
@@ -524,13 +535,14 @@ class LibraryStore extends ChangeNotifier {
     item.lastPageIndex = pageIndex.clamp(0,
         item.lastPageCount > 0 ? item.lastPageCount - 1 : 0).toInt();
     item.lastUpdatedAt = DateTime.now().millisecondsSinceEpoch;
-    await _save();
+    await _save(expectedProfile: expectedProfile);
   }
 
   Future<void> markRead(UnifiedManga book, Chapter chapter, String source,
       {Iterable<Chapter> availableChapters = const [],
-       bool userInitiated = false}) async {
+       bool userInitiated = false, String? expectedProfile}) async {
     await _reload();
+    if (expectedProfile != null && profileId != expectedProfile) return;
     final key = normalizedTitle(book.title);
     final item = _books.putIfAbsent(key,
         () => SavedBook(title: book.title, entries: {...book.entries},
@@ -552,7 +564,8 @@ class LibraryStore extends ChangeNotifier {
       }
     }
     // Completion and resume are independent, including the current chapter.
-    await _save();
+    await _save(expectedProfile: expectedProfile);
+    if (expectedProfile != null && profileId != expectedProfile) return;
     try {
       await ChapterInboxStore(profileId: profileId).hideReadKeys(item.key, source, item.readChapterKeys);
     } catch (_) {
@@ -571,8 +584,10 @@ class LibraryStore extends ChangeNotifier {
   /// for that same source, never an older chapter or a different translation.
   /// Unknown/special labels can only remove their exact key.
   Future<void> unmarkRead(UnifiedManga book, Chapter chapter, String source,
-      {Iterable<Chapter> availableChapters = const []}) async {
+      {Iterable<Chapter> availableChapters = const [],
+       String? expectedProfile}) async {
     await _reload();
+    if (expectedProfile != null && profileId != expectedProfile) return;
     final item = get(book);
     if (item == null || item.preferredSource != source) return;
     final affected = <Chapter>[chapter];
@@ -612,7 +627,7 @@ class LibraryStore extends ChangeNotifier {
         return (compareChapterChronology(parsed, chapter) ?? -1) >= 0;
       });
     }
-    await _save();
+    await _save(expectedProfile: expectedProfile);
   }
 
   /// Only an explicit user selection changes a saved title's active source.
