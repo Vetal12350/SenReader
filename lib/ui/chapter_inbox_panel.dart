@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import '../core/chapter_identity.dart';
 import '../data/catalog_repository.dart';
 import '../data/chapter_checker.dart';
 import '../data/chapter_inbox_store.dart';
