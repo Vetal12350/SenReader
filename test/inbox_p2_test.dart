@@ -78,6 +78,16 @@ void main() {
     expect(find.text('ReadManga'), findsNothing);
     expect(find.byTooltip('Скрыть обновление'), findsOneWidget);
 
+    // Group selection must allow reading chapter 177 first, not silently 178.
+    await tester.tap(find.text('Главы 177–178'));
+    await tester.pumpAndSettle();
+    expect(find.text('Выбери главу'), findsOneWidget);
+    expect(find.text('Глава 177'), findsOneWidget);
+    expect(find.text('Глава 178'), findsOneWidget);
+    await tester.tap(find.text('Глава 177'));
+    await tester.pumpAndSettle();
+    expect(find.text('Выбери главу'), findsNothing);
+
     await tester.tap(find.byTooltip('Скрыть обновление'));
     await tester.pumpAndSettle();
     expect(inbox.rows.where((e) => e.hidden).length, 2);
