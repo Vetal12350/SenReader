@@ -1,3 +1,4 @@
+import 'package:shared_preferences/shared_preferences.dart';
 import '../core/chapter_identity.dart';
 import '../core/models.dart';
 import 'dart:convert';
@@ -102,7 +103,8 @@ class ChapterNotificationService {
       {ChapterAlertPreferences? preferences,
        Future<bool> Function()? permissionCheck,
        Future<void> Function(ChapterDiscovery)? sendNotification,
-       Future<Set<int>> Function()? activeNotificationIds}) async {
+       Future<Set<int>> Function()? activeNotificationIds,
+       LibraryStore? libraryStore}) async {
     final prefs = preferences ?? ChapterAlertPreferences();
     if (!await prefs.enabled()) return 0;
     // Internal storage is mandatory. Android permission only controls optional
@@ -115,17 +117,32 @@ class ChapterNotificationService {
         // Plugin/permission errors must not block internal updates.
       }
     }
-    final library = LibraryStore();
+    final library = libraryStore ?? LibraryStore();
     await library.load();
     final profile = library.profileId;
     final inbox = ChapterInboxStore(profileId: profile);
+    final books = {for (final b in library.items) b.key: b};
+    final settings = await SharedPreferences.getInstance();
+    final libraryKey = profile.isEmpty ? LibraryStore.storageKey :
+        '${LibraryStore.storageKey}.user.$profile';
+    // Invalidate this batch on concurrent read/source/status changes without
+    // decoding/reloading the whole library for each pending row.
+    final librarySnapshot = settings.getString(libraryKey);
+    Future<bool> stillActive() async {
+      await settings.reload();
+      return settings.getString(libraryKey) == librarySnapshot &&
+          (settings.getString(LibraryStore.activeProfileKey) ?? '') == profile &&
+          await prefs.enabled() && await prefs.systemNotificationsEnabled();
+    }
     for (final release in releases) {
       if (release.profileId != null && release.profileId != profile) continue;
       final saved = library.get(release.book);
       if (saved == null || saved.status != 'reading' ||
           !saved.entries.containsKey(release.sourceKey)) continue;
       await inbox.add(normalizedTitle(release.book.title), release.book.title,
-          release.book.coverUrl, release.sourceKey, release.chapter);
+          release.book.coverUrl, release.sourceKey, release.chapter,
+          sourceId: saved.entries[release.sourceKey]!.id,
+          systemPending: await prefs.systemNotificationsEnabled());
     }
     if (!canPostSystemNotification) return 0;
     final active = activeNotificationIds != null
@@ -133,24 +150,29 @@ class ChapterNotificationService {
             ? <int>{} : await _activeIds();
     var posted = 0;
     // Discoveries may be empty after restart: the inbox is the durable outbox.
-    for (final entry in await inbox.load()) {
+    for (final entry in await inbox.pendingSystemNotifications()) {
       if (entry.hidden) continue;
-      await library.load();
-      if (library.profileId != profile || !await prefs.enabled() ||
-          !await prefs.systemNotificationsEnabled()) break;
-      final saved = library.items.where((b) => b.key == entry.bookKey).firstOrNull;
+      if (!await stillActive()) break;
+      final saved = books[entry.bookKey];
       if (saved == null || saved.status != 'reading' ||
-          !saved.entries.containsKey(entry.source)) continue;
+          !saved.entries.containsKey(entry.source) ||
+          (entry.sourceId.isNotEmpty && saved.entries[entry.source]!.id != entry.sourceId)) {
+        await inbox.retireSystemDelivery(entry);
+        continue;
+      }
+      final chapter = Chapter(id: entry.chapterId, name: entry.chapterName);
+      if (library.isChapterRead(saved.toUnified(), chapter, entry.source)) {
+        await inbox.hideChapter(entry.bookKey, chapter, entry.source);
+        continue;
+      }
       final token = await inbox.beginSystemDelivery(entry);
       if (token == null) continue;
-      final chapter = Chapter(id: entry.chapterId, name: entry.chapterName);
       final release = ChapterDiscovery(book: saved.toUnified(), sourceKey: entry.source,
           chapter: chapter, canonicalKey: canonicalChapterKey(chapter) ?? entry.chapterId,
           profileId: profile);
       var delivered = false;
       try {
-        await library.load();
-        if (library.profileId != profile) continue;
+        if (!await stillActive() || !await inbox.systemDeliveryCurrent(entry, token)) continue;
         if (!active.contains(notificationId(release))) {
           await (sendNotification ?? _show)(release);
           active.add(notificationId(release));

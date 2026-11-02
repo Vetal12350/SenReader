@@ -53,7 +53,7 @@ void main() {
   test('pending OS alerts survive an empty discovery report after restart', () async {
     final library = await makeLibrary([FakeSource('senkuro')]);
     await ChapterInboxStore(profileId: library.profileId)
-      .add('example', 'Example', '', 'senkuro', chapter);
+      .add('example', 'Example', '', 'senkuro', chapter, systemPending: true, sourceId: '1');
     var sends = 0;
     final count = await ChapterNotificationService.instance.postNewChapters([],
       preferences: InAppOnlyPreferences(), permissionCheck: () async => true,
@@ -81,7 +81,7 @@ void main() {
   test('SQLite late snapshots and replay do not overwrite hidden state across profiles', () async {
     for (final profile in ['', 'a', 'b']) {
       final store = ChapterInboxStore(profileId: profile);
-      await store.add('example', 'Example', '', 'senkuro', chapter);
+      await store.add('example', 'Example', '', 'senkuro', chapter, systemPending: true, sourceId: '1');
     }
     final a = ChapterInboxStore(profileId: 'a');
     final stale = await a.load();
@@ -97,7 +97,7 @@ void main() {
   });
   test('abandoned OS lease expires; old acknowledgement cannot consume a new lease', () async {
     final store = ChapterInboxStore(profileId: 'a');
-    await store.add('example', 'Example', '', 'senkuro', chapter);
+    await store.add('example', 'Example', '', 'senkuro', chapter, systemPending: true, sourceId: '1');
     final entry = (await store.load()).single;
     final first = (await store.beginSystemDelivery(entry, now: 1000))!;
     final db = await openDatabase(ChapterInboxStore.databasePathOverride!);
@@ -113,7 +113,7 @@ void main() {
   test('active Android ID is acknowledged after interrupted delivery without showing again', () async {
     final library = await makeLibrary([FakeSource('senkuro')]);
     final store = ChapterInboxStore();
-    await store.add('example', 'Example', '', 'senkuro', chapter);
+    await store.add('example', 'Example', '', 'senkuro', chapter, systemPending: true, sourceId: '1');
     final entry = (await store.load()).single;
     await store.beginSystemDelivery(entry, now: 0); // crashed before DB ack
     final release = ChapterDiscovery(book: library.items.single.toUnified(),
@@ -130,7 +130,7 @@ void main() {
     final stores = [for (final id in ['', 'a', 'b']) ChapterInboxStore(profileId: id)];
     final tokens = <int>[];
     for (final store in stores) {
-      await store.add('example', 'Example', '', 'senkuro', chapter);
+      await store.add('example', 'Example', '', 'senkuro', chapter, systemPending: true, sourceId: '1');
       tokens.add((await store.beginSystemDelivery((await store.load()).single, now: 1000))!);
     }
     await stores[1].finishSystemDelivery((await stores[1].load()).single,
@@ -164,9 +164,9 @@ void main() {
     expect((await store.load()).single.hidden, isTrue);
     expect((await store.loadScanState()).single['payload'], '{"seen":["v0:c1"]}');
     expect(await store.beginSystemDelivery(sample), isNull);
-    expect(await ChapterInboxStore(profileId: 'b').beginSystemDelivery(sample), isNotNull);
+    expect(await ChapterInboxStore(profileId: 'b').beginSystemDelivery(sample), isNull);
     final upgraded = await openDatabase(ChapterInboxStore.databasePathOverride!);
-    expect(await upgraded.getVersion(), 3);
+    expect(await upgraded.getVersion(), 4);
     await upgraded.close();
     await databaseFactory.deleteDatabase(ChapterInboxStore.databasePathOverride!);
     ChapterInboxStore.databasePathOverride = original;

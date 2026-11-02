@@ -11,6 +11,10 @@ import 'package:senreader/data/library_store.dart';
 import 'chapter_checker_test.dart' show FakeSource, makeLibrary;
 import 'chapter_delivery_regression_test.dart' show InAppOnlyPreferences, PausingSource;
 
+class CountingLibrary extends LibraryStore {
+  int loads = 0;
+  @override Future<void> load() async { loads++; await super.load(); }
+}
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test('v2 unclaimed historical inbox is not an OS delivery queue after upgrade', () async {
@@ -78,4 +82,59 @@ void main() {
       expect(reader.isChapterRead(book, source.chapters.single, source.key), isTrue);
     });
   }
+  test('large inbox does one library load and returns at most ten pending records', () async {
+    await makeLibrary([FakeSource('senkuro')]);
+    final store = ChapterInboxStore();
+    for (var n = 1; n <= 200; n++) {
+      final ch = Chapter(id: '$n', name: 'Глава $n');
+      await store.add('example', 'Example', '', 'senkuro', ch);
+      await store.claimSystemNotification('example', ch, 'senkuro');
+    }
+    for (var n = 201; n <= 225; n++) {
+      await store.add('example', 'Example', '', 'senkuro',
+        Chapter(id: '$n', name: 'Глава $n'), systemPending: true, sourceId: '1');
+    }
+    expect((await store.pendingSystemNotifications(limit: 200)).length, 10);
+    final library = CountingLibrary();
+    expect(await ChapterNotificationService.instance.postNewChapters([],
+      libraryStore: library, preferences: InAppOnlyPreferences(),
+      permissionCheck: () async => true, sendNotification: (_) async {}), 10);
+    expect(library.loads, 1);
+  });
+  test('opted-in scanner commits OS intent before interruption and permission denial preserves it', () async {
+    final source = FakeSource('senkuro')..chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final library = await makeLibrary([source]);
+    final repo = CatalogRepository(sources: {source.key: source});
+    await ChapterChecker(repository: repo, library: library).check();
+    source.chapters = [const Chapter(id: '2', name: 'Глава 2')];
+    await ChapterChecker(repository: repo, library: library,
+      systemNotificationsEnabled: true,
+      afterInboxCommit: () async => throw StateError('process ended')).check();
+    expect((await ChapterInboxStore().pendingSystemNotifications()).length, 1);
+    expect(await ChapterNotificationService.instance.postNewChapters([],
+      preferences: InAppOnlyPreferences(), permissionCheck: () async => false), 0);
+    expect((await ChapterInboxStore().pendingSystemNotifications()).length, 1);
+    expect(await ChapterNotificationService.instance.postNewChapters([],
+      preferences: InAppOnlyPreferences(), permissionCheck: () async => true,
+      sendNotification: (_) async {}), 1);
+    expect(await ChapterInboxStore().pendingSystemNotifications(), isEmpty);
+  });
+  test('queued lease handoff stops on UID change and preserves the other guest records', () async {
+    final library = await makeLibrary([FakeSource('senkuro')]);
+    final book = library.items.single.toUnified();
+    await library.switchProfile('a');
+    await library.setStatus(book, 'reading');
+    final store = ChapterInboxStore(profileId: 'a');
+    for (var n = 1; n <= 2; n++) {
+      await store.add('example', 'Example', '', 'senkuro',
+        Chapter(id: '$n', name: 'Глава $n'), systemPending: true, sourceId: '1');
+    }
+    expect(await ChapterNotificationService.instance.postNewChapters([],
+      preferences: InAppOnlyPreferences(), permissionCheck: () async => true,
+      sendNotification: (_) async { await library.switchProfile('b'); }), 1);
+    expect((await store.pendingSystemNotifications()).length, 1);
+    expect(await ChapterInboxStore(profileId: 'b').load(), isEmpty);
+    expect(await ChapterInboxStore(profileId: '').load(), isEmpty);
+  });
+
 }

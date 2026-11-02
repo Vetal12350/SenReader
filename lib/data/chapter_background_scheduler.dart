@@ -21,6 +21,7 @@ Future<void> _performSmartScan({bool foreground = false}) async {
   final profile = library.profileId;
   final report = await ChapterChecker(
     repository: CatalogRepository(), library: library,
+    systemNotificationsEnabled: await prefs.systemNotificationsEnabled(),
   ).check(smartSchedule: true);
   // If the user switched Google accounts during a foreground check, never
   // post another profile's notifications.

@@ -105,7 +105,9 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     try {
       await widget.library.load();
       final report = await ChapterChecker(repository: widget.repository,
-        library: widget.library).check(diagnostics: true);
+        library: widget.library,
+        systemNotificationsEnabled: await widget.alerts.preferences.systemNotificationsEnabled())
+          .check(diagnostics: true);
       if (mounted) setState(() {
         lastScanSummary = 'Проверено книг: ${report.checkedTitles}, '
             'новых глав: ${report.discoveries.length}, '

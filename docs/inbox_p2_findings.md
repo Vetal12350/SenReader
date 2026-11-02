@@ -36,3 +36,26 @@ impossible to distinguish old successful and lost deliveries safely.
 Hardware acceptance: kill before/after show, restart/reboot with active/dismissed
 alerts, concurrent isolates, permission revocation, account switch, UI hide/restore
 while polling. No signing/applicationId, CI, reader progress or source-limit changes.
+
+## Review follow-up: explicit OS intent and read reconciliation
+
+Schema v4 adds systemQueuedAt=0 for historical v1/v2 and lease-only v3 rows.
+Only a newly inserted release discovered while OS notifications are opted in is
+queued. INSERT IGNORE never turns a pre-opt-in/archived/delivered row into new OS
+work. Permission denial preserves queued intent; it does not opt historical rows
+in. sourceId is saved with new records to reject replaced source links.
+
+The worker/manual checker capture OS opt-in, insert intent with the inbox record,
+then re-read read markers and hide the chapter if reading completed before insert.
+If reading wins later, markRead's existing hide sees the row. This narrow change
+is ported from #124; its competing claim-before-show implementation is not used.
+
+Pending OS selection is indexed SQL, bounded to ten rows per pass, excluding sent,
+unqueued and leased rows. Hidden/invalid entries are dequeued without changing the
+visible archive. The library is decoded once per batch; a cheap profile/raw-library
+snapshot check invalidates the batch on concurrent read/source/status changes.
+Lease, fencing, active-ID acknowledgement and crash retry from #125 are retained.
+
+Historical lease-only v3 rows without recorded intent cannot safely be recovered
+as OS alerts: they remain in the internal inbox. Both draft v3 table shapes are
+accepted by additive column detection; no parallel v3 migration is merged.
