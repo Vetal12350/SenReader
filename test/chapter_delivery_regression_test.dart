@@ -66,6 +66,19 @@ void main() {
     expect((await SharedPreferences.getInstance()).getString(ChapterInboxStore.key), raw);
   });
 
+  test('malformed legacy storage cannot block authenticated or guest inbox', () async {
+    const raw = '{invalid legacy json';
+    SharedPreferences.setMockInitialValues({ChapterInboxStore.key: raw});
+    final authenticated = ChapterInboxStore(profileId: 'uid-a');
+    await add(authenticated);
+    expect((await authenticated.load()).single.chapterId, 's2');
+    final guest = ChapterInboxStore(profileId: '');
+    await add(guest);
+    expect((await guest.load()).single.chapterId, 's2');
+    expect((await SharedPreferences.getInstance())
+        .getString(ChapterInboxStore.key), raw);
+  });
+
   test('concurrent insert/hide and cross-source replay keep one hidden record', () async {
     final a = ChapterInboxStore(profileId: 'uid-a');
     final b = ChapterInboxStore(profileId: 'uid-a');
