@@ -13,6 +13,8 @@ class InboxChapterGroup {
   InboxEntry get latest => entries.first;
   int get newestAt => entries.fold<int>(0,
       (value, entry) => entry.createdAt > value ? entry.createdAt : value);
+  int get newestHiddenAt => entries.fold<int>(0,
+      (value, entry) => entry.hiddenAt > value ? entry.hiddenAt : value);
 
   String get chapterLabel {
     if (entries.length == 1) return displayChapterName(latest.chapterName);
@@ -66,7 +68,9 @@ List<InboxChapterGroup> groupInboxChapters(
   }
   return groups.values.map(InboxChapterGroup.new).toList()
     ..sort((a, b) {
-      final dateOrder = b.newestAt.compareTo(a.newestAt);
+      final dateOrder = hidden
+          ? b.newestHiddenAt.compareTo(a.newestHiddenAt)
+          : b.newestAt.compareTo(a.newestAt);
       return dateOrder != 0 ? dateOrder :
           a.latest.title.compareTo(b.latest.title);
     });
