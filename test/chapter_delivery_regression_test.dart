@@ -15,6 +15,11 @@ const chapter = Chapter(id: 's2', name: 'Глава 2');
 Future<void> add(ChapterInboxStore store, {String source = 'senkuro'}) =>
     store.add('example', 'Example', '', source, chapter);
 
+class InAppOnlyPreferences extends ChapterAlertPreferences {
+  @override Future<bool> enabled() async => true;
+  @override Future<bool> systemNotificationsEnabled() async => true;
+}
+
 class PausingSource extends FakeSource {
   PausingSource() : super('senkuro');
   Completer<void>? paused;
@@ -137,7 +142,8 @@ void main() {
     source.chapters = [chapter];
     final report = await checker.check();
     // No permission or MethodChannel handler has been installed.
-    await ChapterNotificationService.instance.postNewChapters(report.discoveries);
+    await ChapterNotificationService.instance.postNewChapters(report.discoveries,
+      preferences: InAppOnlyPreferences(), permissionCheck: () async => false);
     expect((await ChapterInboxStore().load()).single.chapterId, 's2');
     expect((await checker.check()).discoveries, isEmpty);
   });

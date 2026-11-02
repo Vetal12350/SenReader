@@ -84,15 +84,17 @@ class ChapterNotificationService {
     return value & 0x7fffffff;
   }
 
-  Future<int> postNewChapters(List<ChapterDiscovery> releases) async {
-    final prefs = ChapterAlertPreferences();
+  Future<int> postNewChapters(List<ChapterDiscovery> releases,
+      {ChapterAlertPreferences? preferences,
+       Future<bool> Function()? permissionCheck}) async {
+    final prefs = preferences ?? ChapterAlertPreferences();
     if (!await prefs.enabled()) return 0;
     // Internal storage is mandatory. Android permission only controls optional
     // system alerts and must never prevent delivery to the app's own inbox.
     var canPostSystemNotification = false;
     if (await prefs.systemNotificationsEnabled()) {
       try {
-        canPostSystemNotification = await hasPermission();
+        canPostSystemNotification = await (permissionCheck ?? hasPermission)();
       } catch (_) {
         // Plugin/permission errors must not block internal updates.
       }
