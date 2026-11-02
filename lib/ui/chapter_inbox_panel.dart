@@ -160,6 +160,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
       await _open(group.latest);
       return;
     }
+    final displayedProfile = _displayedProfile;
     final chapters = group.entries.reversed.toList();
     final selected = await showModalBottomSheet<InboxEntry>(
       context: context,
@@ -184,7 +185,10 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
         ]),
       )),
     );
-    if (selected != null && mounted) await _open(selected);
+    if (selected != null && mounted && _displayedProfile == displayedProfile &&
+        widget.library.profileId == displayedProfile) {
+      await _open(selected);
+    }
   }
 
   static String _dateLabel(int millis) {
