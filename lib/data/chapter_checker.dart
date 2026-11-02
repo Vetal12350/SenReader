@@ -280,8 +280,14 @@ class ChapterChecker {
           for (final chapter in chapters.entries) {
             current = library.get(book);
             if (current == null) break;
+            if (LocalSourceGate.expired) break;
+            if (delivered.contains('${current.key}|${chapter.key}')) {
+              // Repair legacy seen state only after durable inbox evidence.
+              await library.recordChapterScan(current.key, sourceKey,
+                  [chapter.key], expectedProfile: scanProfile);
+              continue;
+            }
             if (current.seenChapterKeys.contains(chapter.key) ||
-                delivered.contains('${current.key}|${chapter.key}') ||
                 _alreadyRead(current, chapter.key)) continue;
             if (LocalSourceGate.expired) {
               warnings.add(saved.title + ': проверка остальных глав отложена');
