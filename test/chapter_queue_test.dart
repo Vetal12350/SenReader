@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:senreader/core/models.dart';
@@ -65,6 +66,58 @@ void main() {
     expect(await ChapterScanQueue().claim('b', 'senkuro', now), isNull);
     expect(await q.claim('a', 'readmanga', now), isNotNull);
   });
+  for (final provider in ['senkuro', 'readmanga']) {
+    test('background 403 cooldown cannot block explicit foreground $provider access', () async {
+      final db = await ChapterScanQueue().database();
+      await db.insert('providers', {'source': provider},
+          conflictAlgorithm: ConflictAlgorithm.ignore);
+      await LocalSourceGate(provider).response(403, null);
+
+      var sends = 0;
+      Future<int> request() async {
+        sends++;
+        return 200;
+      }
+
+      // The foreground catalog/reader never consumes the background lease.
+      expect(LocalSourceGate.isBackgroundScan, isFalse);
+      expect(await LocalSourceGate.runScoped(provider, request), 200);
+      expect(sends, 1);
+
+      // The same source stays blocked for automatic checks: no circumvention
+      // of the provider's restriction or extra background HTTP requests.
+      await expectLater(runZoned(
+          () => LocalSourceGate.runScoped(provider, request),
+          zoneValues: {LocalSourceGate.backgroundScanKey: true}),
+        throwsA(isA<StateError>()));
+      expect(sends, 1);
+
+      // An explicit foreground request that receives 403 still surfaces it;
+      // the gate must not automatically retry or suppress a site refusal.
+      await expectLater(LocalSourceGate.runScoped(provider,
+          () async { sends++; throw StateError('HTTP 403'); }),
+          throwsA(isA<StateError>()));
+      expect(sends, 2);
+    });
+
+    test('background 429 Retry-After cannot freeze foreground $provider', () async {
+      final db = await ChapterScanQueue().database();
+      await db.insert('providers', {'source': provider},
+          conflictAlgorithm: ConflictAlgorithm.ignore);
+      await LocalSourceGate(provider).response(429, '3600');
+      var calls = 0;
+      expect(await LocalSourceGate.runScoped(provider, () async {
+        calls++;
+        return 'manual request';
+      }), 'manual request');
+      await expectLater(runZoned(
+          () => LocalSourceGate.runScoped(provider, () async { calls++; }),
+          zoneValues: {LocalSourceGate.backgroundScanKey: true}),
+          throwsA(isA<StateError>()));
+      expect(calls, 1);
+    });
+  }
+
   test('offline retries preserve queue and profile isolation without OS permissions', () async {
     final q = ChapterScanQueue();
     await q.reconcile('', [ScanJob('x', 'readmanga', '1')]);
