@@ -9,10 +9,11 @@ import 'library_store.dart';
 class ChapterDiscovery {
   const ChapterDiscovery({
     required this.book, required this.sourceKey,
-    required this.chapter, required this.canonicalKey,
+    required this.chapter, required this.canonicalKey, this.profileId,
   });
   final UnifiedManga book;
   final String sourceKey;
+  final String? profileId;
   final Chapter chapter;
   final String canonicalKey;
 }
@@ -32,7 +33,10 @@ class ChapterScanReport {
 /// chosen source or progress. The first source scan establishes its baseline.
 /// Canonical chapter keys deduplicate releases across linked sources.
 class ChapterChecker {
-  ChapterChecker({required this.repository, required this.library});
+  ChapterChecker({required this.repository, required this.library,
+    this.afterInboxCommit});
+  /// Fault-injection boundary for interruption regression tests.
+  final Future<void> Function()? afterInboxCommit;
   final CatalogRepository repository;
   final LibraryStore library;
   static const maxNewCandidatesPerSource = 12;
@@ -65,6 +69,15 @@ class ChapterChecker {
     final scanDetails = <String>[];
     final now = DateTime.now();
     final scanProfile = library.profileId;
+    final inbox = ChapterInboxStore(profileId: scanProfile);
+    Future<void> persist(UnifiedManga book, String source,
+        Iterable<Chapter> chapters) async {
+      for (final chapter in chapters) {
+        await inbox.add(normalizedTitle(book.title), book.title,
+            book.coverUrl, source, chapter);
+      }
+      await afterInboxCommit?.call();
+    }
     final schedule = ChapterScanScheduleStore();
     final lastAttempts = smartSchedule
         ? await schedule.load(scanProfile) : <String, int>{};
@@ -74,7 +87,7 @@ class ChapterChecker {
     final originalSource = <String, String>{};
     // Archived and active inbox entries are both proof of earlier delivery.
     final delivered = <String>{};
-    for (final entry in await ChapterInboxStore().load()) {
+    for (final entry in await inbox.load()) {
       final canonical = canonicalChapterKey(
           Chapter(id: entry.chapterId, name: entry.chapterName));
       if (canonical != null) delivered.add('${entry.bookKey}|$canonical');
@@ -140,6 +153,7 @@ class ChapterChecker {
               ? await source.detail(entry).timeout(const Duration(seconds: 18))
               : await source.detail(entry);
           await library.load();
+          if (library.profileId != scanProfile) break;
           var current = library.get(book);
           if (current == null || current.status != 'reading' ||
               current.preferredSource != originalSource[saved.key] ||
@@ -222,16 +236,18 @@ class ChapterChecker {
               }
             }
             await library.load();
+            if (library.profileId != scanProfile) break;
             current = library.get(book);
             if (current == null || current.status != 'reading' ||
                 current.preferredSource != originalSource[saved.key] ||
                 current.entries[sourceKey]?.id != entry.id) continue;
+            await persist(book, sourceKey, recent.values);
             await library.recordChapterScan(current.key, sourceKey,
                 chapters.keys.where((key) => !unverifiedRecent.contains(key)),
-                sourceDates: dates);
+                sourceDates: dates, expectedProfile: scanProfile);
             discoveries.addAll([
               for (final chapter in recent.entries)
-                ChapterDiscovery(book: book, sourceKey: sourceKey,
+                ChapterDiscovery(book: book, sourceKey: sourceKey, profileId: scanProfile,
                     chapter: chapter.value, canonicalKey: chapter.key),
             ]);
             continue;
@@ -301,6 +317,7 @@ class ChapterChecker {
           }
           if (verified.isEmpty && recovered.isEmpty) continue;
           await library.load();
+          if (library.profileId != scanProfile) break;
           current = library.get(book);
           if (current == null || current.status != 'reading' ||
               current.preferredSource != originalSource[saved.key] ||
@@ -309,17 +326,21 @@ class ChapterChecker {
               !current!.seenChapterKeys.contains(key) &&
               !_alreadyRead(current, key)).toSet();
           if (newKeys.isEmpty && recovered.isEmpty) continue;
-          // Durable dedup is saved before any notification is exposed.
+          // Commit inbox before legacy seen markers. Replaying after a crash
+          // is harmless: the database deduplicates within the captured profile.
+          await persist(book, sourceKey, [
+            for (final key in newKeys) verified[key]!, ...recovered.values,
+          ]);
           if (newKeys.isNotEmpty) {
             await library.recordChapterScan(current.key, sourceKey,
-                newKeys, sourceDates: dates);
+                newKeys, sourceDates: dates, expectedProfile: scanProfile);
           }
           discoveries.addAll([
             for (final key in newKeys)
-              ChapterDiscovery(book: book, sourceKey: sourceKey,
+              ChapterDiscovery(book: book, sourceKey: sourceKey, profileId: scanProfile,
                   chapter: verified[key]!, canonicalKey: key),
             for (final chapter in recovered.entries)
-              ChapterDiscovery(book: book, sourceKey: sourceKey,
+              ChapterDiscovery(book: book, sourceKey: sourceKey, profileId: scanProfile,
                   chapter: chapter.value, canonicalKey: chapter.key),
           ]);
           delivered.addAll([...newKeys, ...recovered.keys]
@@ -338,6 +359,7 @@ class ChapterChecker {
       await schedule.recordAttempts(scanProfile, attempts);
     }
     discoveries.removeWhere((d) {
+      if (library.profileId != scanProfile) return true;
       final current = library.get(d.book);
       return current == null || current.status != 'reading' ||
           current.preferredSource !=
@@ -348,3 +370,4 @@ class ChapterChecker {
         skippedSources: skippedSources);
   }
 }
+

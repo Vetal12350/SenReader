@@ -13,6 +13,8 @@ class ChapterNotificationsPanel extends StatefulWidget {
 class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
   bool loading = true;
   bool enabled = false;
+  bool systemEnabled = false;
+  bool systemLoading = false;
   String? message;
   ChapterBackgroundScanSummary? lastRun;
 
@@ -24,6 +26,7 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
   Future<void> _load() async {
     final prefs = widget.alerts.preferences;
     final newEnabled = await prefs.enabled();
+    final newSystemEnabled = await prefs.systemNotificationsEnabled();
     await prefs.intervalMinutes();
     final library = LibraryStore();
     await library.load();
@@ -31,6 +34,7 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
     if (!mounted) return;
     setState(() {
       enabled = newEnabled;
+      systemEnabled = newSystemEnabled;
       lastRun = last;
       loading = false;
     });
@@ -43,13 +47,33 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
       if (mounted) setState(() {
         enabled = allowed;
         loading = false;
-        if (next && !allowed) message = 'Разреши уведомления SenReader в настройках Android.';
+        if (next && !allowed) message = 'Не удалось запустить автоматическую проверку.';
       });
     } catch (_) {
       if (mounted) setState(() {
         enabled = false;
         loading = false;
         message = 'Не удалось изменить фоновую проверку на этом устройстве.';
+      });
+    }
+  }
+
+  Future<void> _toggleSystem(bool next) async {
+    setState(() { systemLoading = true; message = null; });
+    try {
+      final allowed = await widget.alerts.setSystemNotificationsEnabled(next);
+      if (mounted) setState(() {
+        systemEnabled = allowed;
+        systemLoading = false;
+        if (next && !allowed) {
+          message = 'Разрешение Android не выдано. Внутренние обновления продолжают работать.';
+        }
+      });
+    } catch (_) {
+      if (mounted) setState(() {
+        systemEnabled = false;
+        systemLoading = false;
+        message = 'Не удалось включить системные уведомления.';
       });
     }
   }
@@ -61,10 +85,17 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
-            title: const Text('Уведомлять о новых главах'),
-            subtitle: const Text('Автопроверка только произведений в разделе «Читаю»'),
+            title: const Text('Автоматически искать новые главы'),
+            subtitle: const Text('Новые главы сохраняются в приложении без разрешения Android'),
             value: enabled,
             onChanged: loading ? null : _toggle,
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Системные уведомления Android'),
+            subtitle: const Text('Необязательно: уведомления о новых главах на телефоне'),
+            value: systemEnabled,
+            onChanged: systemLoading ? null : _toggleSystem,
           ),
           Text(
             'Проверки раз в 15 минут — по возможности Android: Doze и экономия батареи '

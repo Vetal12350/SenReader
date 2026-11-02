@@ -254,6 +254,7 @@ class LibraryStore extends ChangeNotifier {
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
     final id = prefs.getString(activeProfileKey) ?? '';
     _storageKey = id.isEmpty ? storageKey : '$storageKey.user.$id';
     await _reload();
@@ -448,8 +449,10 @@ class LibraryStore extends ChangeNotifier {
   /// Commit a successful scan before surfacing its discoveries. A failing
   /// source never marks its baseline or clears previously seen chapters.
   Future<void> recordChapterScan(String bookKey, String source,
-      Iterable<String> seenKeys, {Map<String, DateTime> sourceDates = const {}}) async {
+      Iterable<String> seenKeys, {Map<String, DateTime> sourceDates = const {},
+      String? expectedProfile}) async {
     await _reload();
+    if (expectedProfile != null && profileId != expectedProfile) return;
     final item = _books[bookKey];
     if (item == null || !item.entries.containsKey(source)) return;
     item.seenChapterKeys.addAll(seenKeys);
@@ -542,7 +545,7 @@ class LibraryStore extends ChangeNotifier {
     // Completion and resume are independent, including the current chapter.
     await _save();
     try {
-      await ChapterInboxStore().hideReadKeys(item.key, source, item.readChapterKeys);
+      await ChapterInboxStore(profileId: profileId).hideReadKeys(item.key, source, item.readChapterKeys);
     } catch (_) {
       // An unavailable notification store must not roll back reading progress.
     }
@@ -615,3 +618,4 @@ class LibraryStore extends ChangeNotifier {
     await _save();
   }
 }
+
