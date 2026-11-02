@@ -60,6 +60,10 @@ class ChapterInboxStore {
           'PRIMARY KEY(profile, identity))');
       await db.execute('CREATE TABLE migration (id TEXT PRIMARY KEY)');
     });
+    // Once migrated, avoid decoding the entire legacy JSON for every
+    // inbox load/insert. The old preference itself remains untouched.
+    if ((await db.query('migration', where: 'id = ?',
+        whereArgs: ['legacy-v1'])).isNotEmpty) return db;
     // Old global entries have no provable account owner. Preserve the raw
     // preference, import only into the guest namespace, never into a UID.
     final prefs = await SharedPreferences.getInstance();
