@@ -78,6 +78,12 @@ class ChapterChecker {
     final inbox = ChapterInboxStore(profileId: scanProfile);
     Future<void> persist(UnifiedManga book, String source,
         Iterable<Chapter> chapters) async {
+      await library.load();
+      final active = library.get(book);
+      if (library.profileId != scanProfile || active == null ||
+          active.status != 'reading' || !active.entries.containsKey(source)) {
+        throw StateError('Scan subscription changed');
+      }
       if (LocalSourceGate.expired) throw TimeoutException('Scan expired');
       for (final chapter in chapters) {
         if (LocalSourceGate.expired) throw TimeoutException('Scan expired');
