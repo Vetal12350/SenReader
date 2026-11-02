@@ -31,13 +31,21 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
   List<String> lastScanDetails = const [];
   @override void initState() {
     super.initState();
+    _displayedProfile = widget.library.profileId;
     widget.library.addListener(_libraryChanged);
     _refresh();
   }
   void _libraryChanged() {
-    if (_displayedProfile != widget.library.profileId && mounted) {
-      setState(() { entries = const []; loading = true; lastScanSummary = null; });
-    }
+    if (!mounted || _displayedProfile == widget.library.profileId) return;
+    // LibraryStore notifies after every scan save/load. Only an actual UID
+    // switch should trigger a full SQLite inbox reload; otherwise large
+    // background scans would create hundreds of redundant refreshes.
+    setState(() {
+      _displayedProfile = widget.library.profileId;
+      entries = const [];
+      loading = true;
+      lastScanSummary = null;
+    });
     _refresh();
   }
   @override void dispose() {
