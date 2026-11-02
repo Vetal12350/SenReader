@@ -28,6 +28,12 @@ class PausedInbox extends ChapterInboxStore {
   @override Future<void> hideEntry(String key) async {
     rows = [for (final e in rows) e.key == key ? e.hide(2) : e];
   }
+  @override Future<void> setEntriesHidden(Iterable<String> identities,
+      {required bool hidden}) async {
+    final keys = identities.toSet();
+    rows = [for (final e in rows)
+      keys.contains(e.key) ? e.hide(hidden ? 2 : 0) : e];
+  }
 }
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -50,6 +56,66 @@ void main() {
     expect(find.text('Новые (0)'), findsOneWidget);
     await tester.pumpWidget(const SizedBox());
   });
+  testWidgets('multiple chapter updates display as one card without source', (tester) async {
+    final inbox = PausedInbox();
+    inbox.rows = [
+      const InboxEntry(key: 'example|readmanga|v0:c178',
+        bookKey: 'example', title: 'Незначительный персонаж',
+        coverUrl: '', source: 'readmanga', chapterId: '178',
+        chapterName: 'Глава 178', createdAt: 200),
+      const InboxEntry(key: 'example|readmanga|v0:c177',
+        bookKey: 'example', title: 'Незначительный персонаж',
+        coverUrl: '', source: 'readmanga', chapterId: '177',
+        chapterName: 'Глава 177', createdAt: 100),
+    ];
+    final library = LibraryStore();
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: ChapterInboxPanel(
+      library: library, repository: CatalogRepository(sources: {}),
+      alerts: ChapterAlertController(), inboxStore: inbox))));
+    await tester.pumpAndSettle();
+    expect(find.text('Новые (1)'), findsOneWidget);
+    expect(find.text('Главы 177–178'), findsOneWidget);
+    expect(find.text('ReadManga'), findsNothing);
+    expect(find.byTooltip('Скрыть обновление'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Скрыть обновление'));
+    await tester.pumpAndSettle();
+    expect(inbox.rows.where((e) => e.hidden).length, 2);
+    expect(find.text('Новые (0)'), findsOneWidget);
+    expect(find.text('Скрытые (1)'), findsOneWidget);
+
+    await tester.tap(find.text('Скрытые (1)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Главы 177–178'), findsOneWidget);
+    await tester.tap(find.byTooltip('Вернуть в новые'));
+    await tester.pumpAndSettle();
+    expect(inbox.rows.where((e) => !e.hidden).length, 2);
+    expect(find.text('Новые (1)'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  test('bulk archive and restore only change selected chapters in one profile', () async {
+    await makeLibrary([FakeSource('senkuro')]);
+    final a = ChapterInboxStore(profileId: 'uid-a');
+    final b = ChapterInboxStore(profileId: 'uid-b');
+    for (final store in [a, b]) {
+      for (final number in ['177', '178']) {
+        await store.add('story', 'Story', '', 'senkuro',
+          Chapter(id: number, name: 'Глава ' + number));
+      }
+    }
+    await a.add('other', 'Other', '', 'senkuro',
+      const Chapter(id: '8', name: 'Глава 8'));
+    final target = (await a.load()).where((e) => e.bookKey == 'story')
+      .map((e) => e.key).toList();
+    await a.setEntriesHidden(target, hidden: true);
+    expect((await a.load()).where((e) => e.hidden).length, 2);
+    expect((await a.load()).firstWhere((e) => e.bookKey == 'other').hidden, isFalse);
+    expect((await b.load()).every((e) => !e.hidden), isTrue);
+    await a.setEntriesHidden(target, hidden: false);
+    expect((await a.load()).every((e) => !e.hidden), isTrue);
+  });
+
   test('pending OS alerts survive an empty discovery report after restart', () async {
     final library = await makeLibrary([FakeSource('senkuro')]);
     await ChapterInboxStore(profileId: library.profileId)
