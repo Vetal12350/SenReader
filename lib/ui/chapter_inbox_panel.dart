@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../core/chapter_identity.dart';
 import '../data/catalog_repository.dart';
 import '../data/chapter_checker.dart';
 import '../data/chapter_inbox_store.dart';
@@ -153,6 +154,39 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     }
   }
 
+  /// Choosing a chapter avoids silently skipping older unread updates.
+  Future<void> _openGroup(InboxChapterGroup group) async {
+    if (group.entries.length == 1) {
+      await _open(group.latest);
+      return;
+    }
+    final chapters = group.entries.reversed.toList();
+    final selected = await showModalBottomSheet<InboxEntry>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(child: SizedBox(
+        height: (MediaQuery.sizeOf(sheetContext).height * 0.6)
+            .clamp(180.0, 400.0).toDouble(),
+        child: Column(children: [
+          Padding(padding: const EdgeInsets.all(16),
+            child: Text('Выбери главу',
+              style: Theme.of(sheetContext).textTheme.titleMedium)),
+          Expanded(child: ListView.builder(
+            itemCount: chapters.length,
+            itemBuilder: (context, index) {
+              final chapter = chapters[index];
+              return ListTile(
+                title: Text(displayChapterName(chapter.chapterName)),
+                onTap: () => Navigator.pop(sheetContext, chapter),
+              );
+            },
+          )),
+        ]),
+      )),
+    );
+    if (selected != null && mounted) await _open(selected);
+  }
+
   static String _dateLabel(int millis) {
     if (millis <= 0) return '';
     final date = DateTime.fromMillisecondsSinceEpoch(millis);
@@ -240,7 +274,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
             final group = visible[index];
             final entry = group.latest;
             return Card(clipBehavior: Clip.antiAlias,
-              child: InkWell(onTap: () => _open(entry),
+              child: InkWell(onTap: () => _openGroup(group),
                 child: Padding(padding: const EdgeInsets.all(10),
                   child: Row(children: [
                     ClipRRect(borderRadius: BorderRadius.circular(9),
