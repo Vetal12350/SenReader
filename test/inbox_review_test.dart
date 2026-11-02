@@ -137,4 +137,53 @@ void main() {
     expect(await ChapterInboxStore(profileId: '').load(), isEmpty);
   });
 
+  for (final queuedV3 in [false, true]) {
+    test('v3 shape upgrade preserves lease state and explicit intent: queued=$queuedV3', () async {
+      final path = ChapterInboxStore.databasePathOverride!;
+      await databaseFactory.deleteDatabase(path);
+      final old = await openDatabase(path, version: 3, onCreate: (db, _) async {
+        final extra = queuedV3 ? 'systemQueuedAt INTEGER DEFAULT 0' :
+          'systemLease INTEGER DEFAULT 0, systemToken INTEGER DEFAULT 0';
+        await db.execute('CREATE TABLE inbox (profile TEXT NOT NULL, identity TEXT NOT NULL, '
+          'payload TEXT NOT NULL, systemClaimed INTEGER DEFAULT 0, $extra, PRIMARY KEY(profile,identity))');
+        await db.execute('CREATE TABLE migration (id TEXT PRIMARY KEY)');
+        await db.insert('migration', {'id': 'legacy-v1'});
+        await db.execute('CREATE TABLE scan_state (profile TEXT, book TEXT, source TEXT, sourceId TEXT, payload TEXT)');
+        const entry = InboxEntry(key: 'example|senkuro|v0:c2', bookKey: 'example',
+          title: 'Example', coverUrl: '', source: 'senkuro', chapterId: '2',
+          chapterName: 'Глава 2', createdAt: 1);
+        await db.insert('inbox', {'profile': '', 'identity': 'example|v0:c2',
+          'payload': jsonEncode(entry.toJson()), 'systemClaimed': 0,
+          if (queuedV3) 'systemQueuedAt': 1,
+          if (!queuedV3) 'systemToken': 5});
+      });
+      await old.close();
+      final store = ChapterInboxStore(profileId: '');
+      expect((await store.load()).length, 1);
+      expect((await store.pendingSystemNotifications()).length, queuedV3 ? 1 : 0);
+      final upgraded = await openDatabase(path);
+      expect(await upgraded.getVersion(), 4);
+      if (!queuedV3) expect((await upgraded.query('inbox')).single['systemToken'], 5);
+    });
+  }
+  test('read change during a batch stops further handoff without changing page progress', () async {
+    final library = await makeLibrary([FakeSource('senkuro')]);
+    final book = library.items.single.toUnified();
+    await library.savePosition(book, const Chapter(id: '1', name: 'Глава 1'),
+      'senkuro', pageIndex: 7, pageCount: 20);
+    final store = ChapterInboxStore();
+    for (var n = 2; n <= 3; n++) {
+      await store.add('example', 'Example', '', 'senkuro',
+        Chapter(id: '$n', name: 'Глава $n'), systemPending: true, sourceId: '1');
+    }
+    expect(await ChapterNotificationService.instance.postNewChapters([],
+      preferences: InAppOnlyPreferences(), permissionCheck: () async => true,
+      sendNotification: (_) async {
+        await library.markRead(book, const Chapter(id: '3', name: 'Глава 3'), 'senkuro');
+      }), 1);
+    await library.load();
+    expect(library.items.single.lastPageIndex, 7);
+    expect((await store.load()).firstWhere((e) => e.chapterId == '3').hidden, isTrue);
+  });
+
 }
