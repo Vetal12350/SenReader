@@ -53,12 +53,15 @@ class ChapterInboxStore {
   Future<Database> _database() async {
     final path = databasePathOverride ??
         '${await getDatabasesPath()}/senreader_chapter_inbox_v2.db';
-    final db = await openDatabase(path, version: 1, onCreate: (db, _) async {
+    final db = await openDatabase(path, version: 2, onCreate: (db, _) async {
       await db.execute('CREATE TABLE inbox (profile TEXT NOT NULL, '
           'identity TEXT NOT NULL, payload TEXT NOT NULL, '
           'systemClaimed INTEGER NOT NULL DEFAULT 0, '
           'PRIMARY KEY(profile, identity))');
       await db.execute('CREATE TABLE migration (id TEXT PRIMARY KEY)');
+      await _createScanState(db);
+    }, onUpgrade: (db, oldVersion, _) async {
+      if (oldVersion < 2) await _createScanState(db);
     });
     // Once migrated, avoid decoding the entire legacy JSON for every
     // inbox load/insert. The old preference itself remains untouched.
@@ -101,6 +104,43 @@ class ChapterInboxStore {
       }
     }
     return db;
+  }
+
+  static Future<void> _createScanState(Database db) => db.execute(
+      'CREATE TABLE scan_state (profile TEXT NOT NULL, book TEXT NOT NULL, '
+      'source TEXT NOT NULL, sourceId TEXT NOT NULL, payload TEXT NOT NULL, '
+      'PRIMARY KEY(profile, book, source, sourceId))');
+
+  /// Scan metadata must never rewrite the SharedPreferences library blob:
+  /// a background isolate could otherwise overwrite a concurrent page save.
+  Future<void> recordScan(String book, String source, String sourceId,
+      Iterable<String> keys, Map<String, DateTime> dates) async {
+    final profile = await _profile();
+    final db = await _database();
+    await db.transaction((txn) async {
+      final rows = await txn.query('scan_state',
+          where: 'profile = ? AND book = ? AND source = ? AND sourceId = ?',
+          whereArgs: [profile, book, source, sourceId]);
+      final previous = rows.isEmpty ? <String, dynamic>{} :
+          jsonDecode(rows.single['payload'] as String) as Map<String, dynamic>;
+      final seen = <String>{...List<String>.from(previous['seen'] ?? []), ...keys};
+      final times = Map<String, int>.from(previous['dates'] ?? {});
+      for (final entry in dates.entries) {
+        if (entry.value.year >= 2000) {
+          times[entry.key] = entry.value.toUtc().millisecondsSinceEpoch;
+        }
+      }
+      await txn.insert('scan_state', {
+        'profile': profile, 'book': book, 'source': source, 'sourceId': sourceId,
+        'payload': jsonEncode({'seen': seen.toList(), 'dates': times}),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
+  }
+
+  Future<List<Map<String, Object?>>> loadScanState() async {
+    final profile = await _profile();
+    return (await _database()).query('scan_state',
+        where: 'profile = ?', whereArgs: [profile]);
   }
 
   static String _identity(InboxEntry entry) => entry.bookKey + '|' +

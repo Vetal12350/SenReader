@@ -110,7 +110,9 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
   }
 
   Future<void> _open(InboxEntry entry) async {
+    final profile = _displayedProfile;
     await widget.library.load();
+    if (profile != widget.library.profileId) return;
     final saved = widget.library.items.where((x) => x.key == entry.bookKey).firstOrNull;
     if (saved == null || !saved.entries.containsKey(entry.source)) return;
     final source = widget.repository.sources[entry.source];
@@ -118,6 +120,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     if (source == null || manga == null) return;
     try {
       final detail = await source.detail(manga);
+      if (profile != widget.library.profileId) return;
       final target = detail.chapters.where((x) => x.id == entry.chapterId).firstOrNull;
       if (!mounted) return;
       if (target == null) {

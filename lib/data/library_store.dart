@@ -282,6 +282,22 @@ class LibraryStore extends ChangeNotifier {
         // Preserve malformed storage (do not overwrite it until user changes the library).
       }
     }
+    // Additive device-local scan state, scoped to the exact source ID. Legacy
+    // fields stay intact; the scanner never writes the reading-history blob.
+    final scanState = await ChapterInboxStore(profileId: profileId).loadScanState();
+    for (final row in scanState) {
+      final book = _books[row['book']];
+      final source = row['source'] as String;
+      if (book == null || book.entries[source]?.id != row['sourceId']) continue;
+      final state = jsonDecode(row['payload'] as String) as Map<String, dynamic>;
+      final seen = List<String>.from(state['seen'] as List);
+      book.seenChapterKeys.addAll(seen);
+      book.sourceSeenChapterKeys.putIfAbsent(source, () => <String>{}).addAll(seen);
+      book.initializedSources.add(source);
+      for (final entry in (state['dates'] as Map).entries) {
+        book.sourceChapterDates['$source|${entry.key}'] = entry.value as int;
+      }
+    }
     _tombstones.clear();
     final rawDeleted = prefs.getString(_deletedKey);
     if (rawDeleted != null) {
@@ -455,17 +471,10 @@ class LibraryStore extends ChangeNotifier {
     if (expectedProfile != null && profileId != expectedProfile) return;
     final item = _books[bookKey];
     if (item == null || !item.entries.containsKey(source)) return;
-    item.seenChapterKeys.addAll(seenKeys);
-    item.sourceSeenChapterKeys.putIfAbsent(source, () => <String>{})
-        .addAll(seenKeys);
-    for (final chapter in sourceDates.entries) {
-      if (chapter.value.year >= 2000) {
-        item.sourceChapterDates['$source|${chapter.key}'] =
-            chapter.value.toUtc().millisecondsSinceEpoch;
-      }
-    }
-    item.initializedSources.add(source);
-    await _save();
+    await ChapterInboxStore(profileId: profileId).recordScan(
+        bookKey, source, item.entries[source]!.id, seenKeys, sourceDates);
+    await _reload();
+    notifyListeners();
   }
 
   /// Record the newest VERIFIED chapter after a successful source detail load.

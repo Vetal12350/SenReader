@@ -439,15 +439,6 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     if (!mounted || request != _suggestionRequest ||
         profile != widget.library.profileId) return;
     final suggestions = unreadInboxSuggestions(saved, inbox);
-    for (final item in saved) {
-      final cached = eligibleNewChapter(item, _newChapters[item.key]);
-      if (cached == null) continue;
-      final current = suggestions[item.key];
-      if (current == null ||
-          (compareChapterChronology(cached, current) ?? 1) < 0) {
-        suggestions[item.key] = cached;
-      }
-    }
     setState(() { _newChapters..clear()..addAll(suggestions); });
 
 
@@ -848,7 +839,9 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     final info = ChapterNotificationService.decodePayload(payload);
     if (info == null) return;
     await widget.library.load();
-    if (!mounted) return;
+    // Legacy payloads have no provable UID and are guest-only.
+    final profile = info['profile'] ?? '';
+    if (!mounted || widget.library.profileId != profile) return;
     SavedBook? saved;
     for (final book in widget.library.items) {
       if (book.key == info['book']) { saved = book; break; }
@@ -862,6 +855,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     try {
       final detail = await source.detail(entry);
       await widget.library.load();
+      if (widget.library.profileId != profile) return;
       if (!(widget.library.get(saved.toUnified())?.entries.containsKey(sourceKey) ?? false)) return;
       Chapter? matched;
       for (final chapter in detail.chapters) {
