@@ -55,18 +55,28 @@ class ChapterNotificationService {
     'source': discovery.sourceKey,
     'chapter': discovery.chapter.id,
     'canonical': discovery.canonicalKey,
+    if (discovery.profileId != null) 'profile': discovery.profileId,
   });
 
   static Map<String, String>? decodePayload(String? payload) {
     if (payload == null || payload.length > 4096) return null;
     try {
       final raw = jsonDecode(payload);
-      if (raw is! Map || raw.length != 4) return null;
+      if (raw is! Map || (raw.length != 4 && raw.length != 5)) return null;
       final fields = <String, String>{};
       for (final key in ['book', 'source', 'chapter', 'canonical']) {
         final value = raw[key];
         if (value is! String || value.isEmpty || value.length > 512) return null;
         fields[key] = value;
+      }
+      if (raw.length == 5) {
+        final profile = raw['profile'];
+        if (profile is! String ||
+            (profile.isNotEmpty &&
+             !RegExp(r'^[a-zA-Z0-9_-]{1,128}$').hasMatch(profile))) {
+          return null;
+        }
+        fields['profile'] = profile;
       }
       return fields;
     } catch (_) {
@@ -76,7 +86,9 @@ class ChapterNotificationService {
 
   /// Stable positive notification ID for this title+chapter across reboots.
   static int notificationId(ChapterDiscovery discovery) {
-    final input = normalizedTitle(discovery.book.title) + ':' + discovery.canonicalKey;
+    final input = (discovery.profileId?.isNotEmpty == true
+        ? '${discovery.profileId}:' : '') +
+        normalizedTitle(discovery.book.title) + ':' + discovery.canonicalKey;
     var value = 0x811c9dc5;
     for (final c in input.codeUnits) {
       value = ((value ^ c) * 0x01000193) & 0xffffffff;

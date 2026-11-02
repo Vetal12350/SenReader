@@ -209,6 +209,9 @@ class ChapterChecker {
               }).toList()
                 ..sort((a, b) =>
                     compareChapterChronology(b.value, a.value) ?? 0);
+              // Deferred candidates must remain unseen even if Doze postpones
+              // the next run beyond the recent-release recovery window.
+              unverifiedRecent.addAll(candidates.skip(2).map((c) => c.key));
               for (final candidate in candidates.take(2)) {
                 try {
                   final pages = await source.pages(candidate.value);
