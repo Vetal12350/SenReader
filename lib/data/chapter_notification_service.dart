@@ -105,11 +105,15 @@ class ChapterNotificationService {
       final saved = library.get(release.book);
       if (saved == null || saved.status != 'reading' ||
           !saved.entries.containsKey(release.sourceKey) ||
+          (release.profileId != null && release.profileId != library.profileId) ||
           !await prefs.enabled()) continue;
-      await ChapterInboxStore().add(normalizedTitle(release.book.title),
+      final inbox = ChapterInboxStore(profileId: library.profileId);
+      await inbox.add(normalizedTitle(release.book.title),
         release.book.title, release.book.coverUrl,
         release.sourceKey, release.chapter);
       if (!canPostSystemNotification) continue;
+      if (!await inbox.claimSystemNotification(normalizedTitle(release.book.title),
+          release.chapter, release.sourceKey)) continue;
       try {
         await _plugin.show(
           id: notificationId(release),
@@ -133,3 +137,4 @@ class ChapterNotificationService {
     return posted;
   }
 }
+
