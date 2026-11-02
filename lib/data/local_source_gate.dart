@@ -10,8 +10,8 @@ class LocalSourceGate {
   final String source;
   static const deadlineKey = #senreaderScanDeadline;
   static bool get expired {
-    final deadline = Zone.current[deadlineKey] as DateTime?;
-    return deadline != null && !DateTime.now().isBefore(deadline);
+    final deadline = Zone.current[deadlineKey] as bool Function()?;
+    return deadline?.call() ?? false;
   }
   Future<T> run<T>(Future<T> Function() request) async {
     final db = await ChapterScanQueue().database();

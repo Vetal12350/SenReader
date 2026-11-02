@@ -75,4 +75,44 @@ void main() {
     expect(await q.claim('uid', 'readmanga', 2000), isNotNull);
     expect(await q.claim('', 'readmanga', 302000), isNotNull);
   });
+  test('profile switch stops a scheduled runner before the next book', () async {
+    final source = FakeSource('senkuro')
+      ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final library = LibraryStore();
+    await library.load();
+    for (var i = 0; i < 3; i++) {
+      await library.setStatus(UnifiedManga(title: 'Book $i', entries: {
+        source.key: MangaEntry(source: source.key, id: '$i', title: 'Book $i'),
+      }), 'reading');
+    }
+    final checker = ChapterChecker(repository: CatalogRepository(sources: {
+      source.key: source}), library: library,
+      afterPair: () => library.switchProfile('other-uid'));
+    expect((await checker.check(smartSchedule: true)).discoveries, isEmpty);
+    expect(source.detailCalls, 1);
+    expect(library.items, isEmpty);
+    await library.switchProfile(null);
+    expect((await ChapterChecker(repository: checker.repository, library: library)
+      .check(smartSchedule: true)).checkedSources, 2);
+  });
+  test('offline scan retries without changing reading history', () async {
+    final source = FakeSource('readmanga')..available = false;
+    final library = LibraryStore();
+    await library.load();
+    await library.setStatus(UnifiedManga(title: 'Example', entries: {
+      source.key: const MangaEntry(source: 'readmanga', id: '1', title: 'Example'),
+    }), 'reading');
+    final checker = ChapterChecker(repository: CatalogRepository(sources: {
+      source.key: source}), library: library);
+    expect((await checker.check(smartSchedule: true)).warnings, isNotEmpty);
+    expect(library.items.single.initializedSources, isEmpty);
+    source.available = true;
+    source.chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final db = await ChapterScanQueue().database();
+    await db.update('jobs', {'due': 0});
+    expect((await checker.check(smartSchedule: true)).checkedSources, 1);
+    expect(library.items.single.readChapterKeys, isEmpty);
+    expect(library.items.single.preferredSource, 'readmanga');
+  });
+
 }

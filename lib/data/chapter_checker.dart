@@ -78,6 +78,7 @@ class ChapterChecker {
     final inbox = ChapterInboxStore(profileId: scanProfile);
     Future<void> persist(UnifiedManga book, String source,
         Iterable<Chapter> chapters) async {
+      if (LocalSourceGate.expired) throw TimeoutException('Scan expired');
       for (final chapter in chapters) {
         if (LocalSourceGate.expired) throw TimeoutException('Scan expired');
         await inbox.add(normalizedTitle(book.title), book.title,
@@ -381,9 +382,13 @@ class ChapterChecker {
       empty = 0;
       try {
         final remaining = budget - spent();
+        final slice = remaining < const Duration(seconds: 18)
+            ? remaining : const Duration(seconds: 18);
+        final pairWatch = Stopwatch()..start();
         final report = await runZoned(() => check(diagnostics: diagnostics,
-          onlyBook: lease.job.book, onlySource: source).timeout(remaining),
-          zoneValues: {LocalSourceGate.deadlineKey: DateTime.now().add(remaining)});
+          onlyBook: lease.job.book, onlySource: source).timeout(slice),
+          zoneValues: {LocalSourceGate.deadlineKey:
+            () => pairWatch.elapsed >= slice || spent() >= budget});
         checked += report.checkedSources;
         found.addAll(report.discoveries);
         warnings.addAll(report.warnings);
@@ -392,8 +397,10 @@ class ChapterChecker {
             success: report.warnings.isEmpty);
         await afterPair?.call();
       } on TimeoutException {
-        // Keep the finite lease: late I/O cannot cause an immediate duplicate.
-        break;
+        // Keep the finite lease; advance the other provider instead of
+        // spending the entire run on one slow source.
+        checked++;
+        warnings.add('$source: проверка отложена по времени');
       }
     }
     await library.load();
