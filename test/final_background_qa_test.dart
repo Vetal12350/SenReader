@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:senreader/core/models.dart';
+import 'package:senreader/ui/reader_page.dart';
 import 'package:senreader/data/catalog_repository.dart';
 import 'package:senreader/data/chapter_alert_controller.dart';
 import 'package:senreader/data/chapter_checker.dart';
@@ -207,4 +209,92 @@ void main() {
     expect(library.items.single.lastChapter, isEmpty);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  test('stale reader mutations cannot touch another profile', () async {
+    final source = FakeSource('readmanga');
+    final book = UnifiedManga(title: 'Example', entries: {
+      source.key: const MangaEntry(
+          source: 'readmanga', id: '1', title: 'Example'),
+    });
+    const old = Chapter(id: '2', name: 'Глава 2');
+    const newChapter = Chapter(id: '99', name: 'Глава 99');
+    final library = LibraryStore();
+    await library.switchProfile('uid-a');
+    await library.setStatus(book, 'reading');
+    await library.savePosition(book, old, source.key,
+        pageIndex: 1, pageCount: 20);
+    await library.switchProfile('uid-b');
+    await library.setStatus(book, 'reading');
+    await library.savePosition(book, newChapter, source.key,
+        pageIndex: 7, pageCount: 20);
+
+    await library.savePosition(book, old, source.key,
+        pageIndex: 3, pageCount: 20, expectedProfile: 'uid-a');
+    await library.markRead(book, old, source.key,
+        expectedProfile: 'uid-a');
+    await library.recordLatestChapter(book, source.key, [old],
+        expectedProfile: 'uid-a');
+    await library.unmarkRead(book, newChapter, source.key,
+        expectedProfile: 'uid-a');
+
+    await library.load();
+    expect(library.profileId, 'uid-b');
+    expect(library.items.single.lastChapterId, '99');
+    expect(library.items.single.lastPageIndex, 7);
+    expect(library.items.single.readChapterKeys, isEmpty);
+    expect(library.items.single.latestKnownChapterId, isEmpty);
+    await library.switchProfile('uid-a');
+    expect(library.items.single.lastChapterId, '2');
+    expect(library.items.single.lastPageIndex, 1);
+  });
+
+  testWidgets('delayed ReaderPage load cannot overwrite newly active account',
+      (tester) async {
+    final source = _BlockedReaderSource();
+    const chapterA = Chapter(id: '2', name: 'Глава 2');
+    const chapterB = Chapter(id: '99', name: 'Глава 99');
+    final book = UnifiedManga(title: 'Example', entries: {
+      'readmanga': const MangaEntry(
+          source: 'readmanga', id: '1', title: 'Example'),
+    });
+    final library = LibraryStore();
+    await library.switchProfile('uid-a');
+    await library.setStatus(book, 'reading');
+    await tester.pumpWidget(MaterialApp(home: ReaderPage(
+      book: book, chapter: chapterA, sourceKey: source.key,
+      repository: CatalogRepository(sources: {source.key: source}),
+      library: library,
+      chapters: const [chapterA],
+    )));
+    await tester.pump();
+
+    await library.switchProfile('uid-b');
+    await library.setStatus(book, 'reading');
+    await library.savePosition(book, chapterB, source.key,
+        pageIndex: 7, pageCount: 20);
+
+    // The HTTP result belongs to A, but is delivered while B is active.
+    source.completePages();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 80));
+    await library.load();
+    expect(library.profileId, 'uid-b');
+    expect(library.items.single.lastChapterId, '99');
+    expect(library.items.single.lastPageIndex, 7);
+    expect(library.items.single.readChapterKeys, isEmpty);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+}
+
+class _BlockedReaderSource extends FakeSource {
+  _BlockedReaderSource() : super('readmanga');
+  final Completer<List<PageImage>> _pages = Completer<List<PageImage>>();
+
+  @override
+  Future<List<PageImage>> pages(Chapter chapter) => _pages.future;
+
+  void completePages() {
+    _pages.complete([const PageImage('https://cdn.example.com/reader-test.jpg')]);
+  }
 }
