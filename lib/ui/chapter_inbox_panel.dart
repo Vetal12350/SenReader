@@ -11,11 +11,12 @@ import 'widgets.dart';
 
 class ChapterInboxPanel extends StatefulWidget {
   const ChapterInboxPanel({super.key, required this.library, required this.repository,
-    required this.alerts, this.onChanged});
+    required this.alerts, this.onChanged, this.inboxStore});
   final LibraryStore library;
   final CatalogRepository repository;
   final ChapterAlertController alerts;
   final VoidCallback? onChanged;
+  final ChapterInboxStore? inboxStore;
   @override State<ChapterInboxPanel> createState() => _ChapterInboxPanelState();
 }
 
@@ -23,7 +24,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
   Timer? _poll;
   bool _refreshing = false;
   String? _displayedProfile;
-  ChapterInboxStore get _store => ChapterInboxStore(
+  ChapterInboxStore get _store => widget.inboxStore ?? ChapterInboxStore(
       profileId: _displayedProfile ?? widget.library.profileId);
   List<InboxEntry> entries = const [];
   bool hidden = false;
@@ -64,7 +65,7 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     _refreshing = true;
     try {
     final profile = widget.library.profileId;
-    final next = await ChapterInboxStore(profileId: profile).load();
+    final next = await (widget.inboxStore ?? ChapterInboxStore(profileId: profile)).load();
     if (mounted && widget.library.profileId == profile) {
       var changed = loading || _displayedProfile != profile ||
           next.length != entries.length;
@@ -269,5 +270,6 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     ]);
   }
 }
+
 
 

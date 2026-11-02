@@ -98,7 +98,8 @@ class ChapterNotificationService {
 
   Future<int> postNewChapters(List<ChapterDiscovery> releases,
       {ChapterAlertPreferences? preferences,
-       Future<bool> Function()? permissionCheck}) async {
+       Future<bool> Function()? permissionCheck,
+       Future<void> Function(ChapterDiscovery)? sendNotification}) async {
     final prefs = preferences ?? ChapterAlertPreferences();
     if (!await prefs.enabled()) return 0;
     // Internal storage is mandatory. Android permission only controls optional
@@ -129,7 +130,16 @@ class ChapterNotificationService {
       if (!await inbox.claimSystemNotification(normalizedTitle(release.book.title),
           release.chapter, release.sourceKey)) continue;
       try {
-        await _plugin.show(
+        await (sendNotification ?? _show)(release);
+        posted++;
+      } catch (_) {
+        // The chapter is already durably saved in the internal inbox.
+      }
+    }
+    return posted;
+  }
+  Future<void> _show(ChapterDiscovery release) async {
+    await _plugin.show(
           id: notificationId(release),
           title: release.book.title,
           body: release.chapter.name,
@@ -143,12 +153,8 @@ class ChapterNotificationService {
           ),
           payload: encodePayload(release),
         );
-        posted++;
-      } catch (_) {
-        // The chapter is already durably saved in the internal inbox.
-      }
-    }
-    return posted;
   }
+
 }
+
 
