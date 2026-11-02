@@ -133,12 +133,37 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   }
 
   int _newUpdateCount = 0;
-  Future<void> _refreshInboxCount() async {
-    final entries = await ChapterInboxStore().load();
-    if (mounted) {
-      setState(() => _newUpdateCount = entries.where((e) => !e.hidden).length);
-      if (tab == 0) unawaited(_refreshNewChapters());
+  Timer? _inboxRefreshTimer;
+  bool _isInForeground = true;
+  bool _inboxPollInFlight = false;
+
+  /// The WorkManager isolate writes SQLite without notifying Flutter widgets.
+  /// Re-read local results while the user watches Home or New Chapters.
+  /// This performs no network requests and does not start a new scan.
+  Future<void> _pollChapterInbox() async {
+    if (!mounted || !_isInForeground || _inboxPollInFlight ||
+        (tab != 0 && tab != 3)) return;
+    _inboxPollInFlight = true;
+    try {
+      await _refreshInboxCount();
+    } catch (_) {
+      // A transient database error must not interrupt normal reading.
+    } finally {
+      _inboxPollInFlight = false;
     }
+  }
+
+  Future<void> _refreshInboxCount() async {
+    final profile = widget.library.profileId;
+    final entries = await ChapterInboxStore(profileId: profile).load();
+    if (!mounted || widget.library.profileId != profile) return;
+    final count = entries.where((e) => !e.hidden).length;
+    if (count != _newUpdateCount) {
+      setState(() => _newUpdateCount = count);
+    }
+    // On Home, reload the local latest chapter identities too: even if an
+    // entry was replaced or archived, the unread count may be unchanged.
+    if (tab == 0) await _refreshNewChapters();
   }
 
   String libraryFilter = 'all';
@@ -209,21 +234,25 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     _fetch();
     if (tab == 2) unawaited(_refreshLibraryRatings());
     unawaited(_refreshInboxCount());
+    _inboxRefreshTimer = Timer.periodic(const Duration(seconds: 20),
+        (_) => unawaited(_pollChapterInbox()));
     ChapterNotificationService.instance.openedPayload.addListener(_onNotificationTap);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onNotificationTap());
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
+    _isInForeground = state == AppLifecycleState.resumed;
+    if (_isInForeground) {
       unawaited(ChapterBackgroundScheduler.checkOnResume());
-      if (tab == 0) unawaited(_refreshNewChapters());
+      unawaited(_pollChapterInbox());
     }
   }
 
   @override void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     debounce?.cancel();
+    _inboxRefreshTimer?.cancel();
     mainTabRequest.removeListener(_onMainTabRequest);
     ChapterNotificationService.instance.openedPayload.removeListener(_onNotificationTap);
     searchController.dispose();
@@ -405,8 +434,10 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
         item.status == 'reading').toList()
       ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
     // Home renders durable inbox results; network discovery uses the fair queue.
-    final inbox = await ChapterInboxStore().load();
-    if (!mounted || request != _suggestionRequest) return;
+    final profile = widget.library.profileId;
+    final inbox = await ChapterInboxStore(profileId: profile).load();
+    if (!mounted || request != _suggestionRequest ||
+        profile != widget.library.profileId) return;
     final suggestions = unreadInboxSuggestions(saved, inbox);
     for (final item in saved) {
       final cached = eligibleNewChapter(item, _newChapters[item.key]);
