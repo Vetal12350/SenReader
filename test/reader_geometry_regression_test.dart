@@ -45,19 +45,19 @@ class ControlledImages {
   }
   void complete(String key, [int height = 3000]) {
     final request = pending.remove(key);
-    if (request != null && !request.isCompleted) {
-      request.complete(ImageInfo(image: bitmaps[height]!.clone()));
-    }
+    expect(request, isNotNull, reason: 'No pending decode for $key; requested=$requested');
+    request!.complete(ImageInfo(image: bitmaps[height]!.clone()));
   }
 }
 
-class _ControlledImage extends ImageProvider<String> {
+class _ControlledImage extends ImageProvider<(ControlledImages, String)> {
   const _ControlledImage(this.images, this.id);
   final ControlledImages images;
   final String id;
-  @override Future<String> obtainKey(ImageConfiguration configuration) => SynchronousFuture(id);
-  @override ImageStreamCompleter loadImage(String key, ImageDecoderCallback decode) =>
-      OneFrameImageStreamCompleter(images.load(key));
+  @override Future<(ControlledImages, String)> obtainKey(ImageConfiguration configuration) =>
+      SynchronousFuture((images, id));
+  @override ImageStreamCompleter loadImage((ControlledImages, String) key,
+      ImageDecoderCallback decode) => OneFrameImageStreamCompleter(images.load(key.$2));
 }
 
 Future<void> tick(WidgetTester tester) async {
@@ -81,8 +81,10 @@ void main() {
   });
 
   Future<(GeometrySource, ControlledImages)> mount(WidgetTester tester) async {
-    await tester.binding.setSurfaceSize(const Size(400, 800));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final source = GeometrySource();
     final images = ControlledImages(bitmaps);
     await tester.pumpWidget(MaterialApp(home: ReaderPage(book: source.book,
