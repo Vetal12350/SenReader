@@ -52,6 +52,7 @@ class _RetryableReaderImage extends StatefulWidget {
     required this.pageIndex, required this.width,
     required this.height, required this.fit, required this.onLoaded,
     required this.onRefreshLinks, required this.decodeWidth,
+    this.imageProvider,
     required this.knownHeight, required this.onMeasuredHeight});
   final PageImage page;
   final int pageIndex;
@@ -59,6 +60,7 @@ class _RetryableReaderImage extends StatefulWidget {
   final double? height;
   final BoxFit fit;
   final int decodeWidth;
+  final ImageProvider? imageProvider;
   final double? knownHeight;
   final ValueChanged<double> onMeasuredHeight;
   final VoidCallback onLoaded;
@@ -110,7 +112,7 @@ class _RetryableReaderImageState extends State<_RetryableReaderImage> {
   }
 
   @override Widget build(BuildContext context) {
-    final provider = ResizeImage.resizeIfNeeded(widget.decodeWidth, null,
+    final provider = widget.imageProvider ?? ResizeImage.resizeIfNeeded(widget.decodeWidth, null,
       NetworkImage(widget.page.url, headers: widget.page.headers));
     return Image(
       key: ValueKey('reader-image-attempt-$_attempt'),
@@ -167,7 +169,9 @@ class _RetryableReaderImageState extends State<_RetryableReaderImage> {
 class ReaderPage extends StatefulWidget {
   const ReaderPage({super.key, required this.book, required this.chapter,
     required this.sourceKey, required this.repository, required this.library,
-    this.chapters = const []});
+    this.chapters = const [], this.imageProviderFactory});
+  @visibleForTesting
+  final ImageProvider Function(PageImage, int)? imageProviderFactory;
   final List<Chapter> chapters;
   final UnifiedManga book;
   final Chapter chapter;
@@ -514,7 +518,7 @@ class _ReaderPageState extends State<ReaderPage> {
       final segment = _segments.firstWhere(
           (part) => part.chapter.id == item.chapter.id);
       final page = segment.pages[item.index];
-      final provider = ResizeImage.resizeIfNeeded(decodeWidth, null,
+      final provider = widget.imageProviderFactory?.call(page, decodeWidth) ?? ResizeImage.resizeIfNeeded(decodeWidth, null,
           NetworkImage(page.url, headers: page.headers));
       final stream = provider.resolve(createLocalImageConfiguration(context));
       late final ImageStreamListener listener;
@@ -1214,6 +1218,9 @@ class _ReaderPageState extends State<ReaderPage> {
               final pageWidget = _RetryableReaderImage(
                 key: ValueKey('reader-image-${item.key}-${_chapterReloads[item.chapter.id] ?? 0}'),
                 page: image,
+                imageProvider: widget.imageProviderFactory?.call(image,
+                  readerDecodeWidth(MediaQuery.sizeOf(context).width,
+                    MediaQuery.devicePixelRatioOf(context))),
                 pageIndex: item.index,
                 width: MediaQuery.sizeOf(context).width,
                 height: _fitHeight ? MediaQuery.sizeOf(context).height : null,
@@ -1285,3 +1292,4 @@ class _ReaderPageState extends State<ReaderPage> {
     );
   }
 }
+
