@@ -286,6 +286,17 @@ class ChapterInboxStore {
       }
     });
   }
+  /// Archive/restore a displayed title group atomically without changing
+  /// the individual chapter identities or other profile's inbox.
+  Future<void> setEntriesHidden(Iterable<String> identities,
+      {required bool hidden}) async {
+    final keys = identities.toSet();
+    if (keys.isEmpty) return;
+    await _change((entry) => keys.contains(entry.key) &&
+        entry.hidden != hidden,
+        hidden ? DateTime.now().millisecondsSinceEpoch : 0);
+  }
+
   Future<void> hideEntry(String identity) => _change(
       (e) => e.key == identity && !e.hidden, DateTime.now().millisecondsSinceEpoch);
   Future<void> restoreEntry(String identity) => _change((e) => e.key == identity, 0);

@@ -7,6 +7,7 @@ import '../data/chapter_inbox_store.dart';
 import '../data/chapter_alert_controller.dart';
 import '../data/library_store.dart';
 import 'reader_page.dart';
+import 'chapter_inbox_grouping.dart';
 import 'widgets.dart';
 
 class ChapterInboxPanel extends StatefulWidget {
@@ -153,6 +154,43 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     }
   }
 
+  /// Choosing a chapter avoids silently skipping older unread updates.
+  Future<void> _openGroup(InboxChapterGroup group) async {
+    if (group.entries.length == 1) {
+      await _open(group.latest);
+      return;
+    }
+    final displayedProfile = _displayedProfile;
+    final chapters = group.entries.reversed.toList();
+    final selected = await showModalBottomSheet<InboxEntry>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(child: SizedBox(
+        height: (MediaQuery.sizeOf(sheetContext).height * 0.6)
+            .clamp(180.0, 400.0).toDouble(),
+        child: Column(children: [
+          Padding(padding: const EdgeInsets.all(16),
+            child: Text('Выбери главу',
+              style: Theme.of(sheetContext).textTheme.titleMedium)),
+          Expanded(child: ListView.builder(
+            itemCount: chapters.length,
+            itemBuilder: (context, index) {
+              final chapter = chapters[index];
+              return ListTile(
+                title: Text(displayChapterName(chapter.chapterName)),
+                onTap: () => Navigator.pop(sheetContext, chapter),
+              );
+            },
+          )),
+        ]),
+      )),
+    );
+    if (selected != null && mounted && _displayedProfile == displayedProfile &&
+        widget.library.profileId == displayedProfile) {
+      await _open(selected);
+    }
+  }
+
   static String _dateLabel(int millis) {
     if (millis <= 0) return '';
     final date = DateTime.fromMillisecondsSinceEpoch(millis);
@@ -160,11 +198,11 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
   }
 
   @override Widget build(BuildContext context) {
-    final activeCount = entries.where((e) => !e.hidden).length;
-    final hiddenCount = entries.length - activeCount;
-    final visible = entries.where((e) => e.hidden == hidden).toList()
-      ..sort((a, b) => (hidden ? b.hiddenAt.compareTo(a.hiddenAt) :
-          b.createdAt.compareTo(a.createdAt)));
+    final activeGroups = groupInboxChapters(entries, hidden: false);
+    final hiddenGroups = groupInboxChapters(entries, hidden: true);
+    final visible = hidden ? hiddenGroups : activeGroups;
+    final activeCount = activeGroups.length;
+    final hiddenCount = hiddenGroups.length;
     final theme = Theme.of(context);
     return Column(children: [
       Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
@@ -237,9 +275,10 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
           itemCount: visible.length,
           separatorBuilder: (_, __) => const SizedBox(height: 5),
           itemBuilder: (context, index) {
-            final entry = visible[index];
+            final group = visible[index];
+            final entry = group.latest;
             return Card(clipBehavior: Clip.antiAlias,
-              child: InkWell(onTap: () => _open(entry),
+              child: InkWell(onTap: () => _openGroup(group),
                 child: Padding(padding: const EdgeInsets.all(10),
                   child: Row(children: [
                     ClipRRect(borderRadius: BorderRadius.circular(9),
@@ -251,18 +290,11 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontWeight: FontWeight.w700)),
                       const SizedBox(height: 5),
-                      Text(displayChapterName(entry.chapterName),
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                      Text(group.chapterLabel,
+                        maxLines: 2, overflow: TextOverflow.ellipsis),
                       const SizedBox(height: 7),
-                      Wrap(spacing: 8, crossAxisAlignment:
-                          WrapCrossAlignment.center, children: [
-                        Text(entry.source == 'senkuro' ? 'Senkuro' :
-                          entry.source == 'readmanga' ? 'ReadManga' : 'Удалённый источник',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.primary)),
-                        Text(_dateLabel(entry.createdAt),
-                          style: theme.textTheme.labelSmall),
-                      ]),
+                      Text(_dateLabel(group.newestAt),
+                        style: theme.textTheme.labelSmall),
                     ])),
                     IconButton(
                       tooltip: hidden ? 'Вернуть в новые' : 'Скрыть обновление',
@@ -271,11 +303,10 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
                       onPressed: () async {
                         final store = _store;
                         _revision++;
-                        if (hidden) {
-                          await store.restoreEntry(entry.key);
-                        } else {
-                          await store.hideEntry(entry.key);
-                        }
+                        await store.setEntriesHidden(
+                          group.entries.map((chapter) => chapter.key),
+                          hidden: !hidden,
+                        );
                         await _refresh();
                       }),
                   ]),
