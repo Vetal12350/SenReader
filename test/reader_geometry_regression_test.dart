@@ -18,12 +18,14 @@ class GeometrySource implements MangaSource {
   final chapter = const Chapter(id: '1', name: 'Глава 1');
   int revision = 0;
   int requests = 0;
+  Completer<List<PageImage>>? nextChapter;
   @override Future<List<MangaEntry>> popular() async => [];
   @override Future<List<MangaEntry>> search(String query) async => [];
   @override Future<MangaDetail> detail(MangaEntry entry) async =>
       MangaDetail(entry: entry, chapters: [chapter]);
   @override Future<List<PageImage>> pages(Chapter chapter) async {
     requests++;
+    if (chapter.id == '2' && nextChapter != null) return nextChapter!.future;
     return [for (var i = 0; i < 12; i++) PageImage('${chapter.id}/$i/$revision')];
   }
   UnifiedManga get book => UnifiedManga(title: 'Geometry fixture', entries: {
@@ -80,15 +82,18 @@ void main() {
     PaintingBinding.instance.imageCache.clearLiveImages();
   });
 
-  Future<(GeometrySource, ControlledImages)> mount(WidgetTester tester) async {
+  Future<(GeometrySource, ControlledImages)> mount(WidgetTester tester,
+      {bool continuous = false}) async {
     tester.view.physicalSize = const Size(400, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final source = GeometrySource();
+    if (continuous) source.nextChapter = Completer<List<PageImage>>();
     final images = ControlledImages(bitmaps);
     await tester.pumpWidget(MaterialApp(home: ReaderPage(book: source.book,
-      chapter: source.chapter, sourceKey: source.key, chapters: [source.chapter],
+      chapter: source.chapter, sourceKey: source.key, chapters: [
+        if (continuous) const Chapter(id: '2', name: 'Глава 2'), source.chapter],
       repository: CatalogRepository(sources: {source.key: source}),
       library: LibraryStore(), imageProviderFactory: images.provider)));
     await tick(tester);
@@ -137,5 +142,83 @@ void main() {
     images.complete('1/0/1', 6000);
     await tick(tester);
     expect(tester.getSize(page(0, 1)).height, closeTo(before, 1));
+  });
+
+  testWidgets('late geometry during a drag neither moves the anchor nor ends the gesture', (tester) async {
+    final (_, images) = await mount(tester);
+    images.complete('1/1/0');
+    await tick(tester);
+    final gesture = await tester.startGesture(const Offset(200, 500));
+    await gesture.moveBy(const Offset(0, -440));
+    await tick(tester);
+    final before = tester.getTopLeft(page(1)).dy;
+    images.complete('1/0/0', 12000);
+    await tick(tester);
+    expect(tester.getTopLeft(page(1)).dy, closeTo(before, 1));
+    await gesture.moveBy(const Offset(0, -30));
+    await tick(tester);
+    expect(tester.getTopLeft(page(1)).dy, closeTo(before - 30, 1));
+    final atRelease = tester.getTopLeft(page(1)).dy;
+    await gesture.up();
+    await tick(tester);
+    expect(tester.getTopLeft(page(1)).dy, closeTo(atRelease, 1));
+  });
+
+  testWidgets('cache eviction, reverse navigation and CDN failure keep known geometry', (tester) async {
+    final (_, images) = await mount(tester);
+    images.complete('1/0/0', 6000);
+    await tick(tester);
+    final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
+    list.itemScrollController!.jumpTo(index: 8);
+    await tick(tester);
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+    list.itemScrollController!.jumpTo(index: 0);
+    await tick(tester);
+    expect(tester.getSize(page(0)).height, closeTo(6000, 1));
+    expect(images.pending.containsKey('1/0/0'), isTrue);
+    images.pending.remove('1/0/0')!.completeError(StateError('fixture CDN failure'));
+    await tick(tester);
+    expect(tester.getSize(page(0)).height, closeTo(6000, 1));
+    await tester.pump(const Duration(milliseconds: 500));
+    await tick(tester);
+    images.complete('1/0/0', 6000);
+    await tick(tester);
+    expect(tester.getSize(page(0)).height, closeTo(6000, 1));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('geometry survives width changes independently of decoded cache', (tester) async {
+    final (_, images) = await mount(tester);
+    images.complete('1/0/0', 6000);
+    await tick(tester);
+    tester.view.physicalSize = const Size(320, 800);
+    await tick(tester);
+    expect(tester.getSize(page(0)).height, closeTo(4800, 1));
+    final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
+    list.itemScrollController!.jumpTo(index: 8);
+    await tick(tester);
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+    list.itemScrollController!.jumpTo(index: 0);
+    await tick(tester);
+    expect(tester.getSize(page(0)).height, closeTo(4800, 1));
+  });
+
+  testWidgets('chapter append preserves the preceding visible page and source', (tester) async {
+    final (source, images) = await mount(tester, continuous: true);
+    final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
+    list.itemScrollController!.jumpTo(index: 11, alignment: .1);
+    await tick(tester);
+    images.complete('1/11/0');
+    await tick(tester);
+    final before = tester.getTopLeft(page(11)).dy;
+    source.nextChapter!.complete([const PageImage('2/0/0'), const PageImage('2/1/0')]);
+    await tick(tester);
+    expect(tester.getTopLeft(page(11)).dy, closeTo(before, 1));
+    final updated = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
+    expect(updated.itemCount, 16);
+    expect(tester.widget<ReaderPage>(find.byType(ReaderPage)).sourceKey, 'senkuro');
+    expect(tester.takeException(), isNull);
   });
 }
