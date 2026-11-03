@@ -117,6 +117,7 @@ class _RetryableReaderImageState extends State<_RetryableReaderImage> {
       key: ValueKey('reader-image-attempt-$_attempt'),
       image: provider, width: widget.width, excludeFromSemantics: true,
       height: widget.height ?? widget.knownHeight,
+      alignment: widget.height == null ? Alignment.topCenter : Alignment.center,
       fit: widget.fit, filterQuality: FilterQuality.low,
       frameBuilder: (context, child, frame, wasSync) {
         if (frame != null) {
@@ -204,6 +205,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   final Map<String, double> _pendingRatios = {};
   bool _geometryCommitScheduled = false;
   final Map<String, VoidCallback> _geometryProbes = {};
+  final Map<String, int> _geometryProbeEpochs = {};
   final Map<String, DateTime> _geometryRetryAt = {};
   final List<int> _geometryCandidates = [];
   final Set<String> _geometryAttempted = {};
@@ -295,8 +297,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (_lastGeometryViewportWidth != null &&
         _lastGeometryViewportWidth != width) {
       // Ratios survive rotation; only speculative decoder targets change.
-      _cancelGeometryProbes();
-      _geometryRetryAt.clear();
+      _geometryCandidates.clear();
+      _geometryAttempted.clear();
       _geometryWindow = null;
     }
     _lastGeometryViewportWidth = width;
@@ -582,8 +584,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _geometryEpoch++;
     for (final cancel in _geometryProbes.values.toList()) { cancel(); }
     _geometryProbes.clear();
+    _geometryProbeEpochs.clear();
     _geometryCandidates.clear();
     _geometryAttempted.clear();
+  }
+
+  void _invalidateGeometryProbes() {
+    _geometryEpoch++;
+    _geometryCandidates.clear();
+    _geometryAttempted.clear();
+    // Keep obsolete in-flight slots charged until terminal completion. A
+    // refreshed URL must not multiply speculative HTTP requests behind us.
   }
 
   void _preloadUpcomingGeometry(int first, int last) {
@@ -633,10 +644,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       void finish() {
         deadline?.cancel();
         stream.removeListener(listener);
-        if (epoch == _geometryEpoch) _geometryProbes.remove(item.key);
+        if (_geometryProbeEpochs[item.key] == epoch) {
+          _geometryProbes.remove(item.key);
+          _geometryProbeEpochs.remove(item.key);
+        }
       }
       void next() { scheduleMicrotask(() {
-        if (mounted && epoch == _geometryEpoch) _pumpGeometry();
+        if (mounted) _pumpGeometry();
       }); }
       listener = ImageStreamListener((info, _) {
         try {
@@ -663,6 +677,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         // burst of new speculative downloads. Visible loading is independent.
       });
       _geometryProbes[item.key] = finish;
+      _geometryProbeEpochs[item.key] = epoch;
       stream.addListener(listener);
     }
   }
@@ -767,7 +782,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         _geometryRetryAt.removeWhere((key, _) => key.startsWith('${chapter.id}|'));
         _geometryWindow = null;
       });
-      _cancelGeometryProbes();
+      _invalidateGeometryProbes();
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(

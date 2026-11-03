@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -72,7 +73,14 @@ void main() {
   final bitmaps = <int, ui.Image>{};
   setUpAll(() async {
     for (final height in [3000, 6000, 12000]) {
-      bitmaps[height] = await createTestImage(width: 400, height: height, cache: false);
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      canvas.drawColor(const Color(0xff0000ff), BlendMode.src);
+      canvas.drawRect(const Rect.fromLTWH(0, 0, 400, 200),
+        Paint()..color = const Color(0xffff0000));
+      final picture = recorder.endRecording();
+      bitmaps[height] = await picture.toImage(400, height);
+      picture.dispose();
     }
   });
   tearDownAll(() { for (final image in bitmaps.values) { image.dispose(); } });
@@ -231,8 +239,11 @@ void main() {
     source.revision++;
     await tile.onRefreshLinks();
     await tick(tester);
+    expect(images.pending.containsKey('1/1/1'), isFalse,
+      reason: 'old speculative requests still occupy both slots');
     images.complete('1/2/0', 12000);
     await tick(tester);
+    expect(images.pending.containsKey('1/1/1'), isTrue);
     final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
     list.itemScrollController!.jumpTo(index: 2);
     await tick(tester);
@@ -274,5 +285,26 @@ void main() {
     images.complete('1/0/1', 12000);
     await tick(tester);
     expect(tester.getTopLeft(page(1, 1)).dy, closeTo(before, 1));
+  });
+
+  testWidgets('first decoded frame and committed geometry show the same top pixels', (tester) async {
+    final (_, images) = await mount(tester);
+    images.complete('1/0/0', 3000);
+    await tester.pump(); // decoded frame, before the next layout/ratio commit
+    Future<List<int>> pixel() async {
+      final boundary = tester.renderObject<RenderRepaintBoundary>(
+        find.byType(RepaintBoundary).first);
+      return (await tester.runAsync(() async {
+        final shot = await boundary.toImage();
+        final bytes = (await shot.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+        final offset = (10 * shot.width + 10) * 4;
+        final color = bytes.buffer.asUint8List(bytes.offsetInBytes + offset, 4).toList();
+        shot.dispose();
+        return color;
+      }))!;
+    }
+    expect(await pixel(), [255, 0, 0, 255]);
+    await tick(tester);
+    expect(await pixel(), [255, 0, 0, 255]);
   });
 }
