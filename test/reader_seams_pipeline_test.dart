@@ -142,9 +142,29 @@ void main() {
     final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
     list.itemScrollController!.jumpTo(index: 2, alignment: .5);
     await tick(tester);
-    expect(tester.getSize(page(1, 1)).height, closeTo(400 * 1201 / 778, 1e-6));
     final pixels = await seamPixels(tester, 3, .5);
     expect(pixels.every((p) => p[0] <= 20 && p[1] <= 20 && p[2] <= 20), isTrue,
       reason: 'no letterboxing is permitted after the new intrinsic ratio is known: $pixels');
+    expect(tester.getSize(page(1, 1)).height, closeTo(400 * 1201 / 778, 1e-6));
+  });
+
+  testWidgets('visible and prefetch decode width follow the actual reader viewport', (tester) async {
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final source = _ManyStrips(12);
+    final fixtures = ControlledImages(images);
+    final widths = <int>{};
+    await tester.pumpWidget(MaterialApp(home: Align(alignment: Alignment.topLeft,
+      child: SizedBox(width: 400, child: ReaderPage(book: source.book,
+        chapter: source.chapter, chapters: [source.chapter], sourceKey: source.key,
+        library: LibraryStore(), repository: CatalogRepository(sources: {source.key: source}),
+        imageProviderFactory: (image, width) {
+          widths.add(width);
+          return fixtures.provider(image, width);
+        })))));
+    await tick(tester);
+    expect(widths, {400}, reason: '800px MediaQuery is not the 400px reader pane');
   });
 }
