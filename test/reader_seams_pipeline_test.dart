@@ -14,7 +14,7 @@ class _ManyStrips extends GeometrySource {
   _ManyStrips(this.count);
   final int count;
   @override Future<List<PageImage>> pages(Chapter chapter) async => [
-    for (var i = 0; i < count; i++) PageImage('${chapter.id}/$i/0'),
+    for (var i = 0; i < count; i++) PageImage('${chapter.id}/$i/$revision'),
   ];
 }
 
