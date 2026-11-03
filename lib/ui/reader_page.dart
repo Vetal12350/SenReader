@@ -222,6 +222,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   final Map<String, ValueNotifier<double?>> _pageRatios = {};
   final Map<String, ValueNotifier<bool>> _pagePixels = {};
   Set<String> _activePixelKeys = {};
+  (int, int)? _requestedPixelWindow;
+  bool _pixelWindowScheduled = false;
   final Map<String, double> _pendingRatios = {};
   bool _geometryCommitScheduled = false;
   final Map<String, VoidCallback> _geometryProbes = {};
@@ -540,6 +542,25 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _activePixelKeys = desired;
   }
 
+  String _pixelWindowKey(int first, int last) {
+    final viewport = MediaQuery.sizeOf(context).height;
+    return '$first:$last:$_itemCount:$_forward:${_velocity.abs() > viewport}:$_memoryPressure:$_fitHeight';
+  }
+
+  void _requestPixelWindow(int first, int last) {
+    _requestedPixelWindow = (first, last);
+    if (_pixelWindowScheduled || _pixelWindowKey(first, last) == _geometryWindow) return;
+    _pixelWindowScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _pixelWindowScheduled = false;
+      final range = _requestedPixelWindow;
+      if (mounted && range != null) _preloadUpcomingGeometry(range.$1, range.$2);
+    });
+    // The new visible tiles can be idle placeholders. Their activation must
+    // not depend on another gesture or a loading spinner scheduling a frame.
+    WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
   void _rememberHeight(String key, double height, {required double width}) {
     if (!height.isFinite || height <= 0 || width <= 0) return;
     final ratio = height / width;
@@ -621,6 +642,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _memoryPressure = true;
     _geometryCandidates.clear();
     _geometryWindow = null;
+    final range = _requestedPixelWindow;
+    if (range != null) _requestPixelWindow(range.$1, range.$2);
     // Geometry is tiny and must survive eviction; do not clear global caches
     // or retry all CDN images in response to a pressure notification.
   }
@@ -650,8 +673,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       count: _itemCount, forward: _forward, velocity: _velocity,
       viewport: viewport, memoryPressure: _memoryPressure);
     _updatePixelWindow(first, last, candidates);
-    if (_fitHeight) return;
-    final signature = '$first:$last:$_itemCount:$_forward:${_velocity.abs() > viewport}:$_memoryPressure';
+    final signature = _pixelWindowKey(first, last);
     if (signature != _geometryWindow) {
       _geometryWindow = signature;
       _geometryAttempted.clear();
@@ -659,6 +681,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         ..clear()
         ..addAll(candidates);
     }
+    if (_fitHeight) return;
     _frameMetrics?.sampleCache(cache.currentSizeBytes);
     _pumpGeometry();
   }
@@ -753,10 +776,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // their heights during a swipe and forcing a scroll layout correction.
     final firstIndex = visible.isEmpty ? null : visible.first.index;
     if (firstIndex != null) {
-      final lastIndex = visible.last.index;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _preloadUpcomingGeometry(firstIndex, lastIndex);
-      });
+      _requestPixelWindow(firstIndex, visible.last.index);
     }
 
     // A full completion scan on every pixel of a long image can trigger
