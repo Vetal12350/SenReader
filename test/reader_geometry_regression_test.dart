@@ -112,8 +112,7 @@ void main() {
     final (_, images) = await mount(tester);
     images.complete('1/1/0', 3000);
     await tick(tester);
-    final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
-    list.itemScrollController!.jumpTo(index: 0, alignment: -.55);
+    await tester.drag(find.byType(ScrollablePositionedList), const Offset(0, -440));
     await tick(tester);
     final before = tester.getTopLeft(page(1)).dy;
     expect(before, inExclusiveRange(0, 800));
