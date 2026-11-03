@@ -37,7 +37,7 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
   Future<void> _refreshDiagnostics() async {
     final profile = await ChapterScanRunner.activeProfile();
     final store = ChapterScanScheduleStore();
-    final last = await store.lastRun(profile);
+    final last = await store.lastRun(profile, appOnly: true);
     final worker = await store.lastRun(profile, workmanagerOnly: true);
     final registered = await store.registrationSucceeded(profile);
     final active = await ChapterScanRunner.activeProfile();
@@ -53,7 +53,7 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
     final newSystemEnabled = await prefs.systemNotificationsEnabled();
     await prefs.intervalMinutes();
     final profile = await ChapterScanRunner.activeProfile();
-    final last = await ChapterScanScheduleStore().lastRun(profile);
+    final last = await ChapterScanScheduleStore().lastRun(profile, appOnly: true);
     final worker = await ChapterScanScheduleStore().lastRun(profile,
       workmanagerOnly: true);
     final registered = await ChapterScanScheduleStore().registrationSucceeded(profile);
@@ -165,25 +165,56 @@ class ChapterScanDiagnostics extends StatelessWidget {
     return '${pad(d.day)}.${pad(d.month)}.${d.year} ${pad(d.hour)}:${pad(d.minute)}:${pad(d.second)}';
   }
 
-  @override Widget build(BuildContext context) {
-    final last = lastRun;
-    final text = last == null
-      ? 'Автоматическая проверка ещё не запускалась или её запуск не был сохранён.'
-      : 'Последняя автоматическая попытка: ${date(last.at)} '
-        '(${last.origin == 'app' ? 'при открытии приложения' : 'WorkManager'}). '
-        '${last.resultText}. '
-        '${last.reasonText.isEmpty ? '' : '${last.reasonText}. '}'
-        'Источников проверено: ${last.checkedSources}, '
-        'отложено: ${last.skippedSources}, найдено глав: ${last.foundChapters}. '
-        '${last.nextEligibleAt == null ? '' : 'Не ранее: ${date(last.nextEligibleAt!)}. Это нижняя граница очереди, а не точное время запуска Android.'}';
-    return Padding(padding: const EdgeInsets.only(top: 8),
-      child: Text('$text\n${lastWorkerRun == null
-        ? 'Запуск WorkManager ещё не подтверждён.'
-        : 'Последняя задача WorkManager: ${date(lastWorkerRun!.at)}. ${lastWorkerRun!.resultText}. ${lastWorkerRun!.reasonText}'}\n${registrationSucceeded == false
+  String describe(String label, ChapterBackgroundScanSummary? run) {
+    if (run == null) return '$label: автоматическая проверка ещё не запускалась или её запуск не был сохранён.';
+    final elapsed = run.duration;
+    final seconds = elapsed?.inSeconds ?? DateTime.now().difference(run.at).inSeconds;
+    final duration = elapsed != null
+      ? 'Длительность: ${seconds < 0 ? 0 : seconds} с. '
+      : run.outcome == 'running' ? 'Прошло: ${seconds < 0 ? 0 : seconds} с. ' : '';
+    final end = run.finishedAt == null
+      ? 'Завершение: не подтверждено. '
+      : 'Завершение: ${date(run.finishedAt!)}. ';
+    const skipLabels = {'interval': 'интервал 30 минут', 'lease': 'заняты другой проверкой',
+      'cooldown': 'пауза провайдера', 'budget': 'бюджет времени',
+      'ready': 'ожидают обработки', 'profile_changed': 'профиль изменён'};
+    final skips = run.skipReasons.entries.map((e) => '${skipLabels[e.key] ?? e.key}: ${e.value}').join('; ');
+    const chapterLabels = {'baseline': 'сохранены как исходный список', 'seen': 'уже известны этому источнику',
+      'read': 'уже прочитаны', 'inbox_duplicate': 'уже были в ленте',
+      'unrecognized': 'не распознаны', 'recovered': 'восстановлены из старой базы',
+      'pages_unavailable': 'нет доступных страниц',
+      'verification_deferred': 'проверка страниц отложена'};
+    final chapters = run.chapterDecisions.entries.map((e) =>
+      '${chapterLabels[e.key] ?? e.key}: ${e.value}').join('; ');
+    final delivery = switch (run.systemDelivery) {
+      'disabled' => 'Системные уведомления выключены.',
+      'permission_denied' => 'Нет разрешения Android; внутренний inbox сохранён.',
+      'error' => 'Ошибка доставки Android; ожидающие уведомления сохраняются для повтора.',
+      'pending' => 'Доставка Android ещё не подтверждена; внутренний inbox сохранён.',
+      'processed' => 'Доставка Android обработана, отправлено: ${run.postedNotifications}.',
+      'attempted' => 'Выполнена попытка доставки Android.',
+      _ => '',
+    };
+    return '$label. Начало: ${date(run.at)}. ${run.resultText}. $end$duration'
+      '${run.updatedAt == null ? '' : 'Последняя запись: ${date(run.updatedAt!)}. '}'
+      '${run.reasonText.isEmpty ? '' : '${run.reasonText}. '}'
+      '${run.outcome == 'running' && run.availableSources == 0 ? 'Подготовка списка источников. ' : 'Доступно пар «книга × источник»: ${run.availableSources}. '}'
+      'Источников проверено: ${run.checkedSources}, успешно: ${run.successfulSources}, '
+      'с ошибкой: ${run.failedSources}, отложено: ${run.skippedSources}, '
+      'найдено глав: ${run.foundChapters}. Предупреждений: ${run.warnings}. '
+      '${skips.isEmpty ? '' : 'Причины ожидания: $skips. '}'
+      '${chapters.isEmpty ? '' : 'Обработка глав: $chapters. '}'
+      '${run.nextEligibleAt == null ? '' : 'Не ранее: ${date(run.nextEligibleAt!)}. Это нижняя граница очереди, а не точное время запуска Android. '}'
+      '$delivery';
+  }
+
+  @override Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(top: 8),
+    child: Text('${describe('Последняя проверка при открытии приложения', lastRun)}\n'
+      '${lastWorkerRun == null ? 'Запуск WorkManager ещё не подтверждён.' : describe('Последняя задача WorkManager', lastWorkerRun)}\n'
+      '${registrationSucceeded == false
         ? 'Не удалось зарегистрировать задачи Android. Проверка при открытии доступна; регистрация повторится при следующем открытии.'
         : registrationSucceeded == true ? 'Задачи Android зарегистрированы. Регистрация не подтверждает их фактический запуск.'
         : 'Подтверждения регистрации задач Android пока нет.'}',
-        style: TextStyle(fontSize: 12,
-          color: Theme.of(context).colorScheme.onSurfaceVariant)));
-  }
+      style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant)));
 }

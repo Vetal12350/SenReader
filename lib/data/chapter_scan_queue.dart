@@ -15,22 +15,33 @@ class ScanLease {
   final int token;
 }
 class ScanQueueStatus {
-  ScanQueueStatus(this.reason, this.nextEligibleAt);
+  ScanQueueStatus(this.reason, this.nextEligibleAt, [this.jobReasons = const {}]);
   final String reason;
   final DateTime? nextEligibleAt;
+  final Map<String, String> jobReasons;
 }
 class ChapterScanQueue {
   Future<Database> database() async => openDatabase(
       ChapterInboxStore.databasePathOverride == null
           ? '${await getDatabasesPath()}/senreader_scan_queue.db'
           : '${ChapterInboxStore.databasePathOverride}.queue',
-      version: 1, onCreate: (db, _) async {
+      version: 2, onCreate: (db, _) async {
     await db.execute('CREATE TABLE jobs (profile TEXT, key TEXT, book TEXT, '
       'source TEXT, sourceId TEXT, due INTEGER DEFAULT 0, turn INTEGER DEFAULT 0, '
       'lease INTEGER DEFAULT 0, token INTEGER DEFAULT 0, PRIMARY KEY(profile,key))');
     await db.execute('CREATE TABLE providers (source TEXT PRIMARY KEY, '
       'next INTEGER DEFAULT 0, lease INTEGER DEFAULT 0, token INTEGER DEFAULT 0)');
+    await _createRuns(db);
+  }, onUpgrade: (db, old, _) async {
+    if (old < 2) await _createRuns(db);
   });
+
+  static Future<void> _createRuns(Database db) async {
+    await db.execute('CREATE TABLE scan_runs (id INTEGER PRIMARY KEY AUTOINCREMENT, '
+      'profile TEXT NOT NULL, origin TEXT NOT NULL, started INTEGER NOT NULL, '
+      'updated INTEGER NOT NULL, expires INTEGER NOT NULL, state TEXT NOT NULL, payload TEXT NOT NULL)');
+    await db.execute('CREATE INDEX scan_runs_origin ON scan_runs(profile, origin, id DESC)');
+  }
 
   Future<void> reconcile(String profile, List<ScanJob> jobs) async {
     final db = await database();
@@ -55,6 +66,7 @@ class ChapterScanQueue {
     return db.transaction((t) async {
       final state = await t.query('providers', where: 'source = ?', whereArgs: [source]);
       if (state.isNotEmpty && (state.single['next'] as int) > now + 5000) return null;
+      if (state.isNotEmpty && (state.single['lease'] as int) > now + 5000) return null;
       final rows = await t.query('jobs', where:
         'profile = ? AND source = ? AND due <= ? AND lease <= ?',
         whereArgs: [profile, source, now, now], orderBy: 'turn, key', limit: 1);
@@ -94,28 +106,35 @@ class ChapterScanQueue {
 
   Future<ScanQueueStatus> status(String profile, int now) async {
     final rows = await (await database()).rawQuery(
-      'SELECT j.due, j.lease, COALESCE(p.next,0) AS providerNext '
+      'SELECT j.key, j.due, j.lease, COALESCE(p.next,0) AS providerNext, '
+      'COALESCE(p.lease,0) AS providerLease '
       'FROM jobs j LEFT JOIN providers p ON j.source = p.source WHERE j.profile = ?',
       [profile]);
     if (rows.isEmpty) return ScanQueueStatus('no_reading', null);
     var earliest = 0x7fffffffffffffff;
     var reason = 'interval';
+    final reasons = <String, String>{};
     for (final row in rows) {
       final due = row['due'] as int;
       final lease = row['lease'] as int;
       final provider = row['providerNext'] as int;
+      final providerLease = row['providerLease'] as int;
       var ready = due;
       var cause = 'interval';
       if (lease > ready) { ready = lease; cause = 'lease'; }
+      if (providerLease > now + 5000 && providerLease > ready) {
+        ready = providerLease; cause = 'lease';
+      }
       // Match claim(): its normal two-second request spacing can be awaited;
       // a longer provider restriction must never occupy a worker waiting.
       if (provider > now + 5000 && provider > ready) {
         ready = provider; cause = 'cooldown';
       }
-      if (ready <= now) return ScanQueueStatus('budget', DateTime.fromMillisecondsSinceEpoch(now));
+      if (ready <= now) { ready = now; cause = 'budget'; }
+      reasons[row['key'] as String] = cause;
       if (ready < earliest) { earliest = ready; reason = cause; }
     }
-    return ScanQueueStatus(reason, DateTime.fromMillisecondsSinceEpoch(earliest));
+    return ScanQueueStatus(reason, DateTime.fromMillisecondsSinceEpoch(earliest), reasons);
   }
 }
 

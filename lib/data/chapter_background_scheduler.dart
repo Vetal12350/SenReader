@@ -23,10 +23,10 @@ void chapterWorkDispatcher() {
       // Plugin/bootstrap failure may precede the runner. Best-effort recording:
       // if preferences themselves are unavailable no Dart record is possible.
       try {
-        await ChapterScanScheduleStore().recordRun(await ChapterScanRunner.activeProfile(),
+        await ChapterScanScheduleStore().recordBootstrapFailure(await ChapterScanRunner.activeProfile(),
           ChapterBackgroundScanSummary(at: DateTime.now(), checkedSources: 0,
             skippedSources: 0, foundChapters: 0, warnings: 1,
-            outcome: 'error', reason: 'plugin_error'));
+            outcome: 'error', reason: 'plugin_error', finishedAt: DateTime.now()));
       } catch (_) {}
       return false;
     }

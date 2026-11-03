@@ -11,13 +11,15 @@ import 'library_store.dart';
 /// Persistence/leases and source limits are identical in both entry points.
 class ChapterScanRunner {
   ChapterScanRunner({ChapterAlertPreferences? preferences, LibraryStore? library,
-    CatalogRepository? repository, this.scan, this.deliver})
+    CatalogRepository? repository, ChapterScanScheduleStore? schedule, this.scan, this.deliver})
       : preferences = preferences ?? ChapterAlertPreferences(),
         library = library ?? LibraryStore(),
-        repository = repository ?? CatalogRepository();
+        repository = repository ?? CatalogRepository(),
+        schedule = schedule ?? ChapterScanScheduleStore();
   final ChapterAlertPreferences preferences;
   final LibraryStore library;
   final CatalogRepository repository;
+  final ChapterScanScheduleStore schedule;
   final Future<ChapterScanReport> Function(ChapterChecker)? scan;
   final Future<void> Function(List<ChapterDiscovery>)? deliver;
 
@@ -28,18 +30,27 @@ class ChapterScanRunner {
   }
 
   Future<bool> run({String origin = 'workmanager'}) async {
-    final schedule = ChapterScanScheduleStore();
     final at = DateTime.now();
     final profile = await activeProfile();
     var latest = const ChapterScanReport([], [], 0);
-    Future<void> record(String outcome, String reason) => schedule.recordRun(profile,
-      ChapterBackgroundScanSummary(at: at, checkedSources: latest.checkedSources,
-        skippedSources: latest.skippedSources, foundChapters: latest.discoveries.length,
-        warnings: latest.warnings.length, outcome: outcome, reason: reason,
-        origin: origin, nextEligibleAt: latest.nextEligibleAt));
+    var runId = 0;
+    DateTime? finishedAt;
+    var systemDelivery = 'disabled';
+    var postedNotifications = 0;
+    ChapterBackgroundScanSummary summary(String outcome, String reason) =>
+      ChapterBackgroundScanSummary(at: at, runId: runId,
+        finishedAt: outcome == 'running' ? null : (finishedAt ??= DateTime.now()),
+        checkedSources: latest.checkedSources, skippedSources: latest.skippedSources,
+        availableSources: latest.availableSources, successfulSources: latest.successfulSources,
+        failedSources: latest.failedSources, skipReasons: latest.skipReasons,
+        chapterDecisions: latest.chapterDecisions,
+        foundChapters: latest.discoveries.length, warnings: latest.warnings.length,
+        outcome: outcome, reason: reason, origin: origin,
+        systemDelivery: systemDelivery, postedNotifications: postedNotifications,
+        nextEligibleAt: latest.nextEligibleAt);
+    Future<void> record(String outcome, String reason) => schedule.recordRun(profile, summary(outcome, reason));
     try {
-      // A killed isolate leaves "running", not yesterday's misleading success.
-      await record('running', '');
+      runId = await schedule.beginRun(profile, summary('running', ''));
       if (!await preferences.enabled()) {
         await record('skipped', 'disabled');
         return true;
@@ -65,24 +76,36 @@ class ChapterScanRunner {
       // turn successful discovery into a failed scan or prevent its summary.
       final outcome = latest.warnings.isNotEmpty ? 'partial' :
           latest.checkedSources == 0 ? 'skipped' : 'success';
+      final wantsSystem = await preferences.systemNotificationsEnabled();
+      systemDelivery = wantsSystem ? 'pending' : 'disabled';
       await record(outcome, latest.reason);
-      if (await preferences.systemNotificationsEnabled()) {
+      if (wantsSystem) {
         try {
           if (deliver != null) {
             await deliver!(latest.discoveries).timeout(const Duration(seconds: 10));
+            systemDelivery = 'attempted';
           } else {
             await ChapterNotificationService.instance.initialize(
               captureTaps: origin == 'app').timeout(const Duration(seconds: 10));
             // #125: drain explicit pending intent even with no new discoveries;
             // do not reinsert stale/read/hidden discoveries into the inbox.
-            await ChapterNotificationService.instance.postNewChapters(const [])
-                .timeout(const Duration(seconds: 10));
+            final service = ChapterNotificationService.instance;
+            if (await service.hasPermission().timeout(const Duration(seconds: 5))) {
+              postedNotifications = await service.postNewChapters(const [])
+                  .timeout(const Duration(seconds: 10));
+              systemDelivery = 'processed';
+            } else {
+              systemDelivery = 'permission_denied';
+            }
           }
-        } catch (_) { /* Pending OS intent remains retryable in SQLite v4. */ }
+        } catch (_) {
+          systemDelivery = 'error'; // Pending intent stays retryable in SQLite v4.
+        }
+        await record(outcome, latest.reason);
       }
       return true;
     } catch (_) {
-      await record('error', 'scan_error');
+      await schedule.recordBootstrapFailure(profile, summary('error', 'scan_error'));
       return false;
     }
   }
