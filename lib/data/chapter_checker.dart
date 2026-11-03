@@ -1,4 +1,6 @@
 import 'dart:async';
+import '../core/source.dart';
+import 'senkuro_request_gate.dart';
 import 'chapter_scan_queue.dart';
 import 'local_source_gate.dart';
 import '../core/chapter_identity.dart';
@@ -24,12 +26,14 @@ class ChapterDiscovery {
 class ChapterScanReport {
   const ChapterScanReport(this.discoveries, this.warnings, this.checkedTitles,
       {this.diagnostics = const [], this.checkedSources = 0,
-       this.skippedSources = 0});
+       this.skippedSources = 0, this.reason = '', this.nextEligibleAt});
   final List<ChapterDiscovery> discoveries;
   final List<String> warnings;
   final int checkedTitles;
   final List<String> diagnostics;
   final int checkedSources, skippedSources;
+  final String reason;
+  final DateTime? nextEligibleAt;
 }
 
 /// Checks each precisely title-linked source without moving the reader's
@@ -38,10 +42,12 @@ class ChapterScanReport {
 class ChapterChecker {
   ChapterChecker({required this.repository, required this.library,
     this.afterInboxCommit, this.elapsed, this.afterPair,
+    this.onProgress,
     this.systemNotificationsEnabled = false});
   final bool systemNotificationsEnabled;
   final Duration Function()? elapsed;
   final Future<void> Function()? afterPair;
+  final Future<void> Function(ChapterScanReport)? onProgress;
   /// Fault-injection boundary for interruption regression tests.
   final Future<void> Function()? afterInboxCommit;
   final CatalogRepository repository;
@@ -111,6 +117,16 @@ class ChapterChecker {
     final lastAttempts = smartSchedule
         ? await schedule.load(scanProfile) : <String, int>{};
     final attempts = <String, int>{};
+    var failureReason = '';
+    void failed(Object error) {
+      final message = error is SourceException ? error.message : '';
+      final reason = error is SenkuroRateLimited || message.contains('HTTP 429')
+          ? 'http_429' : message.contains('HTTP 403') ? 'http_403' :
+          error is TimeoutException ? 'timeout' : 'source_error';
+      if (failureReason.isEmpty || reason == 'http_403' || reason == 'http_429') {
+        failureReason = reason;
+      }
+    }
     var checkedSources = 0;
     var skippedSources = 0;
     // Archived and active inbox entries are both proof of earlier delivery.
@@ -152,6 +168,7 @@ class ChapterChecker {
         // background scan of the same source.
         attempts[scanKey] = now.millisecondsSinceEpoch;
         checkedSources++;
+        final warningCount = warnings.length;
         try {
           final detail = smartSchedule
               ? await source.detail(entry).timeout(const Duration(seconds: 18))
@@ -236,9 +253,11 @@ class ChapterChecker {
                   } else {
                     unverifiedRecent.add(candidate.key);
                   }
-                } catch (_) {
+                } catch (error) {
+                  failed(error);
                   // Keep this recent chapter unseen so a later scan retries.
                   unverifiedRecent.add(candidate.key);
+                  warnings.add(saved.title + ': проверка главы отложена');
                 }
               }
             }
@@ -292,7 +311,8 @@ class ChapterChecker {
                     return uri != null && uri.scheme == 'https' &&
                         uri.host.isNotEmpty;
                   })) recovered[item.key] = item.value;
-                } catch (_) {
+                } catch (error) {
+                  failed(error);
                   warnings.add(saved.title + ': проверка главы отложена');
                 }
               }
@@ -328,7 +348,8 @@ class ChapterChecker {
               // exceed this worker's time slice. Replay uses inbox identities.
               await persist(book, sourceKey, [chapter.value]);
               verified[chapter.key] = chapter.value;
-            } catch (_) {
+            } catch (error) {
+              failed(error);
               warnings.add(saved.title + ': глава временно недоступна');
             }
           }
@@ -362,11 +383,19 @@ class ChapterChecker {
           ]);
           delivered.addAll([...newKeys, ...recovered.keys]
               .map((key) => '${current!.key}|$key'));
-        } catch (_) {
+        } catch (error) {
+          failed(error);
           warnings.add(saved.title + ': один из источников недоступен');
           if (diagnostics && sourceKey == saved.preferredSource) {
             scanDetails.add('${saved.title} · ${source.name}: '
                 'не удалось загрузить главы');
+          }
+        } finally {
+          if (!LocalSourceGate.isBackgroundScan) {
+            await ChapterScanQueue().recordManualAttempt(scanProfile,
+              ScanJob(saved.key, sourceKey, entry.id),
+              DateTime.now().millisecondsSinceEpoch,
+              success: warnings.length == warningCount);
           }
         }
       }
@@ -384,7 +413,7 @@ class ChapterChecker {
     });
     return ChapterScanReport(discoveries, warnings, checked,
         diagnostics: scanDetails, checkedSources: checkedSources,
-        skippedSources: skippedSources);
+        skippedSources: skippedSources, reason: failureReason);
   }
   Future<ChapterScanReport> _scheduled(bool diagnostics, Duration budget) async {
     final watch = Stopwatch()..start();
@@ -402,6 +431,7 @@ class ChapterChecker {
     final found = <ChapterDiscovery>[];
     final warnings = <String>[];
     final details = <String>[];
+    var failureReason = '';
     var checked = 0;
     var cursor = 0;
     var empty = 0;
@@ -428,22 +458,34 @@ class ChapterChecker {
         checked += report.checkedSources;
         found.addAll(report.discoveries);
         warnings.addAll(report.warnings);
+        if (report.reason.isNotEmpty &&
+            (failureReason.isEmpty || report.reason.startsWith('http_'))) {
+          failureReason = report.reason;
+        }
         details.addAll(report.diagnostics);
         await queue.finish(profile, lease, DateTime.now().millisecondsSinceEpoch,
             success: report.warnings.isEmpty);
+        await onProgress?.call(ChapterScanReport(found, warnings, checked,
+          checkedSources: checked, skippedSources: jobs.length - checked));
         await afterPair?.call();
       } on TimeoutException {
         // Keep the finite lease; advance the other provider instead of
         // spending the entire run on one slow source.
         checked++;
+        failureReason = 'timeout';
         warnings.add('$source: проверка отложена по времени');
       }
     }
     await library.load();
     if (library.profileId != profile) found.clear();
+    final state = await queue.status(profile, DateTime.now().millisecondsSinceEpoch);
     return ChapterScanReport(found, warnings, checked,
       checkedSources: checked, skippedSources: jobs.length - checked,
-      diagnostics: details);
+      diagnostics: details,
+      reason: library.profileId != profile ? 'profile_changed' :
+          warnings.isNotEmpty ? (failureReason.isNotEmpty ? failureReason : 'source_error') :
+          jobs.isEmpty ? 'no_reading' : checked < jobs.length ? state.reason : '',
+      nextEligibleAt: state.nextEligibleAt);
   }
 
 }

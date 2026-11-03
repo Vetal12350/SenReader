@@ -1,54 +1,15 @@
+import 'dart:async';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:workmanager/workmanager.dart';
-import 'catalog_repository.dart';
 import 'chapter_alert_preferences.dart';
-import 'chapter_checker.dart';
-import 'chapter_notification_service.dart';
+import 'chapter_scan_runner.dart';
 import 'chapter_scan_schedule.dart';
-import 'library_store.dart';
 
 const chapterCheckWork = 'senreader.periodic.chapter_check';
 const chapterCheckUniqueName = 'senreader.chapter-check.unique';
-
-Future<void> _performSmartScan({bool foreground = false}) async {
-  final prefs = ChapterAlertPreferences();
-  if (!await prefs.enabled()) return;
-  final library = LibraryStore();
-  await library.load();
-  if (library.items.isEmpty) return;
-  final profile = library.profileId;
-  final report = await ChapterChecker(
-    repository: CatalogRepository(), library: library,
-    systemNotificationsEnabled: await prefs.systemNotificationsEnabled(),
-  ).check(smartSchedule: true);
-  // If the user switched Google accounts during a foreground check, never
-  // post another profile's notifications.
-  await library.load();
-  if (library.profileId != profile) return;
-  { // Also drain pending OS deliveries left by an earlier worker.
-    // Local inbox delivery is independent of the Android notifications plugin.
-    // A plugin initialization error must not lose discovered chapters.
-    if (await prefs.systemNotificationsEnabled()) {
-      try {
-        await ChapterNotificationService.instance.initialize(
-            captureTaps: foreground);
-      } catch (_) {
-        // Continue to persist the in-app updates even without system alerts.
-      }
-    }
-    await ChapterNotificationService.instance.postNewChapters(
-        report.discoveries);
-  }
-  await ChapterScanScheduleStore().recordRun(profile,
-      ChapterBackgroundScanSummary(
-        at: DateTime.now(), checkedSources: report.checkedSources,
-        skippedSources: report.skippedSources,
-        foundChapters: report.discoveries.length,
-        warnings: report.warnings.length,
-      ));
-}
+const chapterCatchUpUniqueName = 'senreader.chapter-catchup.unique';
 
 @pragma('vm:entry-point')
 void chapterWorkDispatcher() {
@@ -57,71 +18,107 @@ void chapterWorkDispatcher() {
     try {
       WidgetsFlutterBinding.ensureInitialized();
       DartPluginRegistrant.ensureInitialized();
-      await _performSmartScan();
-      return true;
+      return await ChapterScanRunner().run();
     } catch (_) {
-      // Native WorkManager retries transient failures. Reading remains usable.
+      // Plugin/bootstrap failure may precede the runner. Best-effort recording:
+      // if preferences themselves are unavailable no Dart record is possible.
+      try {
+        await ChapterScanScheduleStore().recordRun(await ChapterScanRunner.activeProfile(),
+          ChapterBackgroundScanSummary(at: DateTime.now(), checkedSources: 0,
+            skippedSources: 0, foundChapters: 0, warnings: 1,
+            outcome: 'error', reason: 'plugin_error'));
+      } catch (_) {}
       return false;
     }
   });
 }
 
-/// A single periodic Android task, never one task per saved title.
-/// A 15-minute schedule is opportunistic; actual per-title checks are staggered.
+/// A resume must not depend on native registration or Firebase completing.
+/// SQLite claims and provider gates arbitrate simultaneous workers.
+class ChapterResumeCatchUp {
+  ChapterResumeCatchUp({required this.register, required this.scan});
+  final Future<void> Function() register, scan;
+  Future<void>? _active;
+
+  Future<void> run() {
+    final active = _active;
+    if (active != null) return active;
+    // Schedule native continuation independently. Reading/first frame never
+    // awaits either this registration or the bounded async network scan.
+    unawaited(Future<void>.sync(register).catchError((Object _) {}));
+    return _active = Future<void>.sync(scan).whenComplete(() { _active = null; });
+  }
+}
+
+/// One opportunistic periodic task; no timer/task per saved title.
 class ChapterBackgroundScheduler {
-  static bool _initialized = false;
-  static bool _catchUpActive = false;
+  static Future<void>? _initialization;
+  static final _catchUp = ChapterResumeCatchUp(register: _registerCatchUp,
+    scan: () async { await ChapterScanRunner().run(origin: 'app'); });
 
   static Future<void> initialize() async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
-    if (!_initialized) {
-      await Workmanager().initialize(chapterWorkDispatcher);
-      _initialized = true;
+    try {
+      _initialization ??= Workmanager().initialize(chapterWorkDispatcher);
+      await _initialization;
+    } catch (_) {
+      _initialization = null; // Retry initialization on a later resume.
+      await _registration(false);
+      rethrow;
     }
     await sync();
   }
 
-  /// Catch up when the app opens or resumes: no full-library scan on every
-  /// gesture. The same on-device schedule avoids duplicate requests.
-  static Future<void> checkOnResume() async {
-    if (defaultTargetPlatform != TargetPlatform.android || _catchUpActive) {
-      return;
-    }
-    _catchUpActive = true;
+  static Future<void> _registration(bool success) async {
     try {
-      // Let WorkManager's background isolate perform parsing and database work.
-      // First-frame rendering never waits for a scan or its network requests.
+      await ChapterScanScheduleStore().recordRegistration(
+        await ChapterScanRunner.activeProfile(), success: success);
+    } catch (_) {}
+  }
+
+  static Future<void> checkOnResume() async {
+    if (defaultTargetPlatform != TargetPlatform.android) return;
+    try { await _catchUp.run(); }
+    catch (_) { /* Runner/bootstrap errors must never block the reader. */ }
+  }
+
+  static Future<void> _registerCatchUp() async {
+    try {
       await initialize();
+      if (!await ChapterAlertPreferences().enabled()) return;
       await Workmanager().registerOneOffTask(
-        'senreader.chapter-catchup.unique', chapterCheckWork,
+        chapterCatchUpUniqueName, chapterCheckWork,
         existingWorkPolicy: ExistingWorkPolicy.keep,
         constraints: Constraints(networkType: NetworkType.connected,
           requiresBatteryNotLow: true),
       );
+      await _registration(true);
     } catch (_) {
-      // Background work must not interfere with the foreground reader.
-    } finally {
-      _catchUpActive = false;
+      await _registration(false);
     }
   }
 
   static Future<void> sync() async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
-    final settings = ChapterAlertPreferences();
-    if (!await settings.enabled()) {
-      await Workmanager().cancelByUniqueName(chapterCheckUniqueName);
-      return;
+    try {
+      final settings = ChapterAlertPreferences();
+      if (!await settings.enabled()) {
+        await Workmanager().cancelByUniqueName(chapterCheckUniqueName);
+        await Workmanager().cancelByUniqueName(chapterCatchUpUniqueName);
+        return;
+      }
+      await Workmanager().registerPeriodicTask(
+        chapterCheckUniqueName, chapterCheckWork,
+        frequency: Duration(minutes: await settings.intervalMinutes()),
+        constraints: Constraints(networkType: NetworkType.connected,
+          requiresBatteryNotLow: true),
+        existingWorkPolicy: ExistingPeriodicWorkPolicy.update,
+      );
+      await _registration(true);
+    } catch (_) {
+      await _registration(false);
+      rethrow;
     }
-    await Workmanager().registerPeriodicTask(
-      chapterCheckUniqueName,
-      chapterCheckWork,
-      frequency: Duration(minutes: await settings.intervalMinutes()),
-      constraints: Constraints(
-        networkType: NetworkType.connected,
-        requiresBatteryNotLow: true,
-      ),
-      existingWorkPolicy: ExistingPeriodicWorkPolicy.update,
-    );
   }
 }
 

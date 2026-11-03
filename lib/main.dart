@@ -36,26 +36,21 @@ Future<void> main() async {
   // The app listens for notification launch payloads as soon as it mounts.
   runApp(SenReaderApp(library: library, themes: themes, accounts: accounts));
   WidgetsBinding.instance.addPostFrameCallback((_) {
-    final services = _initializeBackgroundServices();
-    final account = accounts.initialize();
-    unawaited(Future.wait([services, account]).then((_) =>
-        ChapterBackgroundScheduler.checkOnResume()).catchError((Object _) {}));
+    unawaited(_initializeBackgroundServices());
+    unawaited(accounts.initialize().catchError((Object _) {}));
+    // Local catch-up uses the persisted active profile and must not wait for
+    // Firebase or a native notification/WorkManager initialization to finish.
+    unawaited(ChapterBackgroundScheduler.checkOnResume());
   });
 }
 
 /// Keep OS integrations out of the cold-start critical path. Initialize
 /// independently so one unavailable plugin cannot disable the other.
 Future<void> _initializeBackgroundServices() async {
-  try {
-    await ChapterNotificationService.instance.initialize();
-  } catch (_) {
-    // Manual reading and notification history remain available.
-  }
-  try {
-    await ChapterBackgroundScheduler.initialize();
-  } catch (_) {
-    // A failed scheduler registration must never prevent reading.
-  }
+  await Future.wait([
+    ChapterNotificationService.instance.initialize().catchError((Object _) {}),
+    ChapterBackgroundScheduler.initialize().catchError((Object _) {}),
+  ]);
 }
 
 class SenReaderApp extends StatelessWidget {
@@ -1102,4 +1097,5 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     );
   }
 }
+
 

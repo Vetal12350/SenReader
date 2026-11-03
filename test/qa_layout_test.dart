@@ -123,6 +123,9 @@ void main() {
     await tester.tap(find.byTooltip('Настройки'));
     await tester.pumpAndSettle();
     expect(find.byType(ChapterNotificationsPanel), findsOneWidget);
+    // Diagnostics make Settings taller; ListView lazily builds lower actions.
+    await tester.scrollUntilVisible(find.text('Проверить новые главы'), 200,
+      scrollable: find.byType(Scrollable).last);
     expect(find.text('Проверить новые главы'), findsOneWidget);
     expect(find.byType(DropdownButton<int>), findsNothing);
     await tester.tap(find.text('Проверить новые главы'));
@@ -236,3 +239,4 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 }
+

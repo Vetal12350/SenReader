@@ -14,6 +14,11 @@ class ScanLease {
   final ScanJob job;
   final int token;
 }
+class ScanQueueStatus {
+  ScanQueueStatus(this.reason, this.nextEligibleAt);
+  final String reason;
+  final DateTime? nextEligibleAt;
+}
 class ChapterScanQueue {
   Future<Database> database() async => openDatabase(
       ChapterInboxStore.databasePathOverride == null
@@ -66,8 +71,51 @@ class ChapterScanQueue {
   Future<void> finish(String profile, ScanLease lease, int now,
       {required bool success}) async {
     final db = await database();
-    await db.update('jobs', {'lease': 0, 'due': now + (success ? 1800000 : 300000)},
-      where: 'profile = ? AND key = ? AND token = ?',
-      whereArgs: [profile, lease.job.key, lease.token]);
+    await db.rawUpdate('UPDATE jobs SET lease = 0, due = MAX(due, ?) '
+      'WHERE profile = ? AND key = ? AND token = ?',
+      [now + (success ? 1800000 : 300000), profile, lease.job.key, lease.token]);
+  }
+
+  /// Manual attempts and automatic work share one due time. Do not take an
+  /// active worker's lease or token; its fenced completion remains authoritative.
+  Future<void> recordManualAttempt(String profile, ScanJob job, int now,
+      {required bool success}) async {
+    final db = await database();
+    final due = now + (success ? 1800000 : 300000);
+    await db.transaction((t) async {
+      await t.insert('jobs', {'profile': profile, 'key': job.key,
+        'book': job.book, 'source': job.source, 'sourceId': job.id,
+        'due': due, 'turn': now}, conflictAlgorithm: ConflictAlgorithm.ignore);
+      await t.rawUpdate('UPDATE jobs SET due = MAX(due, ?), '
+        'turn = CASE WHEN lease <= ? THEN ? ELSE turn END '
+        'WHERE profile = ? AND key = ?', [due, now, now, profile, job.key]);
+    });
+  }
+
+  Future<ScanQueueStatus> status(String profile, int now) async {
+    final rows = await (await database()).rawQuery(
+      'SELECT j.due, j.lease, COALESCE(p.next,0) AS providerNext '
+      'FROM jobs j LEFT JOIN providers p ON j.source = p.source WHERE j.profile = ?',
+      [profile]);
+    if (rows.isEmpty) return ScanQueueStatus('no_reading', null);
+    var earliest = 0x7fffffffffffffff;
+    var reason = 'interval';
+    for (final row in rows) {
+      final due = row['due'] as int;
+      final lease = row['lease'] as int;
+      final provider = row['providerNext'] as int;
+      var ready = due;
+      var cause = 'interval';
+      if (lease > ready) { ready = lease; cause = 'lease'; }
+      // Match claim(): its normal two-second request spacing can be awaited;
+      // a longer provider restriction must never occupy a worker waiting.
+      if (provider > now + 5000 && provider > ready) {
+        ready = provider; cause = 'cooldown';
+      }
+      if (ready <= now) return ScanQueueStatus('budget', DateTime.fromMillisecondsSinceEpoch(now));
+      if (ready < earliest) { earliest = ready; reason = cause; }
+    }
+    return ScanQueueStatus(reason, DateTime.fromMillisecondsSinceEpoch(earliest));
   }
 }
+
