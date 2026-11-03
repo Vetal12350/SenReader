@@ -43,6 +43,7 @@ class ChapterScanRunner {
         checkedSources: latest.checkedSources, skippedSources: latest.skippedSources,
         availableSources: latest.availableSources, successfulSources: latest.successfulSources,
         failedSources: latest.failedSources, skipReasons: latest.skipReasons,
+        chapterDecisions: latest.chapterDecisions,
         foundChapters: latest.discoveries.length, warnings: latest.warnings.length,
         outcome: outcome, reason: reason, origin: origin,
         systemDelivery: systemDelivery, postedNotifications: postedNotifications,
@@ -104,7 +105,7 @@ class ChapterScanRunner {
       }
       return true;
     } catch (_) {
-      await record('error', 'scan_error');
+      await schedule.recordBootstrapFailure(profile, summary('error', 'scan_error'));
       return false;
     }
   }

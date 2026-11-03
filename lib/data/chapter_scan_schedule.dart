@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'library_store.dart';
 import 'chapter_scan_queue.dart';
+import 'package:sqflite/sqflite.dart';
 
 /// Source-scoped check timing stays on the device and never touches the
 /// cloud-synced library, read markers, or the active reading source.
@@ -35,7 +36,7 @@ class ChapterBackgroundScanSummary {
     this.nextEligibleAt,
     this.runId = 0, this.finishedAt, this.updatedAt, this.expiresAt,
     this.availableSources = 0, this.successfulSources = 0,
-    this.failedSources = 0, this.skipReasons = const {},
+    this.failedSources = 0, this.skipReasons = const {}, this.chapterDecisions = const {},
     this.systemDelivery = 'disabled', this.postedNotifications = 0,
   });
   final DateTime at;
@@ -44,7 +45,7 @@ class ChapterBackgroundScanSummary {
   final String outcome, reason, origin;
   final DateTime? nextEligibleAt, finishedAt, updatedAt, expiresAt;
   final int runId, availableSources, successfulSources, failedSources;
-  final Map<String, int> skipReasons;
+  final Map<String, int> skipReasons, chapterDecisions;
   final String systemDelivery;
   final int postedNotifications;
   Duration? get duration => finishedAt?.difference(at);
@@ -137,28 +138,30 @@ class ChapterScanScheduleStore {
     'finished': value.finishedAt?.millisecondsSinceEpoch,
     'available': value.availableSources, 'successful': value.successfulSources,
     'failed': value.failedSources, 'skipReasons': value.skipReasons,
+    'chapters': value.chapterDecisions,
     'delivery': value.systemDelivery, 'posted': value.postedNotifications,
   };
 
   /// Every actual run gets a monotonic identity, including simultaneous
   /// periodic/one-off workers. Checkpoints update their own row only.
+  Future<int> _insertRun(DatabaseExecutor t, String profile,
+      ChapterBackgroundScanSummary value, int now) async {
+    final id = await t.insert('scan_runs', {
+      'profile': profile, 'origin': value.origin,
+      'started': value.at.millisecondsSinceEpoch, 'updated': now,
+      'expires': now + activityLease.inMilliseconds,
+      'state': value.outcome, 'payload': jsonEncode(_encode(value)),
+    });
+    // Only new diagnostic history is bounded. Existing user data stays intact.
+    await t.rawDelete('DELETE FROM scan_runs WHERE profile = ? AND origin = ? '
+      'AND id NOT IN (SELECT id FROM scan_runs WHERE profile = ? AND origin = ? '
+      'ORDER BY id DESC LIMIT 8)', [profile, value.origin, profile, value.origin]);
+    return id;
+  }
+
   Future<int> beginRun(String profile, ChapterBackgroundScanSummary value) async {
     final db = await ChapterScanQueue().database();
-    final now = _clock().millisecondsSinceEpoch;
-    return db.transaction((t) async {
-      final id = await t.insert('scan_runs', {
-        'profile': profile, 'origin': value.origin,
-        'started': value.at.millisecondsSinceEpoch, 'updated': now,
-        'expires': now + activityLease.inMilliseconds,
-        'state': value.outcome, 'payload': jsonEncode(_encode(value)),
-      });
-      // Retain eight diagnostic attempts per origin/profile, never library,
-      // inbox, jobs or provider restrictions. Pruned owners cannot write back.
-      await t.rawDelete('DELETE FROM scan_runs WHERE profile = ? AND origin = ? '
-        'AND id NOT IN (SELECT id FROM scan_runs WHERE profile = ? AND origin = ? '
-        'ORDER BY id DESC LIMIT 8)', [profile, value.origin, profile, value.origin]);
-      return id;
-    });
+    return db.transaction((t) => _insertRun(t, profile, value, _clock().millisecondsSinceEpoch));
   }
 
   Future<void> recordRun(String profile, ChapterBackgroundScanSummary value) async {
@@ -167,10 +170,12 @@ class ChapterScanScheduleStore {
     if (value.runId == 0) {
       // Compatibility for bootstrap/legacy callers without a run identity.
       // Never let an old timestamp overwrite a newer attempt of that origin.
-      final latest = await db.query('scan_runs', where: 'profile = ? AND origin = ?',
-        whereArgs: [profile, value.origin], orderBy: 'id DESC', limit: 1);
-      if (latest.isNotEmpty && (latest.single['started'] as int) > value.at.millisecondsSinceEpoch) return;
-      await beginRun(profile, value);
+      await db.transaction((t) async {
+        final latest = await t.query('scan_runs', where: 'profile = ? AND origin = ?',
+          whereArgs: [profile, value.origin], orderBy: 'id DESC', limit: 1);
+        if (latest.isNotEmpty && (latest.single['started'] as int) > value.at.millisecondsSinceEpoch) return;
+        await _insertRun(t, profile, value, now);
+      });
       return;
     }
     await db.update('scan_runs', {
@@ -181,16 +186,34 @@ class ChapterScanScheduleStore {
       whereArgs: [value.runId, profile, value.origin, 'running', now, value.outcome, 'running']);
   }
 
+  Future<void> recordBootstrapFailure(String profile,
+      ChapterBackgroundScanSummary value) async {
+    try { await recordRun(profile, value); }
+    catch (_) {
+      await (await _prefs()).setString('$_lastPrefix.bootstrap.${value.origin}${_suffix(profile)}',
+        jsonEncode(_encode(value)));
+    }
+  }
+
   Future<ChapterBackgroundScanSummary?> lastRun(String profile,
       {bool workmanagerOnly = false, bool appOnly = false}) async {
-    final db = await ChapterScanQueue().database();
     final origin = workmanagerOnly ? 'workmanager' : appOnly ? 'app' : null;
-    final rows = await db.query('scan_runs',
-      where: 'profile = ?${origin == null ? '' : ' AND origin = ?'}',
-      whereArgs: [profile, if (origin != null) origin], orderBy: 'id DESC', limit: 1);
-    if (rows.isNotEmpty) return _decode(rows.single['payload'] as String, row: rows.single);
-    // Preserve v1 summaries in place. They never recorded a confirmed end.
+    ChapterBackgroundScanSummary? latest;
+    try {
+      final db = await ChapterScanQueue().database();
+      final rows = await db.query('scan_runs',
+        where: 'profile = ?${origin == null ? '' : ' AND origin = ?'}',
+        whereArgs: [profile, if (origin != null) origin], orderBy: 'id DESC', limit: 1);
+      if (rows.isNotEmpty) latest = _decode(rows.single['payload'] as String, row: rows.single);
+    } catch (_) { /* SQLite bootstrap failure may still have a preferences record. */ }
     final prefs = await _prefs();
+    for (final candidate in origin == null ? ['app', 'workmanager'] : [origin]) {
+      final bootstrap = prefs.getString('$_lastPrefix.bootstrap.$candidate${_suffix(profile)}');
+      final failure = bootstrap == null ? null : _decode(bootstrap);
+      if (failure != null && (latest == null || failure.at.isAfter(latest.at))) latest = failure;
+    }
+    if (latest != null) return latest;
+    // Preserve v1 summaries in place. They never recorded a confirmed end.
     var raw = prefs.getString('$_lastPrefix${workmanagerOnly ? '.workmanager' : ''}${_suffix(profile)}');
     if (raw == null && workmanagerOnly) raw = prefs.getString('$_lastPrefix${_suffix(profile)}');
     final legacy = raw == null ? null : _decode(raw);
@@ -222,6 +245,7 @@ class ChapterScanScheduleStore {
         successfulSources: (record['successful'] as num?)?.toInt() ?? 0,
         failedSources: (record['failed'] as num?)?.toInt() ?? 0,
         skipReasons: record['skipReasons'] is Map ? Map<String, int>.from(record['skipReasons']) : const {},
+        chapterDecisions: record['chapters'] is Map ? Map<String, int>.from(record['chapters']) : const {},
         systemDelivery: record['delivery'] as String? ?? 'unknown',
         postedNotifications: (record['posted'] as num?)?.toInt() ?? 0,
         outcome: outcome,

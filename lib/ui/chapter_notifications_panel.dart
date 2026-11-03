@@ -179,6 +179,12 @@ class ChapterScanDiagnostics extends StatelessWidget {
       'cooldown': 'пауза провайдера', 'budget': 'бюджет времени',
       'ready': 'ожидают обработки', 'profile_changed': 'профиль изменён'};
     final skips = run.skipReasons.entries.map((e) => '${skipLabels[e.key] ?? e.key}: ${e.value}').join('; ');
+    const chapterLabels = {'baseline': 'сохранены как исходный список', 'seen': 'уже известны этому источнику',
+      'read': 'уже прочитаны', 'inbox_duplicate': 'уже были в ленте',
+      'unrecognized': 'не распознаны', 'pages_unavailable': 'нет доступных страниц',
+      'verification_deferred': 'проверка страниц отложена'};
+    final chapters = run.chapterDecisions.entries.map((e) =>
+      '${chapterLabels[e.key] ?? e.key}: ${e.value}').join('; ');
     final delivery = switch (run.systemDelivery) {
       'disabled' => 'Системные уведомления выключены.',
       'permission_denied' => 'Нет разрешения Android; внутренний inbox сохранён.',
@@ -196,6 +202,7 @@ class ChapterScanDiagnostics extends StatelessWidget {
       'с ошибкой: ${run.failedSources}, отложено: ${run.skippedSources}, '
       'найдено глав: ${run.foundChapters}. Предупреждений: ${run.warnings}. '
       '${skips.isEmpty ? '' : 'Причины ожидания: $skips. '}'
+      '${chapters.isEmpty ? '' : 'Обработка глав: $chapters. '}'
       '${run.nextEligibleAt == null ? '' : 'Не ранее: ${date(run.nextEligibleAt!)}. Это нижняя граница очереди, а не точное время запуска Android. '}'
       '$delivery';
   }

@@ -28,14 +28,14 @@ class ChapterScanReport {
       {this.diagnostics = const [], this.checkedSources = 0,
        this.skippedSources = 0, this.reason = '', this.nextEligibleAt,
        this.availableSources = 0, this.successfulSources = 0,
-       this.failedSources = 0, this.skipReasons = const {}});
+       this.failedSources = 0, this.skipReasons = const {}, this.chapterDecisions = const {}});
   final List<ChapterDiscovery> discoveries;
   final List<String> warnings;
   final int checkedTitles;
   final List<String> diagnostics;
   final int checkedSources, skippedSources;
   final int availableSources, successfulSources, failedSources;
-  final Map<String, int> skipReasons;
+  final Map<String, int> skipReasons, chapterDecisions;
   final String reason;
   final DateTime? nextEligibleAt;
 }
@@ -47,8 +47,10 @@ class ChapterChecker {
   ChapterChecker({required this.repository, required this.library,
     this.afterInboxCommit, this.elapsed, this.afterPair,
     this.onProgress, this.onDiscovery,
+    this.sourceSlice = const Duration(seconds: 45),
     this.systemNotificationsEnabled = false});
   final bool systemNotificationsEnabled;
+  final Duration sourceSlice;
   final Duration Function()? elapsed;
   final Future<void> Function()? afterPair;
   final Future<void> Function(ChapterScanReport)? onProgress;
@@ -89,6 +91,10 @@ class ChapterChecker {
     final discoveries = <ChapterDiscovery>[];
     final warnings = <String>[];
     final scanDetails = <String>[];
+    final decisions = <String, int>{};
+    void note(String reason, [int count = 1]) {
+      if (count > 0) decisions.update(reason, (n) => n + count, ifAbsent: () => count);
+    }
     final now = DateTime.now();
     final scanProfile = library.profileId;
     final originalSource = <String, String>{};
@@ -205,7 +211,8 @@ class ChapterChecker {
           final chapters = <String, Chapter>{};
           for (final chapter in detail.chapters) {
             final key = canonicalChapterKey(chapter);
-            if (key != null) chapters.putIfAbsent(key, () => chapter);
+            if (key != null) { chapters.putIfAbsent(key, () => chapter); }
+            else { note('unrecognized'); }
           }
           if (detail.chapters.isNotEmpty && chapters.isEmpty) {
             throw const FormatException('Unrecognized chapter metadata');
@@ -277,6 +284,7 @@ class ChapterChecker {
                     await checkpoint(book, sourceKey, candidate.value, candidate.key);
                   } else {
                     unverifiedRecent.add(candidate.key);
+                    note('pages_unavailable');
                     warnings.add(saved.title + ': страницы главы пока недоступны');
                     if (failureReason.isEmpty) failureReason = 'pages_unavailable';
                   }
@@ -295,6 +303,9 @@ class ChapterChecker {
                 current.preferredSource != originalSource[saved.key] ||
                 current.entries[sourceKey]?.id != entry.id) continue;
             requireTime();
+            note('baseline', chapters.keys.where((key) =>
+                !unverifiedRecent.contains(key) && !delivered.contains('${current!.key}|$key')).length);
+            note('verification_deferred', unverifiedRecent.length);
             await library.recordChapterScan(current.key, sourceKey,
                 chapters.keys.where((key) => !unverifiedRecent.contains(key)),
                 sourceDates: dates, expectedProfile: scanProfile);
@@ -336,6 +347,7 @@ class ChapterChecker {
                     await checkpoint(book, sourceKey, item.value, item.key);
                     recovered[item.key] = item.value;
                   } else {
+                    note('pages_unavailable');
                     warnings.add(saved.title + ': страницы главы пока недоступны');
                     if (failureReason.isEmpty) failureReason = 'pages_unavailable';
                   }
@@ -353,13 +365,14 @@ class ChapterChecker {
             if (current == null) break;
             requireTime();
             if (delivered.contains('${current.key}|${chapter.key}')) {
+              note('inbox_duplicate');
               // Repair legacy seen state only after durable inbox evidence.
               await library.recordChapterScan(current.key, sourceKey,
                   [chapter.key], expectedProfile: scanProfile);
               continue;
             }
-            if (_seenAtSource(current, sourceKey, chapter.key) ||
-                _alreadyRead(current, chapter.key)) continue;
+            if (_alreadyRead(current, chapter.key)) { note('read'); continue; }
+            if (_seenAtSource(current, sourceKey, chapter.key)) { note('seen'); continue; }
             attempts++;
             try {
               final pages = await source.pages(chapter.value);
@@ -368,6 +381,7 @@ class ChapterChecker {
                 return uri != null && uri.scheme == 'https' &&
                     uri.host.isNotEmpty;
               })) {
+                note('pages_unavailable');
                 warnings.add(saved.title + ': страницы главы пока недоступны');
                 if (failureReason.isEmpty) failureReason = 'pages_unavailable';
                 continue;
@@ -430,7 +444,7 @@ class ChapterChecker {
     });
     return ChapterScanReport(discoveries, warnings, checked,
         diagnostics: scanDetails, checkedSources: checkedSources,
-        skippedSources: skippedSources, reason: library.profileId != scanProfile
+        skippedSources: skippedSources, chapterDecisions: decisions, reason: library.profileId != scanProfile
             ? 'profile_changed' : failureReason);
   }
   Future<ChapterScanReport> _scheduled(bool diagnostics, Duration budget) async {
@@ -450,6 +464,7 @@ class ChapterChecker {
     final warnings = <String>[];
     final details = <String>[];
     final remainingJobs = jobs.map((job) => job.key).toSet();
+    final decisions = <String, int>{};
     var failureReason = '';
     var checked = 0;
     var successful = 0;
@@ -459,7 +474,7 @@ class ChapterChecker {
     Future<void> progress() async => onProgress?.call(ChapterScanReport(
       found.values.toList(), List.of(warnings), checked,
       availableSources: jobs.length, checkedSources: checked,
-      successfulSources: successful, failedSources: failed,
+      successfulSources: successful, failedSources: failed, chapterDecisions: Map.of(decisions),
       skippedSources: remainingJobs.length, reason: failureReason));
     await progress();
     while (sources.isNotEmpty && spent() < budget && empty < sources.length) {
@@ -473,8 +488,7 @@ class ChapterChecker {
       var pairOpen = true;
       try {
         final remaining = budget - spent();
-        final slice = remaining < const Duration(seconds: 45)
-            ? remaining : const Duration(seconds: 45);
+        final slice = remaining < sourceSlice ? remaining : sourceSlice;
         final pairWatch = Stopwatch()..start();
         final child = ChapterChecker(repository: repository, library: library,
           systemNotificationsEnabled: systemNotificationsEnabled,
@@ -503,6 +517,9 @@ class ChapterChecker {
           failureReason = report.reason;
         }
         details.addAll(report.diagnostics);
+        for (final entry in report.chapterDecisions.entries) {
+          decisions.update(entry.key, (n) => n + entry.value, ifAbsent: () => entry.value);
+        }
         await queue.finish(profile, lease, DateTime.now().millisecondsSinceEpoch,
             success: success);
         remainingJobs.remove(lease.job.key);
@@ -533,7 +550,7 @@ class ChapterChecker {
     return ChapterScanReport(found.values.toList(), warnings, checked,
       availableSources: jobs.length, successfulSources: successful, failedSources: failed,
       checkedSources: checked, skippedSources: remainingJobs.length,
-      skipReasons: skipReasons, diagnostics: details,
+      skipReasons: skipReasons, diagnostics: details, chapterDecisions: decisions,
       reason: library.profileId != profile ? 'profile_changed' :
           warnings.isNotEmpty ? (failureReason.isNotEmpty ? failureReason : 'source_error') :
           jobs.isEmpty ? 'no_reading' : remainingJobs.isNotEmpty ? state.reason : '',

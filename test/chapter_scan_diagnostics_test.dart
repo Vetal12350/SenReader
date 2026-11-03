@@ -5,6 +5,30 @@ import 'package:senreader/data/chapter_scan_schedule.dart';
 import 'package:senreader/ui/chapter_notifications_panel.dart';
 
 void main() {
+  testWidgets('fresh start and finished worker show separate counts, completion and duration', (tester) async {
+    final now = DateTime.now();
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: SingleChildScrollView(
+      child: ChapterScanDiagnostics(registrationSucceeded: true,
+        lastRun: ChapterBackgroundScanSummary(at: now, origin: 'app',
+          outcome: 'running', checkedSources: 0, skippedSources: 200,
+          foundChapters: 0, warnings: 0, availableSources: 200),
+        lastWorkerRun: ChapterBackgroundScanSummary(at: now.subtract(const Duration(minutes: 5)),
+          finishedAt: now.subtract(const Duration(minutes: 4, seconds: 30)),
+          checkedSources: 3, successfulSources: 2, failedSources: 1, skippedSources: 197,
+          foundChapters: 4, warnings: 1, availableSources: 200, outcome: 'partial', reason: 'timeout',
+          skipReasons: const {'budget': 197}, chapterDecisions: const {'baseline': 8},
+          systemDelivery: 'permission_denied'),
+      )))));
+    expect(find.textContaining('Последняя проверка при открытии приложения'), findsOneWidget);
+    expect(find.textContaining('Последняя задача WorkManager'), findsOneWidget);
+    expect(find.textContaining('Выполняется; завершение ещё не подтверждено'), findsOneWidget);
+    expect(find.textContaining('Длительность: 30 с'), findsOneWidget);
+    expect(find.textContaining('успешно: 2, с ошибкой: 1'), findsOneWidget);
+    expect(find.textContaining('сохранены как исходный список: 8'), findsOneWidget);
+    expect(find.textContaining('Нет разрешения Android; внутренний inbox сохранён'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('long diagnostic reasons wrap on a narrow display with large text', (tester) async {
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1;
