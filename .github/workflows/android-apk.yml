@@ -69,6 +69,8 @@ jobs:
         run: python3 scripts/prepare_android.py
       - name: Install packages
         run: flutter pub get
+      - name: Static analysis
+        run: flutter analyze --no-pub --no-fatal-infos --no-fatal-warnings
       - name: Unit tests
         run: flutter test
       - name: Configure optional Firebase client identifiers
