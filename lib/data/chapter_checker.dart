@@ -311,53 +311,6 @@ class ChapterChecker {
                 sourceDates: dates, expectedProfile: scanProfile);
             continue;
           }
-          // Recover just-published, unread chapters swallowed by earlier
-          // versions' silent first scan. A recovery must not replay any
-          // chapter already shown in the inbox (including archived entries).
-          final recovered = <String, Chapter>{};
-          if (sourceKey == current.preferredSource &&
-              current.status == 'reading') {
-            final read = chapters.values.where((ch) =>
-                canonicalChapterKey(ch) != null &&
-                library.isChapterRead(book, ch, sourceKey)).toList()
-              ..sort((a, b) => compareChapterChronology(b, a) ?? 0);
-            final lastRead = read.firstOrNull;
-            if (lastRead != null) {
-              final now = DateTime.now().toUtc();
-              final missed = chapters.entries.where((item) {
-                final time = item.value.publishedAt?.toUtc();
-                if (time == null || !_seenAtSource(current!, sourceKey, item.key) ||
-                    delivered.contains('${current.key}|${item.key}') ||
-                    _alreadyRead(current, item.key)) return false;
-                final age = now.difference(time);
-                return !age.isNegative && age <= const Duration(hours: 36) &&
-                    (compareChapterChronology(item.value, lastRead) ?? 0) > 0;
-              }).toList()
-                ..sort((a, b) =>
-                    compareChapterChronology(b.value, a.value) ?? 0);
-              for (final item in missed.take(2)) {
-                try {
-                  final pages = await source.pages(item.value)
-                      .timeout(const Duration(seconds: 12));
-                  if (pages.any((p) {
-                    final uri = Uri.tryParse(p.url);
-                    return uri != null && uri.scheme == 'https' &&
-                        uri.host.isNotEmpty;
-                  })) {
-                    await checkpoint(book, sourceKey, item.value, item.key);
-                    recovered[item.key] = item.value;
-                  } else {
-                    note('pages_unavailable');
-                    warnings.add(saved.title + ': страницы главы пока недоступны');
-                    if (failureReason.isEmpty) failureReason = 'pages_unavailable';
-                  }
-                } catch (error) {
-                  failed(error);
-                  warnings.add(saved.title + ': проверка главы отложена');
-                }
-              }
-            }
-          }
           final verified = <String, Chapter>{};
           var attempts = 0;
           for (final chapter in chapters.entries) {
@@ -393,6 +346,57 @@ class ChapterChecker {
             } catch (error) {
               failed(error);
               warnings.add(saved.title + ': глава временно недоступна');
+            }
+          }
+          // Process genuinely unseen releases before optional legacy recovery:
+          // old slow pages must not consume the slice before a new release.
+          // Recover just-published, unread chapters swallowed by earlier
+          // versions' silent first scan. A recovery must not replay any
+          // chapter already shown in the inbox (including archived entries).
+          final recovered = <String, Chapter>{};
+          if (current != null && sourceKey == current.preferredSource &&
+              current.status == 'reading') {
+            final read = chapters.values.where((ch) =>
+                canonicalChapterKey(ch) != null &&
+                library.isChapterRead(book, ch, sourceKey)).toList()
+              ..sort((a, b) => compareChapterChronology(b, a) ?? 0);
+            final lastRead = read.firstOrNull;
+            if (lastRead != null) {
+              final now = DateTime.now().toUtc();
+              final missed = chapters.entries.where((item) {
+                final time = item.value.publishedAt?.toUtc();
+                if (time == null || !_seenAtSource(current!, sourceKey, item.key) ||
+                    delivered.contains('${current.key}|${item.key}') ||
+                    _alreadyRead(current, item.key)) return false;
+                final age = now.difference(time);
+                return !age.isNegative && age <= const Duration(hours: 36) &&
+                    (compareChapterChronology(item.value, lastRead) ?? 0) > 0;
+              }).toList()
+                ..sort((a, b) =>
+                    compareChapterChronology(b.value, a.value) ?? 0);
+              for (final item in missed.take(2)) {
+                requireTime();
+                try {
+                  final pages = await source.pages(item.value)
+                      .timeout(const Duration(seconds: 12));
+                  if (pages.any((p) {
+                    final uri = Uri.tryParse(p.url);
+                    return uri != null && uri.scheme == 'https' &&
+                        uri.host.isNotEmpty;
+                  })) {
+                    await checkpoint(book, sourceKey, item.value, item.key);
+                    recovered[item.key] = item.value;
+                    note('recovered');
+                  } else {
+                    note('pages_unavailable');
+                    warnings.add(saved.title + ': страницы главы пока недоступны');
+                    if (failureReason.isEmpty) failureReason = 'pages_unavailable';
+                  }
+                } catch (error) {
+                  failed(error);
+                  warnings.add(saved.title + ': проверка главы отложена');
+                }
+              }
             }
           }
           if (verified.isEmpty && recovered.isEmpty) continue;

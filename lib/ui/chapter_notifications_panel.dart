@@ -181,7 +181,8 @@ class ChapterScanDiagnostics extends StatelessWidget {
     final skips = run.skipReasons.entries.map((e) => '${skipLabels[e.key] ?? e.key}: ${e.value}').join('; ');
     const chapterLabels = {'baseline': 'сохранены как исходный список', 'seen': 'уже известны этому источнику',
       'read': 'уже прочитаны', 'inbox_duplicate': 'уже были в ленте',
-      'unrecognized': 'не распознаны', 'pages_unavailable': 'нет доступных страниц',
+      'unrecognized': 'не распознаны', 'recovered': 'восстановлены из старой базы',
+      'pages_unavailable': 'нет доступных страниц',
       'verification_deferred': 'проверка страниц отложена'};
     final chapters = run.chapterDecisions.entries.map((e) =>
       '${chapterLabels[e.key] ?? e.key}: ${e.value}').join('; ');
@@ -197,7 +198,7 @@ class ChapterScanDiagnostics extends StatelessWidget {
     return '$label. Начало: ${date(run.at)}. ${run.resultText}. $end$duration'
       '${run.updatedAt == null ? '' : 'Последняя запись: ${date(run.updatedAt!)}. '}'
       '${run.reasonText.isEmpty ? '' : '${run.reasonText}. '}'
-      'Доступно пар «книга × источник»: ${run.availableSources}. '
+      '${run.outcome == 'running' && run.availableSources == 0 ? 'Подготовка списка источников. ' : 'Доступно пар «книга × источник»: ${run.availableSources}. '}'
       'Источников проверено: ${run.checkedSources}, успешно: ${run.successfulSources}, '
       'с ошибкой: ${run.failedSources}, отложено: ${run.skippedSources}, '
       'найдено глав: ${run.foundChapters}. Предупреждений: ${run.warnings}. '

@@ -15,10 +15,6 @@ import 'automatic_scan_reliability_test.dart' show ControlledSource;
 import 'chapter_alert_opt_in_test.dart' show MemoryAlertPreferences;
 import 'chapter_checker_test.dart' show makeLibrary;
 
-class UnavailableDatabaseFactory implements DatabaseFactory {
-  @override dynamic noSuchMethod(Invocation invocation) => throw StateError('SQLite plugin unavailable');
-}
-
 ChapterBackgroundScanSummary summary(DateTime at, {int id = 0,
     String origin = 'workmanager', String outcome = 'running', int found = 0,
     DateTime? finishedAt}) => ChapterBackgroundScanSummary(at: at, runId: id,
@@ -127,6 +123,34 @@ void main() {
     expect((await db.query('jobs')).single['lease'], leased['lease']);
   });
 
+  test('a running baseline reports its durable release before its second pages request ends', () async {
+    final date = DateTime.now().subtract(const Duration(hours: 1));
+    final source = ControlledSource('senkuro')..chapters = [
+      Chapter(id: '3', name: 'Глава 3', publishedAt: date),
+      Chapter(id: '2', name: 'Глава 2', publishedAt: date),
+      const Chapter(id: '1', name: 'Глава 1'),
+    ];
+    final library = await makeLibrary([source]);
+    await library.markRead(library.items.single.toUnified(), source.chapters.last, source.key);
+    final second = Completer<List<PageImage>>();
+    final started = Completer<void>();
+    source.onPages = (chapter) {
+      if (chapter.id == '2') { started.complete(); return second.future; }
+      return Future.value([const PageImage('https://cdn.example.com/3.jpg')]);
+    };
+    final run = ChapterScanRunner(preferences: MemoryAlertPreferences()..on = true,
+      library: library, repository: CatalogRepository(sources: {source.key: source})).run(origin: 'app');
+    await started.future;
+    final snapshot = (await ChapterScanScheduleStore().lastRun('', appOnly: true))!;
+    second.complete([const PageImage('https://cdn.example.com/2.jpg')]);
+    expect(await run, isTrue);
+    expect(snapshot.outcome, 'running');
+    expect(snapshot.foundChapters, 1);
+    expect(snapshot.availableSources, 1);
+    expect((await ChapterInboxStore(profileId: '').load()).length, 2);
+    expect((await ChapterScanScheduleStore().lastRun('', appOnly: true))!.foundChapters, 2);
+  });
+
   test('queue v1 upgrade preserves existing jobs, fencing and provider cooldown; inbox remains v4', () async {
     final original = ChapterInboxStore.databasePathOverride!;
     final path = '$original.migration.queue';
@@ -173,21 +197,17 @@ void main() {
   });
 
   test('SQLite bootstrap failure remains visible through preferences with separate origins', () async {
-    final factory = databaseFactory;
-    final store = ChapterScanScheduleStore();
+    final store = ChapterScanScheduleStore(database: () async => throw StateError('SQLite plugin unavailable'));
     final now = DateTime.now();
-    databaseFactory = UnavailableDatabaseFactory();
-    try {
-      await store.recordBootstrapFailure('', ChapterBackgroundScanSummary(at: now,
-        checkedSources: 0, skippedSources: 0, foundChapters: 0, warnings: 1,
-        outcome: 'error', reason: 'plugin_error', finishedAt: now));
-      await store.recordBootstrapFailure('', ChapterBackgroundScanSummary(at: now,
-        origin: 'app', checkedSources: 0, skippedSources: 0, foundChapters: 0, warnings: 1,
-        outcome: 'error', reason: 'scan_error', finishedAt: now));
-      expect((await store.lastRun('', workmanagerOnly: true))!.reason, 'plugin_error');
-      expect((await store.lastRun('', appOnly: true))!.reason, 'scan_error');
-      expect(await store.lastRun('uid-a'), isNull);
-    } finally { databaseFactory = factory; }
+    await store.recordBootstrapFailure('', ChapterBackgroundScanSummary(at: now,
+      checkedSources: 0, skippedSources: 0, foundChapters: 0, warnings: 1,
+      outcome: 'error', reason: 'plugin_error', finishedAt: now));
+    await store.recordBootstrapFailure('', ChapterBackgroundScanSummary(at: now,
+      origin: 'app', checkedSources: 0, skippedSources: 0, foundChapters: 0, warnings: 1,
+      outcome: 'error', reason: 'scan_error', finishedAt: now));
     expect((await store.lastRun('', workmanagerOnly: true))!.reason, 'plugin_error');
+    expect((await store.lastRun('', appOnly: true))!.reason, 'scan_error');
+    expect(await store.lastRun('uid-a'), isNull);
+    expect((await ChapterScanScheduleStore().lastRun('', workmanagerOnly: true))!.reason, 'plugin_error');
   });
 }

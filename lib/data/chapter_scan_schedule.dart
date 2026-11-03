@@ -83,8 +83,11 @@ class ChapterBackgroundScanSummary {
 
 /// Reloadable SharedPreferences reads fresh state from the background isolate.
 class ChapterScanScheduleStore {
-  ChapterScanScheduleStore({DateTime Function()? clock}) : _clock = clock ?? DateTime.now;
+  ChapterScanScheduleStore({DateTime Function()? clock, Future<Database> Function()? database})
+      : _clock = clock ?? DateTime.now,
+        _database = database ?? (() => ChapterScanQueue().database());
   final DateTime Function() _clock;
+  final Future<Database> Function() _database;
   // More than the 120s scan budget plus optional native delivery. A fresh
   // start is running, never evidence of a hung or killed Android process.
   static const activityLease = Duration(minutes: 3);
@@ -160,12 +163,12 @@ class ChapterScanScheduleStore {
   }
 
   Future<int> beginRun(String profile, ChapterBackgroundScanSummary value) async {
-    final db = await ChapterScanQueue().database();
+    final db = await _database();
     return db.transaction((t) => _insertRun(t, profile, value, _clock().millisecondsSinceEpoch));
   }
 
   Future<void> recordRun(String profile, ChapterBackgroundScanSummary value) async {
-    final db = await ChapterScanQueue().database();
+    final db = await _database();
     final now = _clock().millisecondsSinceEpoch;
     if (value.runId == 0) {
       // Compatibility for bootstrap/legacy callers without a run identity.
@@ -200,7 +203,7 @@ class ChapterScanScheduleStore {
     final origin = workmanagerOnly ? 'workmanager' : appOnly ? 'app' : null;
     ChapterBackgroundScanSummary? latest;
     try {
-      final db = await ChapterScanQueue().database();
+      final db = await _database();
       final rows = await db.query('scan_runs',
         where: 'profile = ?${origin == null ? '' : ' AND origin = ?'}',
         whereArgs: [profile, if (origin != null) origin], orderBy: 'id DESC', limit: 1);
