@@ -206,8 +206,8 @@ void main() {
     final summary = (await ChapterScanScheduleStore().lastRun(''))!;
     expect(summary.outcome, 'error');
     expect(summary.reason, 'scan_error');
-    final raw = (await SharedPreferences.getInstance())
-        .getString('senreader.chapter_scan_last.v1.guest')!;
+    final raw = (await (await ChapterScanQueue().database()).query('scan_runs'))
+        .single['payload'] as String;
     expect(raw, isNot(contains('private')));
   });
 
