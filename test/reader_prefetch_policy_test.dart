@@ -22,8 +22,10 @@ void main() {
   test('frame metrics distinguish UI/raster budget misses from geometry counters', () {
     final metrics = ReaderFrameMetrics(8333);
     metrics.add([
-      FrameTiming(buildStart: 0, buildFinish: 4000, rasterStart: 5000, rasterFinish: 9000),
-      FrameTiming(buildStart: 10000, buildFinish: 28000, rasterStart: 29000, rasterFinish: 33000),
+      FrameTiming(vsyncStart: 0, buildStart: 0, buildFinish: 4000,
+        rasterStart: 5000, rasterFinish: 9000, rasterFinishWallTime: 9000),
+      FrameTiming(vsyncStart: 10000, buildStart: 10000, buildFinish: 28000,
+        rasterStart: 29000, rasterFinish: 33000, rasterFinishWallTime: 33000),
     ]);
     final report = metrics.report();
     expect(report['frames'], 2);
