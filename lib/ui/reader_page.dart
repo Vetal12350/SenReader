@@ -519,6 +519,24 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     });
   }
 
+  int? _geometryIndex(String key) {
+    final separator = key.lastIndexOf('|');
+    if (separator < 0) return null;
+    final chapter = key.substring(0, separator);
+    final page = int.tryParse(key.substring(separator + 1));
+    if (page == null || page < 0) return null;
+    var offset = 0;
+    for (var i = 0; i < _segments.length; i++) {
+      if (i > 0) offset++;
+      final segment = _segments[i];
+      if (segment.chapter.id == chapter) {
+        return page < segment.pages.length ? offset + page : null;
+      }
+      offset += segment.pages.length;
+    }
+    return null;
+  }
+
   void _commitGeometry() {
     if (_pendingRatios.isEmpty) return;
     final visible = _positions.itemPositions.value.where((p) =>
@@ -527,16 +545,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // Prefer already decoded content, not an unknown loading box above it.
     final known = visible.where((p) =>
       _pageRatios[_pageAt(p.index)!.key]?.value != null).toList();
-    final anchor = known.isNotEmpty ? known.first : visible.firstOrNull;
-    final indexByKey = <String, int>{
-      for (var i = 0; i < _itemCount; i++)
-        if (_pageAt(i) case final page?) page.key: i,
-    };
+    final anchor = known.where((p) => p.itemLeadingEdge >= 0).firstOrNull ??
+        known.firstOrNull ?? visible.firstOrNull;
     var correctAnchor = false;
     final pending = Map<String, double>.from(_pendingRatios);
     _pendingRatios.clear();
     for (final entry in pending.entries) {
-      final index = indexByKey[entry.key];
+      final index = _geometryIndex(entry.key);
       if (index == null) continue;
       final beforeAnchor = anchor != null && index < anchor.index;
       if (beforeAnchor && (_scrollMoving || _autoScrolling)) {
@@ -575,7 +590,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (!mounted || _fitHeight) return;
     final viewport = MediaQuery.sizeOf(context).height;
     final cache = PaintingBinding.instance.imageCache;
-    final signature = '$first:$last:$_forward:${_velocity.abs() > viewport}:$_memoryPressure';
+    final signature = '$first:$last:$_itemCount:$_forward:${_velocity.abs() > viewport}:$_memoryPressure';
     if (signature != _geometryWindow) {
       _geometryWindow = signature;
       _geometryAttempted.clear();
@@ -1003,6 +1018,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _autoScrollRun++;
     if (!_autoScrolling) return;
     _autoScrolling = false;
+    _scheduleGeometryCommit();
     if (mounted && updateUi) setState(() {});
   }
 

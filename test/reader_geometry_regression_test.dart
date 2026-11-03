@@ -221,4 +221,58 @@ void main() {
     expect(tester.widget<ReaderPage>(find.byType(ReaderPage)).sourceKey, 'senkuro');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('stale prefetch after URL refresh cannot publish geometry into a new generation', (tester) async {
+    final (source, images) = await mount(tester);
+    images.complete('1/0/0', 3000);
+    await tick(tester);
+    expect(images.pending.containsKey('1/2/0'), isTrue);
+    final dynamic tile = tester.widget(page(0));
+    source.revision++;
+    await tile.onRefreshLinks();
+    await tick(tester);
+    images.complete('1/2/0', 12000);
+    await tick(tester);
+    final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
+    list.itemScrollController!.jumpTo(index: 2);
+    await tick(tester);
+    expect(tester.getSize(page(2, 1)).height, closeTo(600, 1));
+    images.complete('1/2/1', 3000);
+    await tick(tester);
+    expect(tester.getSize(page(2, 1)).height, closeTo(3000, 1));
+  });
+
+  testWidgets('memory pressure retains geometry and repeated rapid direction changes stay valid', (tester) async {
+    final (_, images) = await mount(tester);
+    images.complete('1/0/0', 6000);
+    await tick(tester);
+    final dynamic reader = tester.state(find.byType(ReaderPage));
+    reader.didHaveMemoryPressure();
+    PaintingBinding.instance.imageCache.clear();
+    final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
+    for (final index in [8, 2, 9, 1, 0]) {
+      list.itemScrollController!.jumpTo(index: index);
+      await tick(tester);
+    }
+    expect(tester.getSize(page(0)).height, closeTo(6000, 1));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('changed ratio after refresh above the viewport preserves the next known page', (tester) async {
+    final (source, images) = await mount(tester);
+    images.complete('1/0/0', 3000);
+    images.complete('1/1/0', 3000);
+    await tick(tester);
+    await tester.drag(find.byType(ScrollablePositionedList), const Offset(0, -2840));
+    await tick(tester);
+    final before = tester.getTopLeft(page(1)).dy;
+    expect(before, inExclusiveRange(0, 800));
+    final dynamic tile = tester.widget(page(0));
+    source.revision++;
+    await tile.onRefreshLinks();
+    await tick(tester);
+    images.complete('1/0/1', 12000);
+    await tick(tester);
+    expect(tester.getTopLeft(page(1, 1)).dy, closeTo(before, 1));
+  });
 }
