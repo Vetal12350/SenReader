@@ -57,6 +57,8 @@ void main() {
   setUpAll(() async {
     images[197] = await bitmap(113, 197);
     images[60] = await bitmap(400, 60);
+    images[1200] = await bitmap(777, 1200);
+    images[1201] = await bitmap(778, 1201);
   });
   tearDownAll(() { for (final image in images.values) { image.dispose(); } });
   setUp(() => SharedPreferences.setMockInitialValues({
@@ -68,8 +70,9 @@ void main() {
   });
 
   Future<(ControlledImages, LibraryStore)> mount(WidgetTester tester, {
-      int physicalWidth = 400, double dpr = 1, int count = 12}) async {
-    tester.view.physicalSize = Size(physicalWidth.toDouble(), 600);
+      int physicalWidth = 400, double dpr = 1, int count = 12,
+      int physicalHeight = 600}) async {
+    tester.view.physicalSize = Size(physicalWidth.toDouble(), physicalHeight.toDouble());
     tester.view.devicePixelRatio = dpr;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -110,10 +113,38 @@ void main() {
       for (final key in fixtures.pending.keys.toList()) { fixtures.complete(key, 60); }
       await tick(tester);
     }
-    final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
-    final visible = list.itemPositionsListener!.itemPositions.value.where((p) =>
-      p.itemTrailingEdge > 0 && p.itemLeadingEdge < 1).length;
+    var visible = 0;
+    for (var index = 0; index < 200; index++) {
+      final finder = page(index);
+      if (finder.evaluate().isEmpty) continue;
+      final rect = tester.getRect(finder);
+      if (rect.bottom > 0 && rect.top < 600) visible++;
+    }
     expect(fixtures.requested.toSet().length, lessThanOrEqualTo(visible + 6),
       reason: 'pixels outside the bounded near-viewport window should remain lazy');
+  });
+
+  testWidgets('subpixel ratio change after URL refresh cannot leave a bright letterbox seam', (tester) async {
+    final (fixtures, _) = await mount(tester, physicalWidth: 1200,
+      physicalHeight: 1800, dpr: 3);
+    for (final key in ['1/0/0', '1/1/0', '1/2/0']) { fixtures.complete(key, 1200); }
+    await tick(tester);
+    final source = tester.widget<ReaderPage>(find.byType(ReaderPage)).repository.sources['senkuro']!
+        as GeometrySource;
+    final dynamic tile = tester.widget(page(0));
+    source.revision++;
+    await tile.onRefreshLinks();
+    await tick(tester);
+    // The new decoded ratio differs by less than one logical pixel. Both
+    // opaque fixtures have entirely dark borders: no source white line exists.
+    for (final key in ['1/0/1', '1/1/1', '1/2/1']) { fixtures.complete(key, 1201); }
+    await tick(tester);
+    final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
+    list.itemScrollController!.jumpTo(index: 2, alignment: .5);
+    await tick(tester);
+    expect(tester.getSize(page(1, 1)).height, closeTo(400 * 1201 / 778, 1e-6));
+    final pixels = await seamPixels(tester, 3, .5);
+    expect(pixels.every((p) => p[0] <= 20 && p[1] <= 20 && p[2] <= 20), isTrue,
+      reason: 'no letterboxing is permitted after the new intrinsic ratio is known: $pixels');
   });
 }
