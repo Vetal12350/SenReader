@@ -519,6 +519,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       _geometryCommitScheduled = false;
       if (mounted) _commitGeometry();
     });
+    // addPostFrameCallback alone does not wake an idle scheduler after a
+    // gesture ends. Do not leave a decoded page cropped until the next touch.
+    WidgetsBinding.instance.ensureVisualUpdate();
   }
 
   int? _geometryIndex(String key) {

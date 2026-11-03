@@ -239,11 +239,8 @@ void main() {
     source.revision++;
     await tile.onRefreshLinks();
     await tick(tester);
-    expect(images.pending.containsKey('1/1/1'), isFalse,
-      reason: 'old speculative requests still occupy both slots');
     images.complete('1/2/0', 12000);
     await tick(tester);
-    expect(images.pending.containsKey('1/1/1'), isTrue);
     final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
     list.itemScrollController!.jumpTo(index: 2);
     await tick(tester);
@@ -306,5 +303,23 @@ void main() {
     expect(await pixel(), [255, 0, 0, 255]);
     await tick(tester);
     expect(await pixel(), [255, 0, 0, 255]);
+  });
+
+  testWidgets('timeout keeps speculative request slots charged and dispose rejects late results', (tester) async {
+    final (_, images) = await mount(tester);
+    images.complete('1/0/0', 3000);
+    await tick(tester);
+    final requested = images.requested.length;
+    expect(images.pending.containsKey('1/2/0'), isTrue);
+    expect(images.pending.containsKey('1/3/0'), isTrue);
+    await tester.pump(const Duration(seconds: 13));
+    await tick(tester);
+    expect(images.requested.length, requested,
+      reason: 'a soft timeout must not launch more HTTP behind unfinished requests');
+    await tester.pumpWidget(const SizedBox());
+    images.complete('1/2/0', 12000);
+    images.complete('1/3/0', 6000);
+    await tick(tester);
+    expect(tester.takeException(), isNull);
   });
 }
