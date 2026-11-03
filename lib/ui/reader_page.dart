@@ -220,6 +220,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   // Aspect ratios outlive bitmap cache entries and do not depend on viewport
   // width. Lightweight route-local metadata is retained for every loaded page.
   final Map<String, ValueNotifier<double?>> _pageRatios = {};
+  final ValueNotifier<int> _listGeometryRevision = ValueNotifier(0);
   final Map<String, ValueNotifier<bool>> _pagePixels = {};
   Set<String> _activePixelKeys = {};
   (int, int)? _requestedPixelWindow;
@@ -616,6 +617,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final anchor = known.where((p) => p.itemLeadingEdge >= 0).firstOrNull ??
         known.firstOrNull ?? visible.firstOrNull;
     var correctAnchor = false;
+    var refreshVisiblePositions = false;
     final pending = Map<String, double>.from(_pendingRatios);
     _pendingRatios.clear();
     for (final entry in pending.entries) {
@@ -630,8 +632,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       }
       _ratioFor(entry.key).value = entry.value;
       correctAnchor |= beforeAnchor;
+      refreshVisiblePositions |= visible.isNotEmpty && index <= visible.last.index;
       _frameMetrics?.geometryCommitted();
     }
+    // PositionedList reports positions on scroll/widget updates, not on a
+    // child's intrinsic relayout. Refresh only the list after a visible batch:
+    // newly exposed pages must activate without waiting for a swipe.
+    if (refreshVisiblePositions) _listGeometryRevision.value++;
     if (correctAnchor && anchor != null && _itemScroll.isAttached) {
       _itemScroll.jumpTo(index: anchor.index, alignment: anchor.itemLeadingEdge);
       _frameMetrics?.anchorCorrected();
@@ -905,6 +912,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _cancelGeometryProbes();
     for (final ratio in _pageRatios.values) { ratio.dispose(); }
     for (final pixels in _pagePixels.values) { pixels.dispose(); }
+    _listGeometryRevision.dispose();
     _frameMetrics?.stop();
     _stopAutoScroll(updateUi: false);
     if (_fullScreen) unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
@@ -1361,7 +1369,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               }
               return false;
             },
-            child: ScrollablePositionedList.builder(
+            child: ValueListenableBuilder<int>(
+            valueListenable: _listGeometryRevision,
+            builder: (context, revision, child) => ScrollablePositionedList.builder(
             key: ValueKey('${widget.sourceKey}:${widget.chapter.id}'),
             itemPositionsListener: _positions,
             itemScrollController: _itemScroll,
@@ -1466,7 +1476,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 child: pageWidget,
               );
             },
-          ));
+          )));
         },
       ),
         ); })),
