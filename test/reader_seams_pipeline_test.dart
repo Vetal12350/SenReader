@@ -121,9 +121,13 @@ void main() {
       final rect = tester.getRect(finder);
       if (rect.bottom > 0 && rect.top < 600) visible++;
     }
+    debugPrint('ReaderShortStripFixture visible=$visible imageStarts=${fixtures.requested.toSet().length}');
+    expect(visible, 10, reason: 'the viewport must fill with decoded 60px strips, not stalled placeholders');
+    for (var index = 0; index < visible; index++) {
+      expect(tester.getSize(page(index)).height, closeTo(60, 1e-6));
+    }
     expect(fixtures.requested.toSet().length, lessThanOrEqualTo(visible + 6),
       reason: 'pixels outside the bounded near-viewport window should remain lazy');
-    debugPrint('ReaderShortStripFixture visible=$visible imageStarts=${fixtures.requested.toSet().length}');
   });
 
   testWidgets('subpixel ratio change after URL refresh cannot leave a bright letterbox seam', (tester) async {

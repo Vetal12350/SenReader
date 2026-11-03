@@ -193,4 +193,3 @@ jobs:
           gh release edit qa-latest \
             --title "SenReader Android QA (подписанная сборка)" \
             --notes "Подписанная сборка main, commit: $GITHUB_SHA. Скачайте SenReader-latest.apk; при ошибке несовместимости подписи не удаляйте установленную версию без резервной копии."
-
