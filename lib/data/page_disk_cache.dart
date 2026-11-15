@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:sqflite/sqflite.dart';
 import '../core/models.dart';
+import 'image_header.dart';
 
 /// Downloads a fetched job list into [dir]; runs inside a background isolate.
 typedef PageDownloader = Future<void> Function(
@@ -69,6 +70,23 @@ class PageDiskCache {
       return await file.exists() && await file.length() > 0 ? file : null;
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Pixel size of a cached page from its header (no decode), or null.
+  Future<(int, int)?> dimensions(String url) async {
+    final file = await cached(url);
+    if (file == null) return null;
+    RandomAccessFile? handle;
+    try {
+      handle = await file.open();
+      // JPEG metadata (EXIF/ICC) can precede the frame header.
+      final head = await handle.read(256 * 1024);
+      return encodedImageSize(head);
+    } catch (_) {
+      return null;
+    } finally {
+      await handle?.close();
     }
   }
 

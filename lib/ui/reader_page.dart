@@ -14,6 +14,7 @@ import '../data/reading_completion.dart';
 import '../data/reader_activity.dart';
 import '../data/page_disk_cache.dart';
 import 'cached_page_image.dart';
+import '../data/image_header.dart';
 import 'detail_page.dart';
 import 'reader_prefetch_policy.dart';
 import 'reader_frame_metrics.dart';
@@ -400,7 +401,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           _segments.add(_ChapterSegment(widget.chapter, pages));
           // C2: download the rest of the chapter to disk off the UI isolate,
           // starting from the reopened page, so scrolling reads local files.
-          unawaited(PageDiskCache.instance.prefetch(pages, from: _initialPage));
+          unawaited(PageDiskCache.instance.prefetch(pages, from: _initialPage)
+            .then((_) => _applyDiskSizes()));
           // Restored progress proves earlier pages were already traversed.
           // The last image must still load before this chapter auto-completes.
           for (var i = 0; i < _initialPage; i++) {
@@ -626,6 +628,51 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // The new visible tiles can be idle placeholders. Their activation must
     // not depend on another gesture or a loading spinner scheduling a frame.
     WidgetsBinding.instance.ensureVisualUpdate();
+  }
+
+  bool _diskSizesRunning = false;
+  int _diskSizesAtMs = 0;
+  final Set<String> _diskSized = {};
+
+  /// Give downloaded pages their final height from the file header, before
+  /// they are decoded or scrolled to. Runs at chapter load, when a chapter
+  /// finishes downloading and when scrolling stops — never mid-gesture, so
+  /// the list relayout this causes happens while nothing moves.
+  Future<void> _applyDiskSizes() async {
+    if (!mounted || _fitHeight || _diskSizesRunning || _segments.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _diskSizesAtMs < 1500) return;
+    _diskSizesAtMs = now;
+    _diskSizesRunning = true;
+    try {
+      final width = _layoutWidth > 0 ? _layoutWidth : MediaQuery.sizeOf(context).width;
+      final decodeWidth = readerDecodeWidth(width, MediaQuery.devicePixelRatioOf(context));
+      final found = <String, double>{};
+      for (final segment in List.of(_segments)) {
+        for (var i = 0; i < segment.pages.length; i++) {
+          final key = _VisibleChapterPage(segment.chapter, i, segment.pages.length).key;
+          if (_diskSized.contains(key) || _pageRatios[key]?.value != null) continue;
+          final size = await PageDiskCache.instance.dimensions(segment.pages[i].url);
+          if (!mounted) return;
+          if (size == null) continue; // not downloaded yet: retried later
+          _diskSized.add(key);
+          final (decodedWidth, decodedHeight) =
+              readerDecodedSize(size.$1, size.$2, decodeWidth);
+          final height = readerLogicalImageHeight(width, decodedWidth, decodedHeight);
+          if (height != null) found[key] = height;
+        }
+      }
+      if (!mounted || found.isEmpty) return;
+      if (_scrollMoving || _autoScrolling) {
+        _diskSized.removeAll(found.keys); // apply at the next scroll end
+        _diskSizesAtMs = 0;
+        return;
+      }
+      _frameMetrics?.note('diskSizes:${found.length}');
+      found.forEach((key, height) => _rememberHeight(key, height, width: width));
+    } finally {
+      _diskSizesRunning = false;
+    }
   }
 
   void _rememberHeight(String key, double height, {required double width}) {
@@ -1033,7 +1080,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         return;
       }
       setState(() => _segments.add(_ChapterSegment(next, pages)));
-      unawaited(PageDiskCache.instance.prefetch(pages));
+      unawaited(PageDiskCache.instance.prefetch(pages)
+        .then((_) => _applyDiskSizes()));
     } catch (_) {
       if (mounted) setState(() => _nextError = 'Не удалось загрузить следующую главу');
     } finally {
@@ -1482,6 +1530,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                 _saveTimer?.cancel();
               }
               if (notice is ScrollEndNotification) {
+                unawaited(_applyDiskSizes());
                 traceReaderInput('scrollEnd');
                 _scrollMoving = false;
                 _scheduleGeometryCommit();
