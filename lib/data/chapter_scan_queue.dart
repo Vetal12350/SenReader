@@ -61,15 +61,22 @@ class ChapterScanQueue {
       }
     });
   }
-  Future<ScanLease?> claim(String profile, String source, int now) async {
+  Future<ScanLease?> claim(String profile, String source, int now,
+      {ScanJob? manualJob}) async {
     final db = await database();
     return db.transaction((t) async {
-      final state = await t.query('providers', where: 'source = ?', whereArgs: [source]);
-      if (state.isNotEmpty && (state.single['next'] as int) > now + 5000) return null;
-      if (state.isNotEmpty && (state.single['lease'] as int) > now + 5000) return null;
+      if (manualJob == null) {
+        final state = await t.query('providers', where: 'source = ?', whereArgs: [source]);
+        if (state.isNotEmpty && (state.single['next'] as int) > now + 5000) return null;
+        if (state.isNotEmpty && (state.single['lease'] as int) > now + 5000) return null;
+      } else {
+        await t.insert('jobs', {'profile': profile, 'key': manualJob.key,
+          'book': manualJob.book, 'source': manualJob.source, 'sourceId': manualJob.id},
+          conflictAlgorithm: ConflictAlgorithm.ignore);
+      }
       final rows = await t.query('jobs', where:
-        'profile = ? AND source = ? AND due <= ? AND lease <= ?',
-        whereArgs: [profile, source, now, now], orderBy: 'turn, key', limit: 1);
+        'profile = ? AND source = ? AND lease <= ? AND ${manualJob == null ? 'due <= ?' : 'key = ?'}',
+        whereArgs: [profile, source, now, manualJob?.key ?? now], orderBy: 'turn, key', limit: 1);
       if (rows.isEmpty) return null;
       final row = rows.single;
       final token = (row['token'] as int) + 1;

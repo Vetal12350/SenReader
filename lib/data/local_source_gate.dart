@@ -1,3 +1,4 @@
+import 'chapter_scan_trace.dart';
 import 'package:sqflite/sqflite.dart';
 import 'dart:async';
 import 'chapter_scan_queue.dart';
@@ -34,13 +35,15 @@ class LocalSourceGate {
   }
   Future<T> run<T>(Future<T> Function() request) async {
     final db = await ChapterScanQueue().database();
-    int? token;
-    while (token == null) {
+    if (expired) throw TimeoutException('Scan budget exhausted');
+    // Initialize once: waiting only needs to read the existing provider row.
+    await db.insert('providers', {'source': source},
+      conflictAlgorithm: ConflictAlgorithm.ignore);
+    final token = await ChapterScanTrace.stage('provider_gate', () async {
+    while (true) {
       if (expired) throw TimeoutException('Scan budget exhausted');
       final now = DateTime.now().millisecondsSinceEpoch;
       final result = await db.transaction((t) async {
-        await t.insert('providers', {'source': source},
-          conflictAlgorithm: ConflictAlgorithm.ignore);
         final row = (await t.query('providers', where: 'source = ?',
           whereArgs: [source])).single;
         final ready = (row['next'] as int) > (row['lease'] as int)
@@ -54,12 +57,13 @@ class LocalSourceGate {
           where: 'source = ?', whereArgs: [source]);
         return nextToken;
       });
-      if (result > 0) { token = result; break; }
+      if (result > 0) return result;
       final delay = Duration(milliseconds: -result - now);
       // Never occupy a worker waiting for a provider cooldown.
       await Future<void>.delayed(delay > const Duration(milliseconds: 200)
           ? const Duration(milliseconds: 200) : delay);
     }
+    });
     try {
       if (expired) throw TimeoutException('Scan budget exhausted');
       return await request();

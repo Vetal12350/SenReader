@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'chapter_scan_trace.dart';
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
@@ -13,22 +14,44 @@ const chapterCatchUpUniqueName = 'senreader.chapter-catchup.unique';
 
 @pragma('vm:entry-point')
 void chapterWorkDispatcher() {
+  ChapterScanTrace().event('dispatcher_entry', 'begin');
+  final active = <ChapterScanTrace>{};
   Workmanager().executeTask((task, data) async {
     if (task != chapterCheckWork) return true;
+    final trace = ChapterScanTrace();
+    active.add(trace);
     try {
-      WidgetsFlutterBinding.ensureInitialized();
-      DartPluginRegistrant.ensureInitialized();
-      return await ChapterScanRunner().run();
+      return await trace.run('dispatch', () async {
+        await trace.step('plugin_bootstrap', () async {
+          WidgetsFlutterBinding.ensureInitialized();
+          DartPluginRegistrant.ensureInitialized();
+        });
+        final success = await ChapterScanRunner().run();
+        trace.event('worker_result', success ? 'success' : 'retry');
+        return success;
+      });
     } catch (_) {
       // Plugin/bootstrap failure may precede the runner. Best-effort recording:
       // if preferences themselves are unavailable no Dart record is possible.
       try {
-        await ChapterScanScheduleStore().recordBootstrapFailure(await ChapterScanRunner.activeProfile(),
+        await trace.step('dispatcher_failure_record', () async => ChapterScanScheduleStore().recordBootstrapFailure(await trace.step('failure_profile_load', ChapterScanRunner.activeProfile),
           ChapterBackgroundScanSummary(at: DateTime.now(), checkedSources: 0,
             skippedSources: 0, foundChapters: 0, warnings: 1,
-            outcome: 'error', reason: 'plugin_error', finishedAt: DateTime.now()));
+            outcome: 'error', reason: 'plugin_error', finishedAt: DateTime.now())));
       } catch (_) {}
+      trace.event('worker_result', 'retry');
       return false;
+    } finally {
+      active.remove(trace);
+    }
+  }, onTaskStopped: (task, reason) async {
+    if (task != chapterCheckWork) return;
+    // Each background engine owns this set. Associate only an unambiguous
+    // active invocation; never borrow an ID from another isolate/worker.
+    if (active.length == 1) {
+      active.single.androidStopped(reason.name);
+    } else {
+      ChapterScanTrace().event('worker_stop_unattributed', reason.name);
     }
   });
 }
@@ -89,6 +112,8 @@ class ChapterBackgroundScheduler {
       await Workmanager().registerOneOffTask(
         chapterCatchUpUniqueName, chapterCheckWork,
         existingWorkPolicy: ExistingWorkPolicy.keep,
+        backoffPolicy: BackoffPolicy.exponential,
+        backoffPolicyDelay: const Duration(minutes: 5),
         constraints: Constraints(networkType: NetworkType.connected,
           requiresBatteryNotLow: true),
       );
@@ -110,6 +135,8 @@ class ChapterBackgroundScheduler {
       await Workmanager().registerPeriodicTask(
         chapterCheckUniqueName, chapterCheckWork,
         frequency: Duration(minutes: await settings.intervalMinutes()),
+        backoffPolicy: BackoffPolicy.exponential,
+        backoffPolicyDelay: const Duration(minutes: 5),
         constraints: Constraints(networkType: NetworkType.connected,
           requiresBatteryNotLow: true),
         existingWorkPolicy: ExistingPeriodicWorkPolicy.update,

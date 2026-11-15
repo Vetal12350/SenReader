@@ -44,7 +44,7 @@ void main() {
     expect(sends, 0);
     expect((await ChapterInboxStore().load()).length, 100);
   });
-  test('old opt-out rows are not sent on opt-in and new releases are bounded', () async {
+  test('old opt-out rows stay silent and fresh chapters remain independent', () async {
     final library = await makeLibrary([FakeSource('senkuro')]);
     final store = ChapterInboxStore();
     for (var n = 1; n <= 100; n++) {
@@ -56,7 +56,10 @@ void main() {
     Future<int> deliver(List<ChapterDiscovery> fresh) =>
       ChapterNotificationService.instance.postNewChapters(fresh,
         preferences: InAppOnlyPreferences(), permissionCheck: () async => true,
-        sendNotification: (d) async { expect(int.parse(d.chapter.id), greaterThan(100)); });
+        sendNotification: (d) async {
+          expect(int.parse(d.chapter.id), inInclusiveRange(101, 125));
+          expect(d.chapterCount, 1);
+        });
     expect(await deliver(releases), 10);
     expect(await deliver([]), 10);
     expect(await deliver([]), 5);
@@ -77,12 +80,12 @@ void main() {
       if (!readFirst) { source.resume!.complete(); await scan; }
       await reader.markRead(book, source.chapters.single, source.key);
       if (readFirst) { source.resume!.complete(); await scan; }
-      expect((await ChapterInboxStore().load()).where((e) => !e.hidden), isEmpty);
+      expect((await ChapterInboxStore().load()).where((e) => !e.hidden && !e.read), isEmpty);
       await reader.load();
       expect(reader.isChapterRead(book, source.chapters.single, source.key), isTrue);
     });
   }
-  test('large inbox does one library load and returns at most ten pending records', () async {
+  test('large inbox groups a title even when it spans more than ten pending records', () async {
     await makeLibrary([FakeSource('senkuro')]);
     final store = ChapterInboxStore();
     for (var n = 1; n <= 200; n++) {
@@ -98,7 +101,9 @@ void main() {
     final library = CountingLibrary();
     expect(await ChapterNotificationService.instance.postNewChapters([],
       libraryStore: library, preferences: InAppOnlyPreferences(),
-      permissionCheck: () async => true, sendNotification: (_) async {}), 10);
+      permissionCheck: () async => true, sendNotification: (batch) async {
+        expect(batch.chapterCount, 1);
+      }), 10);
     expect(library.loads, 1);
   });
   test('opted-in scanner commits OS intent before interruption and permission denial preserves it', () async {
@@ -124,11 +129,14 @@ void main() {
     final book = library.items.single.toUnified();
     await library.switchProfile('a');
     await library.setStatus(book, 'reading');
+    await library.setStatus(UnifiedManga(title: 'Other', entries: {
+      'senkuro': const MangaEntry(source: 'senkuro', id: '2', title: 'Other'),
+    }), 'reading');
     final store = ChapterInboxStore(profileId: 'a');
-    for (var n = 1; n <= 2; n++) {
-      await store.add('example', 'Example', '', 'senkuro',
-        Chapter(id: '$n', name: 'Глава $n'), systemPending: true, sourceId: '1');
-    }
+    await store.add('example', 'Example', '', 'senkuro',
+      const Chapter(id: '1', name: 'Глава 1'), systemPending: true, sourceId: '1');
+    await store.add('other', 'Other', '', 'senkuro',
+      const Chapter(id: '2', name: 'Глава 2'), systemPending: true, sourceId: '2');
     expect(await ChapterNotificationService.instance.postNewChapters([],
       preferences: InAppOnlyPreferences(), permissionCheck: () async => true,
       sendNotification: (_) async { await library.switchProfile('b'); }), 1);
@@ -162,7 +170,7 @@ void main() {
       expect((await store.load()).length, 1);
       expect((await store.pendingSystemNotifications()).length, queuedV3 ? 1 : 0);
       final upgraded = await openDatabase(path);
-      expect(await upgraded.getVersion(), 4);
+      expect(await upgraded.getVersion(), 5);
       if (!queuedV3) expect((await upgraded.query('inbox')).single['systemToken'], 5);
     });
   }
@@ -183,7 +191,7 @@ void main() {
       }), 1);
     await library.load();
     expect(library.items.single.lastPageIndex, 7);
-    expect((await store.load()).firstWhere((e) => e.chapterId == '3').hidden, isTrue);
+    expect((await store.load()).firstWhere((e) => e.chapterId == '3').read, isTrue);
   });
 
 }

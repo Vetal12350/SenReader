@@ -91,7 +91,8 @@ void main() {
   });
 
   Future<(GeometrySource, ControlledImages)> mount(WidgetTester tester,
-      {bool continuous = false}) async {
+      {bool continuous = false, Chapter? openingChapter,
+       LibraryStore? library}) async {
     tester.view.physicalSize = const Size(400, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -100,10 +101,10 @@ void main() {
     if (continuous) source.nextChapter = Completer<List<PageImage>>();
     final images = ControlledImages(bitmaps);
     await tester.pumpWidget(MaterialApp(home: ReaderPage(book: source.book,
-      chapter: source.chapter, sourceKey: source.key, chapters: [
+      chapter: openingChapter ?? source.chapter, sourceKey: source.key, chapters: [
         if (continuous) const Chapter(id: '2', name: 'Глава 2'), source.chapter],
       repository: CatalogRepository(sources: {source.key: source}),
-      library: LibraryStore(), imageProviderFactory: images.provider)));
+      library: library ?? LibraryStore(), imageProviderFactory: images.provider)));
     await tick(tester);
     return (source, images);
   }
@@ -121,6 +122,77 @@ void main() {
     images.complete('1/1/0', 12000);
     await tick(tester);
     expect(rootBuilds, 0);
+  });
+
+  for (final fitHeight in [false, true]) {
+  testWidgets('cold offscreen tiles cannot bypass the speculative queue (fitHeight=$fitHeight)', (tester) async {
+    SharedPreferences.setMockInitialValues({'senreader.reader.fit_height': fitHeight});
+    final (_, images) = await mount(tester);
+    images.complete('1/0/0', 6000);
+    await tick(tester);
+    final listFinder = find.byType(ScrollablePositionedList);
+    final list = tester.widget<ScrollablePositionedList>(listFinder);
+    // Queue slots remain occupied by slow CDN/decode results. A fast forward
+    // window must not let lazy-built Image widgets start additional work.
+    final previous = images.requested.toSet();
+    for (var i = 0; i < 2; i++) {
+      ScrollUpdateNotification(
+        metrics: FixedScrollMetrics(minScrollExtent: 0, maxScrollExtent: 100000,
+          pixels: 1000, viewportDimension: 800, axisDirection: AxisDirection.down,
+          devicePixelRatio: 1),
+        context: tester.element(listFinder), scrollDelta: 1600,
+      ).dispatch(tester.element(listFinder));
+    }
+    list.itemScrollController!.jumpTo(index: 5);
+    await tick(tester);
+    final visible = <int>{};
+    for (final element in find.byWidgetPredicate((w) =>
+        w.runtimeType.toString() == '_RetryableReaderImage').evaluate()) {
+      final rect = tester.getRect(find.byWidget(element.widget));
+      if (rect.bottom > 0 && rect.top < 800) {
+        final dynamic tile = element.widget;
+        visible.add(tile.pageIndex as int);
+      }
+    }
+    final extra = images.requested.where((id) => !previous.contains(id) &&
+      !visible.contains(int.parse(id.split('/')[1]))).toList();
+    expect(extra, isEmpty,
+      reason: 'Only visible pages may bypass occupied speculative slots');
+  });
+  }
+
+  testWidgets('opening stays at the top when the second image decodes first', (tester) async {
+    final (_, images) = await mount(tester);
+    final list = find.byType(ScrollablePositionedList);
+    final top = tester.getTopLeft(list).dy;
+    expect(tester.getTopLeft(page(0)).dy, closeTo(top, 1));
+    images.complete('1/1/0', 3000);
+    await tick(tester);
+    images.complete('1/0/0', 12000);
+    await tick(tester);
+    expect(tester.getTopLeft(page(0)).dy, closeTo(top, 1));
+  });
+
+  testWidgets('reopened chapter keeps its saved page at the top during late decode', (tester) async {
+    final source = GeometrySource();
+    const chapter = Chapter(id: '2', name: 'Глава 2');
+    final previous = LibraryStore();
+    await previous.savePosition(source.book, chapter, source.key,
+      pageIndex: 3, pageCount: 12);
+    await previous.savePosition(source.book, source.chapter, source.key,
+      pageIndex: 1, pageCount: 12);
+    final reopened = LibraryStore();
+    await reopened.load();
+    final (_, images) = await mount(tester, openingChapter: chapter, library: reopened);
+    final list = find.byType(ScrollablePositionedList);
+    final target = find.byKey(const ValueKey('reader-image-2|3-0'));
+    final top = tester.getTopLeft(list).dy;
+    expect(tester.getTopLeft(target).dy, closeTo(top, 1));
+    images.complete('2/4/0', 3000);
+    await tick(tester);
+    images.complete('2/3/0', 6000);
+    await tick(tester);
+    expect(tester.getTopLeft(target).dy, closeTo(top, 1));
   });
 
   testWidgets('late tall image above a visible decoded page preserves its screen position', (tester) async {
@@ -157,12 +229,17 @@ void main() {
     images.complete('1/1/0');
     await tick(tester);
     final gesture = await tester.startGesture(const Offset(200, 500));
-    await gesture.moveBy(const Offset(0, -440));
+    await gesture.moveBy(const Offset(0, -20));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, -420));
     await tick(tester);
+    final viewportTop = tester.getTopLeft(find.byType(ScrollablePositionedList)).dy;
+    expect(tester.getTopLeft(page(0)).dy, lessThan(viewportTop - 100));
     final before = tester.getTopLeft(page(1)).dy;
     images.complete('1/0/0', 12000);
     await tick(tester);
     expect(tester.getTopLeft(page(1)).dy, closeTo(before, 1));
+    expect(tester.getTopLeft(page(0)).dy, lessThan(viewportTop - 100));
     await gesture.moveBy(const Offset(0, -30));
     await tick(tester);
     expect(tester.getTopLeft(page(1)).dy, closeTo(before - 30, 1));

@@ -130,10 +130,10 @@ void main() {
     });
   }
 
-  test('first scan leaves excess recent releases retryable beyond 36 hours', () async {
+  test('first scan and later reorder keep all initial releases silent', () async {
     final source = FakeSource('senkuro')..chapters = [
       const Chapter(id: '1', name: 'Глава 1'),
-      for (var i = 2; i <= 6; i++)
+      for (var i = 6; i >= 2; i--)
         Chapter(id: '$i', name: 'Глава $i', publishedAt: DateTime.now()
             .subtract(const Duration(hours: 1))),
     ];
@@ -142,18 +142,17 @@ void main() {
         source.chapters.first, source.key);
     final checker = ChapterChecker(repository: CatalogRepository(
         sources: {source.key: source}), library: library);
-    expect((await checker.check()).discoveries.length, 2);
-    expect(library.items.single.seenChapterKeys,
-        isNot(contains('v0:c2')));
-    // A delayed next run must not rely on the 36-hour legacy recovery window.
+    expect((await checker.check()).discoveries, isEmpty);
+    expect(library.items.single.seenChapterKeys, contains('v0:c2'));
+    // Reordering and changing source dates do not resurrect old releases.
     source.chapters = [
       source.chapters.first,
       for (var i = 2; i <= 6; i++)
         Chapter(id: '$i', name: 'Глава $i', publishedAt: DateTime.now()
             .subtract(const Duration(days: 3))),
     ];
-    expect((await checker.check()).discoveries.length, 3);
-    expect((await ChapterInboxStore().load()).length, 5);
+    expect((await checker.check()).discoveries, isEmpty);
+    expect(await ChapterInboxStore().load(), isEmpty);
   });
 
   testWidgets('open Home polls new SQLite rows and removes archived suggestions',

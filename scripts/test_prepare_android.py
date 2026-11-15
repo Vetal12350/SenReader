@@ -60,6 +60,8 @@ android {
         assert 'adaptive-icon' in (
             resource_dir / 'mipmap-anydpi-v26/senreader_launcher.xml'
         ).read_text()
+        keep = ET.parse(resource_dir / 'raw/senreader_notification_keep.xml').getroot()
+        assert keep.attrib['{http://schemas.android.com/tools}keep'] == '@drawable/senreader_launcher_monochrome'
         result = gradle.read_text(encoding="utf-8")
         assert "compileSdk = 36" in result
         assert "isCoreLibraryDesugaringEnabled = true" in result

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'chapter_scan_trace.dart';
 import '../core/source.dart';
 import 'senkuro_request_gate.dart';
 import 'chapter_scan_queue.dart';
@@ -8,19 +9,20 @@ import '../core/models.dart';
 import '../core/title_matching.dart';
 import 'catalog_repository.dart';
 import 'chapter_inbox_store.dart';
-import 'chapter_scan_schedule.dart';
 import 'library_store.dart';
 
 class ChapterDiscovery {
   const ChapterDiscovery({
     required this.book, required this.sourceKey,
     required this.chapter, required this.canonicalKey, this.profileId,
+    this.chapterCount = 1,
   });
   final UnifiedManga book;
   final String sourceKey;
   final String? profileId;
   final Chapter chapter;
   final String canonicalKey;
+  final int chapterCount;
 }
 
 class ChapterScanReport {
@@ -30,6 +32,7 @@ class ChapterScanReport {
        this.availableSources = 0, this.successfulSources = 0,
        this.failedSources = 0, this.skipReasons = const {}, this.chapterDecisions = const {}});
   final List<ChapterDiscovery> discoveries;
+  int get updatedTitles => discoveries.map((d) => normalizedTitle(d.book.title)).toSet().length;
   final List<String> warnings;
   final int checkedTitles;
   final List<String> diagnostics;
@@ -95,10 +98,13 @@ class ChapterChecker {
     void note(String reason, [int count = 1]) {
       if (count > 0) decisions.update(reason, (n) => n + count, ifAbsent: () => count);
     }
-    final now = DateTime.now();
     final scanProfile = library.profileId;
     final originalSource = <String, String>{};
     final inbox = ChapterInboxStore(profileId: scanProfile);
+    final baselines = {
+      for (final row in await ChapterScanTrace.stage('scan_state', inbox.loadScanState))
+        (row['book'], row['source'], row['sourceId']),
+    };
     Future<void> persist(UnifiedManga book, String source,
         Iterable<Chapter> chapters) async {
       await library.load();
@@ -127,10 +133,7 @@ class ChapterChecker {
       }
       await afterInboxCommit?.call();
     }
-    final schedule = ChapterScanScheduleStore();
-    final lastAttempts = smartSchedule
-        ? await schedule.load(scanProfile) : <String, int>{};
-    final attempts = <String, int>{};
+    final queue = ChapterScanQueue();
     var failureReason = '';
     void failed(Object error) {
       final message = error is SourceException ? error.message : '';
@@ -146,10 +149,14 @@ class ChapterChecker {
     var skippedSources = 0;
     // Archived and active inbox entries are both proof of earlier delivery.
     final delivered = <String>{};
-    for (final entry in await inbox.load()) {
+    final deliveredIds = <(String, String, String, String)>{};
+    for (final entry in await ChapterScanTrace.stage('inbox_load', inbox.load)) {
       final canonical = canonicalChapterKey(
           Chapter(id: entry.chapterId, name: entry.chapterName));
       if (canonical != null) delivered.add('${entry.bookKey}|$canonical');
+      if (entry.sourceId.isNotEmpty && entry.chapterId.isNotEmpty) {
+        deliveredIds.add((entry.bookKey, entry.source, entry.sourceId, entry.chapterId));
+      }
     }
     Future<void> checkpoint(UnifiedManga book, String source, Chapter chapter,
         String key) async {
@@ -186,22 +193,31 @@ class ChapterChecker {
           }
           continue;
         }
-        final scanKey = ChapterScanPolicy.keyFor(saved, sourceKey, entry.id);
-        if (smartSchedule &&
-            (!ChapterScanPolicy.isDue(saved.status, lastAttempts[scanKey], now))) {
+        final manual = !LocalSourceGate.isBackgroundScan;
+        final lease = manual ? await ChapterScanTrace.stage('queue_claim', () => queue.claim(
+          scanProfile, sourceKey, DateTime.now().millisecondsSinceEpoch,
+          manualJob: ScanJob(saved.key, sourceKey, entry.id))) : null;
+        if (manual && lease == null) {
           skippedSources++;
+          note('lease');
           continue;
         }
-        // A manual full refresh also postpones the next redundant
-        // background scan of the same source.
-        attempts[scanKey] = now.millisecondsSinceEpoch;
         checkedSources++;
+        final pairWatch = Stopwatch()..start();
+        void requirePairTime() {
+          requireTime();
+          if (manual && pairWatch.elapsed >= sourceSlice) {
+            throw TimeoutException('Scan expired');
+          }
+        }
         final warningCount = warnings.length;
         try {
-          final detail = smartSchedule
-              ? await source.detail(entry).timeout(const Duration(seconds: 18))
-              : await source.detail(entry);
-          requireTime();
+          final detail = await ChapterScanTrace.stage('source_detail',
+              () => source.detail(entry).timeout(const Duration(seconds: 18)));
+          if (!detail.chaptersComplete) {
+            throw const FormatException('Incomplete chapter list');
+          }
+          requirePairTime();
           await library.load();
           if (library.profileId != scanProfile) break;
           var current = library.get(book);
@@ -246,178 +262,59 @@ class ChapterChecker {
                   'уведомление было: ${alerted ? 'да' : 'нет'}');
             }
           }
-          if (!current.initializedSources.contains(sourceKey)) {
-            // The initial scan normally establishes a silent baseline. But
-            // for an actively read title, a recently published chapter newer
-            // than the last completed chapter is a real update even if the
-            // first scan happens after its publication.
-            final readChapters = chapters.values.where(
-                (chapter) => library.isChapterRead(book, chapter, sourceKey) &&
-                    canonicalChapterKey(chapter) != null).toList()
-              ..sort((a, b) => compareChapterChronology(b, a) ?? 0);
-            final lastRead = readChapters.firstOrNull;
-            final unverifiedRecent = <String>{};
-            if (sourceKey == current.preferredSource &&
-                current.status == 'reading' && lastRead != null) {
-              final now = DateTime.now().toUtc();
-              final candidates = chapters.entries.where((item) {
-                final posted = item.value.publishedAt?.toUtc();
-                if (posted == null || _seenAtSource(current!, sourceKey, item.key) ||
-                    _alreadyRead(current, item.key)) return false;
-                final age = now.difference(posted);
-                return !age.isNegative && age <= const Duration(hours: 36) &&
-                    (compareChapterChronology(item.value, lastRead) ?? 0) > 0;
-              }).toList()
-                ..sort((a, b) =>
-                    compareChapterChronology(b.value, a.value) ?? 0);
-              // Deferred candidates must remain unseen even if Doze postpones
-              // the next run beyond the recent-release recovery window.
-              unverifiedRecent.addAll(candidates.skip(2).map((c) => c.key));
-              for (final candidate in candidates.take(2)) {
-                try {
-                  final pages = await source.pages(candidate.value);
-                  if (pages.any((p) {
-                    final uri = Uri.tryParse(p.url);
-                    return uri != null && uri.scheme == 'https' &&
-                        uri.host.isNotEmpty;
-                  })) {
-                    await checkpoint(book, sourceKey, candidate.value, candidate.key);
-                  } else {
-                    unverifiedRecent.add(candidate.key);
-                    note('pages_unavailable');
-                    warnings.add(saved.title + ': страницы главы пока недоступны');
-                    if (failureReason.isEmpty) failureReason = 'pages_unavailable';
-                  }
-                } catch (error) {
-                  failed(error);
-                  // Keep this recent chapter unseen so a later scan retries.
-                  unverifiedRecent.add(candidate.key);
-                  warnings.add(saved.title + ': проверка главы отложена');
-                }
-              }
-            }
-            await library.load();
-            if (library.profileId != scanProfile) break;
-            current = library.get(book);
-            if (current == null || current.status != 'reading' ||
-                current.preferredSource != originalSource[saved.key] ||
-                current.entries[sourceKey]?.id != entry.id) continue;
-            requireTime();
-            note('baseline', chapters.keys.where((key) =>
-                !unverifiedRecent.contains(key) && !delivered.contains('${current!.key}|$key')).length);
-            note('verification_deferred', unverifiedRecent.length);
-            await library.recordChapterScan(current.key, sourceKey,
-                chapters.keys.where((key) => !unverifiedRecent.contains(key)),
-                sourceDates: dates, expectedProfile: scanProfile);
+          Iterable<String> keysFor(MapEntry<String, Chapter> chapter) sync* {
+            yield chapter.key;
+            if (chapter.value.id.isNotEmpty) yield 'id:${chapter.value.id}';
+          }
+          Future<void> saveSeen(Iterable<String> keys, {bool complete = false}) =>
+              library.recordChapterScan(saved.key, sourceKey, keys,
+                sourceDates: complete ? dates : const {}, expectedProfile: scanProfile,
+                expectedSourceId: entry.id, complete: complete);
+          if (!baselines.contains((saved.key, sourceKey, entry.id))) {
+            note('baseline', chapters.length);
+            await saveSeen(chapters.entries.expand(keysFor), complete: true);
             continue;
           }
-          final verified = <String, Chapter>{};
-          var attempts = 0;
+          final knownKeys = <String>{};
           for (final chapter in chapters.entries) {
             current = library.get(book);
             if (current == null) break;
-            requireTime();
-            if (delivered.contains('${current.key}|${chapter.key}')) {
+            requirePairTime();
+            final seenId = chapter.value.id.isNotEmpty &&
+                _seenAtSource(current, sourceKey, 'id:${chapter.value.id}');
+            if (delivered.contains('${current.key}|${chapter.key}') ||
+                deliveredIds.contains((current.key, sourceKey, entry.id, chapter.value.id))) {
               note('inbox_duplicate');
-              // Repair legacy seen state only after durable inbox evidence.
-              await library.recordChapterScan(current.key, sourceKey,
-                  [chapter.key], expectedProfile: scanProfile);
-              continue;
-            }
-            if (_alreadyRead(current, chapter.key)) { note('read'); continue; }
-            if (_seenAtSource(current, sourceKey, chapter.key)) { note('seen'); continue; }
-            attempts++;
-            try {
-              final pages = await source.pages(chapter.value);
-              if (!pages.any((p) {
-                final uri = Uri.tryParse(p.url);
-                return uri != null && uri.scheme == 'https' &&
-                    uri.host.isNotEmpty;
-              })) {
-                note('pages_unavailable');
-                warnings.add(saved.title + ': страницы главы пока недоступны');
-                if (failureReason.isEmpty) failureReason = 'pages_unavailable';
+            } else if (_alreadyRead(current, chapter.key)) {
+              note('read');
+            } else if (seenId || _seenAtSource(current, sourceKey, chapter.key)) {
+              note('seen');
+            } else {
+              try {
+                final pages = await ChapterScanTrace.stage('source_pages',
+                    () => source.pages(chapter.value).timeout(const Duration(seconds: 12)));
+                requirePairTime();
+                if (!pages.any((p) {
+                  final uri = Uri.tryParse(p.url);
+                  return uri != null && uri.scheme == 'https' && uri.host.isNotEmpty;
+                })) {
+                  note('pages_unavailable');
+                  warnings.add(saved.title + ': страницы главы пока недоступны');
+                  if (failureReason.isEmpty) failureReason = 'pages_unavailable';
+                  continue;
+                }
+                // Keep each verified release if the worker later runs out of time.
+                await checkpoint(book, sourceKey, chapter.value, chapter.key);
+              } catch (error) {
+                failed(error);
+                warnings.add(saved.title + ': глава временно недоступна');
                 continue;
               }
-              // Checkpoint each verified release, even if the remaining candidates
-              // exceed this worker's time slice. Replay uses inbox identities.
-              await checkpoint(book, sourceKey, chapter.value, chapter.key);
-              verified[chapter.key] = chapter.value;
-            } catch (error) {
-              failed(error);
-              warnings.add(saved.title + ': глава временно недоступна');
             }
+            knownKeys.addAll(keysFor(chapter));
           }
-          // Process genuinely unseen releases before optional legacy recovery:
-          // old slow pages must not consume the slice before a new release.
-          // Recover just-published, unread chapters swallowed by earlier
-          // versions' silent first scan. A recovery must not replay any
-          // chapter already shown in the inbox (including archived entries).
-          final recovered = <String, Chapter>{};
-          if (current != null && sourceKey == current.preferredSource &&
-              current.status == 'reading') {
-            final read = chapters.values.where((ch) =>
-                canonicalChapterKey(ch) != null &&
-                library.isChapterRead(book, ch, sourceKey)).toList()
-              ..sort((a, b) => compareChapterChronology(b, a) ?? 0);
-            final lastRead = read.firstOrNull;
-            if (lastRead != null) {
-              final now = DateTime.now().toUtc();
-              final missed = chapters.entries.where((item) {
-                final time = item.value.publishedAt?.toUtc();
-                if (time == null || !_seenAtSource(current!, sourceKey, item.key) ||
-                    delivered.contains('${current.key}|${item.key}') ||
-                    _alreadyRead(current, item.key)) return false;
-                final age = now.difference(time);
-                return !age.isNegative && age <= const Duration(hours: 36) &&
-                    (compareChapterChronology(item.value, lastRead) ?? 0) > 0;
-              }).toList()
-                ..sort((a, b) =>
-                    compareChapterChronology(b.value, a.value) ?? 0);
-              for (final item in missed.take(2)) {
-                requireTime();
-                try {
-                  final pages = await source.pages(item.value)
-                      .timeout(const Duration(seconds: 12));
-                  if (pages.any((p) {
-                    final uri = Uri.tryParse(p.url);
-                    return uri != null && uri.scheme == 'https' &&
-                        uri.host.isNotEmpty;
-                  })) {
-                    await checkpoint(book, sourceKey, item.value, item.key);
-                    recovered[item.key] = item.value;
-                    note('recovered');
-                  } else {
-                    note('pages_unavailable');
-                    warnings.add(saved.title + ': страницы главы пока недоступны');
-                    if (failureReason.isEmpty) failureReason = 'pages_unavailable';
-                  }
-                } catch (error) {
-                  failed(error);
-                  warnings.add(saved.title + ': проверка главы отложена');
-                }
-              }
-            }
-          }
-          if (verified.isEmpty && recovered.isEmpty) continue;
-          await library.load();
-          if (library.profileId != scanProfile) break;
-          current = library.get(book);
-          if (current == null || current.status != 'reading' ||
-              current.preferredSource != originalSource[saved.key] ||
-              current.entries[sourceKey]?.id != entry.id) continue;
-          final newKeys = verified.keys.where((key) =>
-              !_seenAtSource(current!, sourceKey, key) &&
-              !_alreadyRead(current, key)).toSet();
-          if (newKeys.isEmpty && recovered.isEmpty) continue;
-          // Commit inbox before legacy seen markers. Replaying after a crash
-          // is harmless: the database deduplicates within the captured profile.
-          if (newKeys.isNotEmpty) {
-            await library.recordChapterScan(current.key, sourceKey,
-                newKeys, sourceDates: dates, expectedProfile: scanProfile);
-          }
-          delivered.addAll([...newKeys, ...recovered.keys]
-              .map((key) => '${current!.key}|$key'));
+          requirePairTime();
+          await saveSeen(knownKeys, complete: warnings.length == warningCount);
         } catch (error) {
           failed(error);
           warnings.add(saved.title + ': один из источников недоступен');
@@ -426,19 +323,17 @@ class ChapterChecker {
                 'не удалось загрузить главы');
           }
         } finally {
-          if (!LocalSourceGate.isBackgroundScan) {
-            await ChapterScanQueue().recordManualAttempt(scanProfile,
-              ScanJob(saved.key, sourceKey, entry.id),
-              DateTime.now().millisecondsSinceEpoch,
-              success: warnings.length == warningCount);
+          ChapterScanTrace.current?.processed(saved.key);
+          note('$sourceKey:${warnings.length == warningCount ? 'success' : 'error'}');
+          if (lease != null) {
+            await ChapterScanTrace.stage('queue_finish', () => queue.finish(
+              scanProfile, lease, DateTime.now().millisecondsSinceEpoch,
+              success: warnings.length == warningCount));
           }
         }
       }
     }
     await library.load();
-    if (library.profileId == scanProfile) {
-      await schedule.recordAttempts(scanProfile, attempts);
-    }
     discoveries.removeWhere((d) {
       if (library.profileId != scanProfile) return true;
       final current = library.get(d.book);
@@ -462,7 +357,7 @@ class ChapterChecker {
           if (repository.sources.containsKey(e.key) && _trustedLink(book, e.key))
             ScanJob(book.key, e.key, e.value.id),
     ];
-    await queue.reconcile(profile, jobs);
+    await ChapterScanTrace.stage('queue_reconcile', () => queue.reconcile(profile, jobs));
     final sources = jobs.map((j) => j.source).toSet().toList()..sort();
     final found = <(String, String), ChapterDiscovery>{};
     final warnings = <String>[];
@@ -485,8 +380,8 @@ class ChapterChecker {
       await library.load();
       if (library.profileId != profile) break;
       final source = sources[cursor++ % sources.length];
-      final lease = await queue.claim(profile, source,
-          DateTime.now().millisecondsSinceEpoch);
+      final lease = await ChapterScanTrace.stage('queue_claim', () => queue.claim(
+          profile, source, DateTime.now().millisecondsSinceEpoch));
       if (lease == null) { empty++; continue; }
       empty = 0;
       var pairOpen = true;
@@ -524,18 +419,21 @@ class ChapterChecker {
         for (final entry in report.chapterDecisions.entries) {
           decisions.update(entry.key, (n) => n + entry.value, ifAbsent: () => entry.value);
         }
-        await queue.finish(profile, lease, DateTime.now().millisecondsSinceEpoch,
-            success: success);
+        await ChapterScanTrace.stage('queue_finish', () => queue.finish(
+          profile, lease, DateTime.now().millisecondsSinceEpoch, success: success));
         remainingJobs.remove(lease.job.key);
         await progress();
         await afterPair?.call();
       } on TimeoutException {
+        ChapterScanTrace.current?.processed(lease.job.book);
+        ChapterScanTrace.current?.event('source_slice', 'timeout');
         // Future.timeout does not cancel transport. Keep the finite job lease
         // and the expired zone; stale I/O cannot persist seen/inbox after it.
         checked++;
         failed++;
         remainingJobs.remove(lease.job.key);
         failureReason = 'timeout';
+        decisions.update('$source:timeout', (n) => n + 1, ifAbsent: () => 1);
         warnings.add('$source: проверка отложена по времени');
         await progress();
       } finally {
@@ -544,7 +442,8 @@ class ChapterChecker {
     }
     await library.load();
     if (library.profileId != profile) found.clear();
-    final state = await queue.status(profile, DateTime.now().millisecondsSinceEpoch);
+    final state = await ChapterScanTrace.stage('queue_status',
+      () => queue.status(profile, DateTime.now().millisecondsSinceEpoch));
     final skipReasons = <String, int>{};
     for (final key in remainingJobs) {
       var reason = state.jobReasons[key] ?? 'profile_changed';

@@ -85,7 +85,7 @@ void main() {
     expect(library.items.single.readChapterKeys, isEmpty);
   });
 
-  test('baseline checkpoints its first verified release before the next page request', () async {
+  test('initialized scan checkpoints its first verified release before the next page request', () async {
     final now = DateTime.now();
     final source = ControlledSource('senkuro')..chapters = [
       Chapter(id: '3', name: 'Глава 3', publishedAt: now.subtract(const Duration(hours: 1))),
@@ -94,6 +94,7 @@ void main() {
     ];
     final library = await makeLibrary([source]);
     await library.markRead(library.items.single.toUnified(), source.chapters.last, source.key);
+    await library.recordChapterScan(library.items.single.key, source.key, ['v0:c1']);
     final pending = Completer<List<PageImage>>();
     final started = Completer<void>();
     source.onPages = (chapter) async {
@@ -142,7 +143,7 @@ void main() {
     expect(await queue.claim('', 'senkuro', now + 60001), isNotNull);
   });
 
-  test('new unseen releases are verified before optional recovery of legacy seen releases', () async {
+  test('only unseen releases are verified when legacy state already knows unread chapters', () async {
     final source = ControlledSource('senkuro');
     final library = await makeLibrary([source]);
     final first = const Chapter(id: '1', name: 'Глава 1');
@@ -161,8 +162,8 @@ void main() {
     };
     await ChapterChecker(repository: CatalogRepository(sources: {source.key: source}),
       library: library).check();
-    expect(calls.first, '4', reason: 'legacy recovery must not consume the entire slice before a new release');
-    expect((await ChapterInboxStore(profileId: '').load()).length, 3);
+    expect(calls, ['4']);
+    expect((await ChapterInboxStore(profileId: '').load()).length, 1);
   });
 
   test('partial burst, missed interval, hidden replay and denied Android permission retain every update', () async {
@@ -211,7 +212,7 @@ void main() {
     expect(library.items.single.readChapterKeys, isEmpty);
   });
 
-  test('deferred baseline releases remain discoverable after the 36 hour window', () async {
+  test('new releases after baseline are detected even with old publication dates', () async {
     final source = ControlledSource('senkuro');
     final library = await makeLibrary([source]);
     final book = library.items.single.toUnified();
@@ -222,12 +223,12 @@ void main() {
       Chapter(id: '$n', name: 'Глава $n', publishedAt: recent), first];
     final checker = ChapterChecker(repository: CatalogRepository(sources: {source.key: source}), library: library);
     final initial = await checker.check();
-    expect(initial.discoveries.map((d) => d.chapter.id), ['5', '4']);
-    expect(initial.chapterDecisions['verification_deferred'], 2);
+    expect(initial.discoveries, isEmpty);
     source.chapters = [for (var n = 5; n >= 2; n--)
-      Chapter(id: '$n', name: 'Глава $n', publishedAt: recent.subtract(const Duration(days: 3))), first];
+      Chapter(id: '$n', name: 'Глава $n', publishedAt: recent.subtract(const Duration(days: 3))),
+      first, Chapter(id: '6', name: 'Глава 6', publishedAt: recent.subtract(const Duration(days: 3)))];
     final next = await checker.check();
-    expect(next.discoveries.map((d) => d.chapter.id), ['3', '2']);
-    expect((await ChapterInboxStore(profileId: '').load()).length, 4);
+    expect(next.discoveries.map((d) => d.chapter.id), ['6']);
+    expect((await ChapterInboxStore(profileId: '').load()).length, 1);
   });
 }

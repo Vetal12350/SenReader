@@ -51,6 +51,15 @@ for source, destination in copies.items():
     shutil.copyfile(assets / source, target)
 
 
+# Notification icon is resolved by name from Dart, invisible to R8's resource
+# reachability analysis. Preserve it in every generated release wrapper.
+keep = res / 'raw' / 'senreader_notification_keep.xml'
+keep.parent.mkdir(parents=True, exist_ok=True)
+keep.write_text('<resources xmlns:tools="http://schemas.android.com/tools" '
+                'tools:keep="@drawable/senreader_launcher_monochrome" />',
+                encoding='utf-8')
+
+
 # flutter_local_notifications 22 requires Java API desugaring even for
 # immediate notifications. This applies only to the generated debug/release
 # Android wrapper and does not require committing SDK-generated files.

@@ -189,9 +189,11 @@ class ChapterScanDiagnostics extends StatelessWidget {
     final delivery = switch (run.systemDelivery) {
       'disabled' => 'Системные уведомления выключены.',
       'permission_denied' => 'Нет разрешения Android; внутренний inbox сохранён.',
+      'channel_disabled' => 'Канал «Новые главы» выключен в Android. Записи сохранены в ленте.',
       'error' => 'Ошибка доставки Android; ожидающие уведомления сохраняются для повтора.',
       'pending' => 'Доставка Android ещё не подтверждена; внутренний inbox сохранён.',
       'processed' => 'Доставка Android обработана, отправлено: ${run.postedNotifications}.',
+      'nothing_posted' => 'Системных уведомлений не отправлено.',
       'attempted' => 'Выполнена попытка доставки Android.',
       _ => '',
     };
@@ -201,7 +203,8 @@ class ChapterScanDiagnostics extends StatelessWidget {
       '${run.outcome == 'running' && run.availableSources == 0 ? 'Подготовка списка источников. ' : 'Доступно пар «книга × источник»: ${run.availableSources}. '}'
       'Источников проверено: ${run.checkedSources}, успешно: ${run.successfulSources}, '
       'с ошибкой: ${run.failedSources}, отложено: ${run.skippedSources}, '
-      'найдено глав: ${run.foundChapters}. Предупреждений: ${run.warnings}. '
+      'обновлено произведений: ${run.updatedTitles}, новых глав: ${run.foundChapters}. '
+      'Предупреждений: ${run.warnings}. '
       '${skips.isEmpty ? '' : 'Причины ожидания: $skips. '}'
       '${chapters.isEmpty ? '' : 'Обработка глав: $chapters. '}'
       '${run.nextEligibleAt == null ? '' : 'Не ранее: ${date(run.nextEligibleAt!)}. Это нижняя граница очереди, а не точное время запуска Android. '}'

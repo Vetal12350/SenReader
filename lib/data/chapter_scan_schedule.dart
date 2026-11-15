@@ -29,6 +29,7 @@ class ChapterBackgroundScanSummary {
     required this.checkedSources,
     required this.skippedSources,
     required this.foundChapters,
+    this.updatedTitles = 0,
     required this.warnings,
     this.outcome = 'success',
     this.reason = '',
@@ -41,6 +42,7 @@ class ChapterBackgroundScanSummary {
   });
   final DateTime at;
   final int checkedSources, skippedSources, foundChapters, warnings;
+  final int updatedTitles;
   // Fixed codes only. Never persist exception messages, titles, URLs or tokens.
   final String outcome, reason, origin;
   final DateTime? nextEligibleAt, finishedAt, updatedAt, expiresAt;
@@ -136,6 +138,7 @@ class ChapterScanScheduleStore {
     'at': value.at.millisecondsSinceEpoch,
     'checked': value.checkedSources, 'skipped': value.skippedSources,
     'found': value.foundChapters, 'warnings': value.warnings,
+    'updatedTitles': value.updatedTitles,
     'outcome': value.outcome, 'reason': value.reason, 'origin': value.origin,
     'next': value.nextEligibleAt?.millisecondsSinceEpoch,
     'finished': value.finishedAt?.millisecondsSinceEpoch,
@@ -243,6 +246,7 @@ class ChapterScanScheduleStore {
         checkedSources: (record['checked'] as num?)?.toInt() ?? 0,
         skippedSources: (record['skipped'] as num?)?.toInt() ?? 0,
         foundChapters: (record['found'] as num?)?.toInt() ?? 0,
+        updatedTitles: (record['updatedTitles'] as num?)?.toInt() ?? 0,
         warnings: (record['warnings'] as num?)?.toInt() ?? 0,
         availableSources: (record['available'] as num?)?.toInt() ?? 0,
         successfulSources: (record['successful'] as num?)?.toInt() ?? 0,

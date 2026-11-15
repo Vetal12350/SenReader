@@ -97,6 +97,24 @@ void main() {
     expect(library.items, isEmpty);
   });
 
+  test('chapter positions survive cloud round-trip and explicit unread resets them', () async {
+    const next = Chapter(id: '43', name: 'Глава 43');
+    final original = LibraryStore();
+    await original.savePosition(book, chapter, 'senkuro', pageIndex: 7, pageCount: 10);
+    await original.savePosition(book, next, 'senkuro', pageIndex: 5, pageCount: 10);
+    final cloud = await original.exportCloudRecords();
+
+    final restored = LibraryStore();
+    await restored.switchProfile('cloud-receiver');
+    expect(await restored.mergeCloudRecords(cloud), 1);
+    expect(restored.get(book)!.pageIndexFor(chapter, 'senkuro'), 7);
+    expect(restored.get(book)!.pageIndexFor(next, 'senkuro'), 5);
+    await restored.unmarkRead(book, chapter, 'senkuro', availableChapters: [chapter, next]);
+    await restored.load();
+    expect(restored.get(book)!.pageIndexFor(chapter, 'senkuro'), 0);
+    expect(restored.get(book)!.pageIndexFor(next, 'senkuro'), 0);
+  });
+
   test('hashing Firestore document ID is stable for Unicode and slashes', () {
     final value = CloudLibrarySync.documentId('Манхва/Глава: 42');
     expect(value.length, 64);

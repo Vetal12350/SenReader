@@ -1,3 +1,4 @@
+import 'chapter_scan_trace.dart';
 import 'local_source_gate.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -345,7 +346,8 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
             'Referer': 'https://senkuro.com/',
           })
         ..body = jsonEncode({'operationName': operation, 'query': query, 'variables': variables});
-      final response = await client.send(request).timeout(_timeout);
+      final response = await ChapterScanTrace.stage('senkuro_http_send',
+        () => client.send(request).timeout(_timeout));
       if (_client == null && LocalSourceGate.isBackgroundScan) {
         await LocalSourceGate('senkuro').response(
           response.statusCode, response.headers['retry-after']);
@@ -568,6 +570,8 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
     final branches = _optionalList(m['branches']).whereType<Map>().toList()
       ..sort((a, b) => (b['primaryBranch'] == true ? 1 : 0).compareTo(a['primaryBranch'] == true ? 1 : 0));
     final chapters = <Chapter>[];
+    var chaptersComplete = false;
+    var malformedChapter = false;
     // Prefer the primary Russian branch; avoid mixing translations in v0.1.
     if (branches.isNotEmpty) {
       String? cursor;
@@ -580,9 +584,9 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
         final conn = result['mangaChapters'];
         for (final edge in _edges(conn)) {
           final n = edge is Map ? edge['node'] : null;
-          if (n is! Map) continue;
+          if (n is! Map) { malformedChapter = true; continue; }
           final id = '${n['slug'] ?? n['id'] ?? ''}';
-          if (id.isEmpty) continue;
+          if (id.isEmpty) { malformedChapter = true; continue; }
           final number = n['number'] ?? '?';
           final subtitle = (n['name'] is String && (n['name'] as String).isNotEmpty) ? ': ${n['name']}' : '';
           final volume = n['volume'];
@@ -592,7 +596,10 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
         }
         final pageInfo = (conn as Map)['pageInfo'];
         if (pageInfo is! Map || pageInfo['hasNextPage'] is! bool) throw _invalidResponse();
-        if (pageInfo['hasNextPage'] != true) break;
+        if (pageInfo['hasNextPage'] != true) {
+          chaptersComplete = chapters.isNotEmpty && !malformedChapter;
+          break;
+        }
         final next = _text(pageInfo['endCursor']);
         if (next.isEmpty || next == cursor) throw _invalidResponse();
         cursor = next;
@@ -607,6 +614,7 @@ query fetchMangaChapter($slug: String!, $cdnQuality: String) {
         coverUrl: _cover(m['cover']).isNotEmpty ? _cover(m['cover']) : _image(entry.coverUrl),
         rating: tenPointScore(m['score']) ?? entry.rating),
       chapters: chapters,
+      chaptersComplete: chaptersComplete,
       description: loc is Map ? _flatten(loc['description']).trim() : '',
       genres: _optionalList(m['labels']).whereType<Map>().map((e) => _title(e['titles'], null)).where((s) => s.isNotEmpty).take(12).toList(),
       rating: tenPointScore(m['score']),

@@ -76,9 +76,10 @@ class MangaDetail {
   const MangaDetail({required this.entry, required this.chapters,
     this.description = '', this.genres = const [], this.rating,
     this.alternativeNames = const [], this.creators = const [],
-    this.publicationStatus, this.translationStatus});
+    this.publicationStatus, this.translationStatus, this.chaptersComplete = true});
   final MangaEntry entry;
   final List<Chapter> chapters;
+  final bool chaptersComplete;
   final String description;
   final String? publicationStatus;
   final String? translationStatus;

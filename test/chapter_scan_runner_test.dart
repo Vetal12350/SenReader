@@ -132,7 +132,7 @@ void main() {
     final library = await makeLibrary([source]);
     final runner = ChapterScanRunner(preferences: MemoryAlertPreferences()..on = true,
       library: library, repository: CatalogRepository(sources: {source.key: source}));
-    await runner.run();
+    expect(await runner.run(), isFalse);
     final summary = (await ChapterScanScheduleStore().lastRun(''))!;
     expect(summary.outcome, 'partial');
     expect(summary.reason, 'source_error');
@@ -244,6 +244,12 @@ void main() {
       final original = prefs.getString(LibraryStore.storageKey);
       final library = LibraryStore();
       await library.load();
+      for (final book in library.items) {
+        for (final source in [a, b]) {
+          await ChapterInboxStore(profileId: '').recordScan(
+            book.key, source.key, book.entries[source.key]!.id, ['v0:c1'], {});
+        }
+      }
       final repo = CatalogRepository(sources: {a.key: a, b.key: b});
       var pairs = 0;
       final first = await ChapterChecker(repository: repo, library: library,

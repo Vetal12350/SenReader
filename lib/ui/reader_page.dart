@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../main.dart' show mainTabRequest;
 import '../core/models.dart';
 import '../core/chapter_identity.dart';
+import '../core/reader_trace.dart';
 import '../data/catalog_repository.dart';
 import '../data/page_load_retry.dart';
 import '../data/library_store.dart';
@@ -149,10 +150,11 @@ class _RetryableReaderImageState extends State<_RetryableReaderImage> {
               widget.onMeasuredHeight(measured);
             }
           }
-          // Keep the old box until the geometry coordinator can safely commit
-          // the ratio. A late image above the viewport must not move content.
+          // Preserve the old box until the geometry coordinator can commit.
+          // Image's fitWidth/contain paint stays inside this box. An extra
+          // fractional ClipRect exposes a bright seam on Impeller/Vulkan.
           return SizedBox(height: widget.height ?? widget.knownHeight ?? widget.width * 1.5,
-            child: ClipRect(child: child));
+            child: child);
         }
         // Preserve the previous layout when the image cache evicts a bitmap.
         // The former fixed 170px tile caused scroll corrections on return.
@@ -204,12 +206,15 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   // Profile identity is fixed for the lifetime of this route, including
   // delayed page loading, debounced position writes and disposal.
   late final String _readerProfile;
+  late int _initialPage;
+  bool _openingAnchorActive = true;
   bool get _sessionActive => widget.library.profileId == _readerProfile;
   final ItemPositionsListener _positions = ItemPositionsListener.create();
   final ItemScrollController _itemScroll = ItemScrollController();
   // Pixel-relative scrolling keeps movement smooth across tall webtoon images.
   final ScrollOffsetController _scrollOffset = ScrollOffsetController();
   Timer? _saveTimer;
+  Timer? _saveDeadline;
   int _pageCount = 0;
   String? _lastSavedKey;
   _VisibleChapterPage? _pendingPosition;
@@ -308,7 +313,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     unawaited(_restoreReaderSettings());
     _chapters = widget.chapters;
     _activeChapter = widget.chapter;
-    _visiblePage.value = _resumePage;
+    _initialPage = _resumePage;
+    _visiblePage.value = _initialPage;
     future = _loadInitialChapter();
     _positions.itemPositions.addListener(_onVisiblePages);
   }
@@ -337,11 +343,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final pages = await loadChapterPagesWithRetry(
       widget.repository.sources[widget.sourceKey]!, widget.chapter);
       if (mounted && _sessionActive) {
+        if (pages.isNotEmpty) {
+          _initialPage = _initialPage.clamp(0, pages.length - 1).toInt();
+        }
         setState(() {
           _segments.add(_ChapterSegment(widget.chapter, pages));
           // Restored progress proves earlier pages were already traversed.
           // The last image must still load before this chapter auto-completes.
-          for (var i = 0; i < _resumePage && i < pages.length; i++) {
+          for (var i = 0; i < _initialPage; i++) {
             _loadedPageKeys.add(
               _VisibleChapterPage(widget.chapter, i, pages.length).key);
           }
@@ -350,7 +359,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         if (pages.isNotEmpty) {
           // An opened chapter has an open eye immediately. Progress remains
           // independent so merely entering a page cannot skip the chapter.
-          final page = _resumePage.clamp(0, pages.length - 1).toInt();
+          final page = _initialPage;
           final initial = _VisibleChapterPage(widget.chapter, page, pages.length);
           if (_lastSavedKey == null && _pendingPosition == null) {
             _lastSavedKey = initial.key;
@@ -395,12 +404,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   int get _resumePage {
     if (!_sessionActive) return 0;
-    final saved = widget.library.get(widget.book);
-    if (saved == null || saved.lastSource != widget.sourceKey) return 0;
-    if (saved.lastChapterId.isNotEmpty) {
-      return saved.lastChapterId == widget.chapter.id ? saved.lastPageIndex : 0;
-    }
-    return saved.lastChapter == widget.chapter.name ? saved.lastPageIndex : 0;
+    return widget.library.get(widget.book)?.pageIndexFor(widget.chapter, widget.sourceKey) ?? 0;
   }
 
   int get _itemCount {
@@ -527,13 +531,21 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   ValueNotifier<bool> _pixelsFor(String key, int index) =>
       _pagePixels.putIfAbsent(key, () => ValueNotifier(
         _activePixelKeys.contains(key) || (_activePixelKeys.isEmpty &&
-          index >= _resumePage && index <= _resumePage + 1)));
+          index == _resumePage)));
 
   void _updatePixelWindow(int first, int last, List<int> candidates) {
     final desired = <String>{};
     for (final index in {for (var i = first; i <= last; i++) i, ...candidates}) {
       final item = _pageAt(index);
       if (item == null) continue;
+      // Only visible pages may start independently of the speculative queue.
+      // Activating every candidate here lets Image.resolve bypass its limit,
+      // memory/giant-bitmap guards and the slots held by obsolete requests.
+      if ((index < first || index > last) &&
+          !_activePixelKeys.contains(item.key) &&
+          _geometryProbeEpochs[item.key] != _geometryEpoch) {
+        continue;
+      }
       desired.add(item.key);
       if (!_activePixelKeys.contains(item.key)) _pixelsFor(item.key, index).value = true;
     }
@@ -614,7 +626,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // Prefer already decoded content, not an unknown loading box above it.
     final known = visible.where((p) =>
       _pageRatios[_pageAt(p.index)!.key]?.value != null).toList();
-    final anchor = known.where((p) => p.itemLeadingEdge >= 0).firstOrNull ??
+    final first = visible.firstOrNull;
+    // While the opening page is aligned at the top, preserve it even if a
+    // later image decoded first. Anchoring the later image would scroll as
+    // soon as the opening placeholder grows to its actual height.
+    final openingAnchor = _openingAnchorActive && first?.index == _initialPage &&
+        first?.itemLeadingEdge == 0 ? first : null;
+    final anchor = openingAnchor ??
+        known.where((p) => p.itemLeadingEdge >= 0).firstOrNull ??
         known.firstOrNull ?? visible.firstOrNull;
     var correctAnchor = false;
     var refreshVisiblePositions = false;
@@ -688,20 +707,20 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         ..clear()
         ..addAll(candidates);
     }
-    if (_fitHeight) return;
     _frameMetrics?.sampleCache(cache.currentSizeBytes);
     _pumpGeometry();
   }
 
   void _pumpGeometry() {
-    if (!mounted || _fitHeight) return;
+    if (!mounted) return;
     final cache = PaintingBinding.instance.imageCache;
     final limit = ReaderPrefetchPolicy.concurrency(cache.currentSizeBytes,
       cache.maximumSizeBytes, memoryPressure: _memoryPressure);
     final width = _layoutWidth > 0 ? _layoutWidth : MediaQuery.sizeOf(context).width;
     final decodeWidth = readerDecodeWidth(width, MediaQuery.devicePixelRatioOf(context));
     while (_geometryProbes.length < limit && _geometryCandidates.isNotEmpty) {
-      final item = _pageAt(_geometryCandidates.removeAt(0));
+      final index = _geometryCandidates.removeAt(0);
+      final item = _pageAt(index);
       if (item == null || _geometryProbes.containsKey(item.key) ||
           !_geometryAttempted.add(item.key) ||
           (_geometryRetryAt[item.key]?.isAfter(DateTime.now()) ?? false)) continue;
@@ -732,7 +751,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       }); }
       listener = ImageStreamListener((info, _) {
         try {
-          if (mounted && epoch == _geometryEpoch) {
+          if (mounted && epoch == _geometryEpoch && !_fitHeight) {
             final height = readerLogicalImageHeight(width, info.image.width, info.image.height);
             if (height != null) _rememberHeight(item.key, height, width: width);
           }
@@ -756,6 +775,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       });
       _geometryProbes[item.key] = finish;
       _geometryProbeEpochs[item.key] = epoch;
+      // Admission owns speculative activation. The widget will reuse this
+      // pending/decoded stream instead of starting work outside the queue.
+      _activePixelKeys.add(item.key);
+      _pixelsFor(item.key, index).value = true;
       stream.addListener(listener);
     }
   }
@@ -812,15 +835,16 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       });
     }
     _visiblePage.value = progress.index;
-    if (progress.key == _lastSavedKey ||
-        progress.key == _pendingPosition?.key) return;
+    if (progress.key == _pendingPosition?.key ||
+        (_pendingPosition == null && progress.key == _lastSavedKey)) return;
     _pendingPosition = progress;
-    _saveTimer?.cancel();
-    _saveTimer = Timer(const Duration(milliseconds: 600),
-      () => unawaited(_flushPosition()));
+    _schedulePositionSave();
   }
 
   Future<void> _flushPosition() {
+    _saveTimer?.cancel();
+    _saveDeadline?.cancel();
+    _saveDeadline = null;
     final pending = _pendingPosition;
     _pendingPosition = null;
     if (pending == null || pending.key == _lastSavedKey) return _saveChain;
@@ -832,8 +856,33 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       widget.book, pending.chapter, widget.sourceKey,
       pageIndex: pending.index, pageCount: pending.total,
       expectedProfile: _readerProfile,
-    )).catchError((Object _) {});
+    )).catchError((Object error) {
+      // Do not treat a failed write as durable or overwrite a newer request.
+      if (_lastSavedKey == pending.key) {
+        _lastSavedKey = null;
+        _pendingPosition ??= pending;
+        if (mounted && _sessionActive) _schedulePositionSave();
+      }
+      debugPrint('SenReader: не удалось сохранить позицию: $error');
+    });
     return _saveChain;
+  }
+
+  void _schedulePositionSave() {
+    if (_pendingPosition == null) return;
+    _saveTimer?.cancel();
+    // Coalesce page changes during a gesture. Bound the unsaved interval even
+    // during a long fling/autoscroll, and flush explicitly on navigation/pause.
+    _saveDeadline ??= Timer(const Duration(seconds: 5),
+      () => unawaited(_flushPosition()));
+    if (!_scrollMoving) {
+      _saveTimer = Timer(const Duration(milliseconds: 600),
+        () => unawaited(_flushPosition()));
+    }
+  }
+
+  @override void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) unawaited(_flushPosition());
   }
 
   /// Refresh potentially expired image URLs without leaving the chapter or
@@ -1291,7 +1340,16 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       body: Stack(children: [
         Positioned.fill(child: LayoutBuilder(builder: (context, constraints) {
           _layoutWidth = constraints.maxWidth;
-          return GestureDetector(
+          return Listener(
+          onPointerDown: (event) {
+            traceReaderInput('down', event.timeStamp);
+          },
+          onPointerMove: (event) {
+            if (event.delta.dy != 0) _openingAnchorActive = false;
+          },
+          onPointerUp: (event) => traceReaderInput('up', event.timeStamp),
+          onPointerCancel: (event) => traceReaderInput('cancel', event.timeStamp),
+          child: GestureDetector(
           behavior: HitTestBehavior.translucent,
           onTapUp: (details) => _onCenterTap(details, constraints.biggest),
           child: FutureBuilder<List<PageImage>>(
@@ -1326,18 +1384,27 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                   label: const Text('Повторить загрузку')),
               ])));
           }
-          final initialIndex = _resumePage.clamp(0, pages.length - 1).toInt();
           return NotificationListener<ScrollNotification>(
             onNotification: (notice) {
-              if (notice is ScrollStartNotification) _scrollMoving = true;
+              if (notice is ScrollStartNotification) {
+                traceReaderInput(notice.dragDetails == null
+                    ? 'scrollStart' : 'dragStart');
+                _scrollMoving = true;
+                _saveTimer?.cancel();
+              }
               if (notice is ScrollEndNotification) {
+                traceReaderInput('scrollEnd');
                 _scrollMoving = false;
                 _scheduleGeometryCommit();
+                _schedulePositionSave();
               }
               if (notice is ScrollUpdateNotification) {
                 final now = _motionClock.elapsedMicroseconds;
                 final delta = notice.scrollDelta ?? 0;
-                if (delta != 0) _forward = delta > 0;
+                if (delta != 0) {
+                  _openingAnchorActive = false;
+                  _forward = delta > 0;
+                }
                 if (now > _lastMotionUs && _lastMotionUs > 0) {
                   _velocity = .7 * _velocity + .3 * delta * 1000000 / (now - _lastMotionUs);
                 }
@@ -1376,7 +1443,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             itemPositionsListener: _positions,
             itemScrollController: _itemScroll,
             scrollOffsetController: _scrollOffset,
-            initialScrollIndex: initialIndex,
+            initialScrollIndex: _initialPage,
             itemCount: _itemCount,
             itemBuilder: (context, index) {
               final heading = _headerChapterAt(index);
@@ -1479,7 +1546,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           )));
         },
       ),
-        ); })),
+        )); })),
         if (_controlsVisible)
           Positioned(top: 0, left: 0, right: 0,
             height: kToolbarHeight + MediaQuery.paddingOf(context).top,

@@ -29,10 +29,10 @@ class ReaderFrameMetrics {
   }
 
   Map<String, Object> report() {
-    int percentile(List<int> source) {
+    int percentile(List<int> source, double p) {
       if (source.isEmpty) return 0;
       final values = [...source]..sort();
-      return values[((values.length - 1) * .95).ceil()];
+      return values[(values.length * p).ceil() - 1];
     }
     var overBudget = 0;
     var estimatedMisses = 0;
@@ -43,7 +43,12 @@ class ReaderFrameMetrics {
     }
     return {'frames': _build.length, 'budgetUs': budgetMicros,
       'overBudgetFrames': overBudget, 'estimatedMissedVsyncs': estimatedMisses,
-      'uiP95Us': percentile(_build), 'rasterP95Us': percentile(_raster),
+      'uiP95Us': percentile(_build, .95), 'rasterP95Us': percentile(_raster, .95),
+      'uiP99Us': percentile(_build, .99), 'rasterP99Us': percentile(_raster, .99),
+      'uiMaxUs': _build.fold<int>(0, math.max),
+      'rasterMaxUs': _raster.fold<int>(0, math.max),
+      'uiOver50ms': _build.where((us) => us > 50000).length,
+      'rasterOver50ms': _raster.where((us) => us > 50000).length,
       'readerRootBuilds': rootBuilds, 'geometryCommits': geometryCommits,
       'idleAnchorCorrections': anchorCorrections,
       'maxImageCacheBytes': maxImageCacheBytes, 'truncated': truncated};

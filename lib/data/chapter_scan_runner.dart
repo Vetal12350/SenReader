@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'chapter_scan_trace.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'catalog_repository.dart';
 import 'chapter_alert_preferences.dart';
@@ -29,9 +30,37 @@ class ChapterScanRunner {
     return prefs.getString(LibraryStore.activeProfileKey) ?? '';
   }
 
-  Future<bool> run({String origin = 'workmanager'}) async {
+  Future<ChapterScanReport> checkManual({bool diagnostics = false}) =>
+      ChapterScanTrace().run('manual', () => _checkManual(diagnostics: diagnostics));
+
+  Future<ChapterScanReport> _checkManual({bool diagnostics = false}) async {
+    await ChapterScanTrace.stage('library_load', library.load);
+    final profile = library.profileId;
+    final system = await ChapterScanTrace.stage('preferences_enabled', preferences.enabled) && await ChapterScanTrace.stage('preferences_system', preferences.systemNotificationsEnabled);
+    final report = await ChapterScanTrace.stage('scan', () => ChapterChecker(
+      repository: repository, library: library, systemNotificationsEnabled: system)
+      .check(diagnostics: diagnostics));
+    ChapterScanTrace.current?.event('scan_result',
+      report.reason.isEmpty ? 'success' : report.reason);
+    if (system && profile == await ChapterScanTrace.stage('profile_load', activeProfile)) {
+      try {
+        await ChapterScanTrace.stage('notifications_post', () =>
+          ChapterNotificationService.instance.postNewChapters(const [])
+            .timeout(const Duration(seconds: 10)));
+      } catch (_) {
+        // The durable inbox remains available even if Android delivery fails.
+      }
+    }
+    return report;
+  }
+
+  Future<bool> run({String origin = 'workmanager'}) =>
+      (ChapterScanTrace.current ?? ChapterScanTrace()).run(
+        origin == 'app' ? 'app' : 'workmanager', () => _run(origin: origin));
+
+  Future<bool> _run({required String origin}) async {
     final at = DateTime.now();
-    final profile = await activeProfile();
+    final profile = await ChapterScanTrace.stage('profile_load', activeProfile);
     var latest = const ChapterScanReport([], [], 0);
     var runId = 0;
     DateTime? finishedAt;
@@ -44,30 +73,40 @@ class ChapterScanRunner {
         availableSources: latest.availableSources, successfulSources: latest.successfulSources,
         failedSources: latest.failedSources, skipReasons: latest.skipReasons,
         chapterDecisions: latest.chapterDecisions,
-        foundChapters: latest.discoveries.length, warnings: latest.warnings.length,
+        foundChapters: latest.discoveries.length, updatedTitles: latest.updatedTitles,
+        warnings: latest.warnings.length,
         outcome: outcome, reason: reason, origin: origin,
         systemDelivery: systemDelivery, postedNotifications: postedNotifications,
         nextEligibleAt: latest.nextEligibleAt);
-    Future<void> record(String outcome, String reason) => schedule.recordRun(profile, summary(outcome, reason));
+    Future<void> record(String outcome, String reason) => ChapterScanTrace.stage('run_record',
+        () async {
+          await schedule.recordRun(profile, summary(outcome, reason));
+          if (outcome != 'running') {
+            ChapterScanTrace.current?.event('scan_result',
+              reason.isEmpty ? outcome : '${outcome}_$reason');
+          }
+        });
     try {
-      runId = await schedule.beginRun(profile, summary('running', ''));
-      if (!await preferences.enabled()) {
+      runId = await ChapterScanTrace.stage('run_insert',
+        () => schedule.beginRun(profile, summary('running', '')));
+      if (!await ChapterScanTrace.stage('preferences_enabled', preferences.enabled)) {
         await record('skipped', 'disabled');
         return true;
       }
-      await library.load();
+      await ChapterScanTrace.stage('library_load', library.load);
       if (library.profileId != profile) {
         await record('skipped', 'profile_changed');
         return true;
       }
       final checker = ChapterChecker(repository: repository, library: library,
-        systemNotificationsEnabled: await preferences.systemNotificationsEnabled(),
+        systemNotificationsEnabled: await ChapterScanTrace.stage('preferences_system', preferences.systemNotificationsEnabled),
         onProgress: (report) async {
           latest = report;
           await record('running', '');
         });
-      latest = await (scan?.call(checker) ?? checker.check(smartSchedule: true));
-      await library.load();
+      latest = await ChapterScanTrace.stage('scan',
+        () => scan?.call(checker) ?? checker.check(smartSchedule: true));
+      await ChapterScanTrace.stage('library_load', library.load);
       if (library.profileId != profile) {
         await record('skipped', 'profile_changed');
         return true;
@@ -76,7 +115,7 @@ class ChapterScanRunner {
       // turn successful discovery into a failed scan or prevent its summary.
       final outcome = latest.warnings.isNotEmpty ? 'partial' :
           latest.checkedSources == 0 ? 'skipped' : 'success';
-      final wantsSystem = await preferences.systemNotificationsEnabled();
+      final wantsSystem = await ChapterScanTrace.stage('preferences_system', preferences.systemNotificationsEnabled);
       systemDelivery = wantsSystem ? 'pending' : 'disabled';
       await record(outcome, latest.reason);
       if (wantsSystem) {
@@ -85,17 +124,22 @@ class ChapterScanRunner {
             await deliver!(latest.discoveries).timeout(const Duration(seconds: 10));
             systemDelivery = 'attempted';
           } else {
-            await ChapterNotificationService.instance.initialize(
-              captureTaps: origin == 'app').timeout(const Duration(seconds: 10));
+            await ChapterScanTrace.stage('notifications_init', () =>
+              ChapterNotificationService.instance.initialize(captureTaps: origin == 'app')
+                .timeout(const Duration(seconds: 10)));
             // #125: drain explicit pending intent even with no new discoveries;
             // do not reinsert stale/read/hidden discoveries into the inbox.
             final service = ChapterNotificationService.instance;
-            if (await service.hasPermission().timeout(const Duration(seconds: 5))) {
-              postedNotifications = await service.postNewChapters(const [])
-                  .timeout(const Duration(seconds: 10));
-              systemDelivery = 'processed';
-            } else {
+            if (!await ChapterScanTrace.stage('notifications_permission',
+              () => service.hasPermission().timeout(const Duration(seconds: 5)))) {
               systemDelivery = 'permission_denied';
+            } else if (!await ChapterScanTrace.stage('notifications_channel',
+              () => service.channelEnabled().timeout(const Duration(seconds: 5)))) {
+              systemDelivery = 'channel_disabled';
+            } else {
+              postedNotifications = await ChapterScanTrace.stage('notifications_post',
+                () => service.postNewChapters(const []).timeout(const Duration(seconds: 10)));
+              systemDelivery = postedNotifications > 0 ? 'processed' : 'nothing_posted';
             }
           }
         } catch (_) {
@@ -103,9 +147,12 @@ class ChapterScanRunner {
         }
         await record(outcome, latest.reason);
       }
-      return true;
+      return !(latest.successfulSources == 0 && latest.failedSources > 0 &&
+          (latest.reason == 'source_error' || latest.reason == 'timeout'));
     } catch (_) {
-      await schedule.recordBootstrapFailure(profile, summary('error', 'scan_error'));
+      ChapterScanTrace.current?.event('scan_result', 'scan_error');
+      await ChapterScanTrace.stage('bootstrap_record',
+        () => schedule.recordBootstrapFailure(profile, summary('error', 'scan_error')));
       return false;
     }
   }
