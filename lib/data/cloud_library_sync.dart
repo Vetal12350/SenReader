@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'library_store.dart';
+import 'reader_activity.dart';
 
 /// Sync only a signed-in profile. No guest data is uploaded implicitly.
 ///
@@ -16,6 +17,11 @@ class CloudLibrarySync extends ChangeNotifier {
   final FirebaseFirestore firestore;
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _subscription;
   Timer? _debounce;
+  // Measured on Pixel: every progress save triggered a full collection fetch,
+  // merge, export and an echo snapshot, all on the main thread the reader
+  // shares (29-43 ms stalls every ~13 s). While reading, keep progress local
+  // and sync once when the reader closes.
+  final ReaderDeferral _whileReading = ReaderDeferral();
   Future<void> _chain = Future<void>.value();
   String _uid = '';
   int _generation = 0;
@@ -53,8 +59,23 @@ class CloudLibrarySync extends ChangeNotifier {
     library.addListener(_onLocalLibraryChange);
     _subscription = _collection.snapshots(includeMetadataChanges: true)
         .listen((snapshot) {
-      if (session != _generation || snapshot.metadata.isFromCache) return;
+      // hasPendingWrites: the echo of our own unacknowledged upload; the
+      // server-confirmed snapshot follows and is the one worth merging.
+      if (session != _generation || snapshot.metadata.isFromCache ||
+          snapshot.metadata.hasPendingWrites) return;
       _connected = true;
+      _whileReading.run('snapshot', () => _applySnapshot(snapshot, session));
+    }, onError: (Object _) {
+      if (session != _generation) return;
+      _connected = false;
+      error = 'Нет доступа к облачной библиотеке. Проверь правила Firestore.';
+      notifyListeners();
+    });
+    notifyListeners();
+  }
+
+  void _applySnapshot(QuerySnapshot<Map<String, dynamic>> snapshot, int session) {
+      if (session != _generation) return;
       _chain = _chain.catchError((Object _) {}).then((_) async {
         if (session != _generation) return;
         try {
@@ -81,17 +102,14 @@ class CloudLibrarySync extends ChangeNotifier {
         }
         notifyListeners();
       });
-    }, onError: (Object _) {
-      if (session != _generation) return;
-      _connected = false;
-      error = 'Нет доступа к облачной библиотеке. Проверь правила Firestore.';
-      notifyListeners();
-    });
-    notifyListeners();
   }
 
   void _onLocalLibraryChange() {
     if (_applying || !_connected || _uid.isEmpty) return;
+    if (_whileReading.reading) {
+      _whileReading.run('local', _onLocalLibraryChange);
+      return;
+    }
     _debounce?.cancel();
     final session = _generation;
     _debounce = Timer(const Duration(milliseconds: 1000), () {
@@ -170,6 +188,7 @@ class CloudLibrarySync extends ChangeNotifier {
   }
 
   @override void dispose() {
+    _whileReading.dispose();
     _debounce?.cancel();
     library.removeListener(_onLocalLibraryChange);
     unawaited(_subscription?.cancel());

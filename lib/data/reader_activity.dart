@@ -100,3 +100,40 @@ class ReaderPresenceMarker {
     return _cached;
   }
 }
+
+/// Runs work now, or — while a reader is open — keeps only the latest request
+/// per [key] and runs it once the reader closes. For main-thread work that is
+/// invisible during reading (cloud merges), so it cannot drop reader frames.
+class ReaderDeferral {
+  ReaderDeferral({ValueListenable<int>? reader})
+      : _reader = reader ?? ReaderActivity.open {
+    _reader.addListener(_onReaderChange);
+  }
+  final ValueListenable<int> _reader;
+  final Map<String, void Function()> _pending = {};
+  bool get reading => _reader.value > 0;
+  bool get hasPending => _pending.isNotEmpty;
+
+  /// Returns true when [action] ran immediately.
+  bool run(String key, void Function() action) {
+    if (!reading) {
+      action();
+      return true;
+    }
+    _pending.remove(key); // keep insertion order of the latest requests
+    _pending[key] = action;
+    return false;
+  }
+
+  void _onReaderChange() {
+    if (reading || _pending.isEmpty) return;
+    final actions = _pending.values.toList();
+    _pending.clear();
+    for (final action in actions) { action(); }
+  }
+
+  void dispose() {
+    _reader.removeListener(_onReaderChange);
+    _pending.clear();
+  }
+}

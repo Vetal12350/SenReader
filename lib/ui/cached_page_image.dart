@@ -25,8 +25,17 @@ class CachedPageImage extends ImageProvider<CachedPageImage> {
       MultiFrameImageStreamCompleter(codec: _load(decode), scale: 1,
         debugLabel: page.url);
 
-  Future<ui.Codec> _load(ImageDecoderCallback decode) async =>
-      decode(await ui.ImmutableBuffer.fromUint8List(await loadBytes()));
+  Future<ui.Codec> _load(ImageDecoderCallback decode) async {
+    // A cached page goes from file to decoder natively: no multi-MB copy in
+    // the Dart heap, so no GC pauses on the main thread between frames.
+    final file = await (cache ?? PageDiskCache.instance).cached(page.url);
+    if (file != null) {
+      try {
+        return await decode(await ui.ImmutableBuffer.fromFilePath(file.path));
+      } catch (_) {/* Corrupt or evicted mid-read: fall through. */}
+    }
+    return decode(await ui.ImmutableBuffer.fromUint8List(await loadBytes()));
+  }
 
   /// Encoded page bytes: the cached file when present and readable,
   /// otherwise the network, stored for next time (best effort).

@@ -18,6 +18,41 @@ import 'detail_page.dart';
 import 'reader_prefetch_policy.dart';
 import 'reader_frame_metrics.dart';
 
+/// Raises the bitmap cache while any reader is open; restores it afterwards.
+/// Memory pressure gives the memory back immediately.
+class ReaderImageBudget {
+  ReaderImageBudget({ImageCache? cache}) : _cache = cache;
+  final ImageCache? _cache;
+  ImageCache get cache => _cache ?? PaintingBinding.instance.imageCache;
+  int _readers = 0;
+  int? _savedBytes, _savedEntries;
+  void enter() {
+    if (_readers++ > 0 || _savedBytes != null) return;
+    _savedBytes = cache.maximumSizeBytes;
+    _savedEntries = cache.maximumSize;
+    if (cache.maximumSizeBytes < ReaderPrefetchPolicy.readerCacheBytes) {
+      cache.maximumSizeBytes = ReaderPrefetchPolicy.readerCacheBytes;
+    }
+    if (cache.maximumSize < ReaderPrefetchPolicy.readerCacheEntries) {
+      cache.maximumSize = ReaderPrefetchPolicy.readerCacheEntries;
+    }
+  }
+  void leave() {
+    if (_readers == 0) return;
+    if (--_readers == 0) release();
+  }
+  /// Restore the previous limits (the cache evicts down to them at once).
+  void release() {
+    final bytes = _savedBytes, entries = _savedEntries;
+    if (bytes == null || entries == null) return;
+    cache.maximumSizeBytes = bytes;
+    cache.maximumSize = entries;
+    _savedBytes = _savedEntries = null;
+  }
+}
+
+final _readerImageBudget = ReaderImageBudget();
+
 /// Progress checkpoint during long motion (see `_onSaveDeadline`).
 const saveCheckpointInterval = Duration(seconds: 5);
 /// A checkpoint is postponed while a scroll update arrived this recently.
@@ -331,6 +366,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     future = _loadInitialChapter();
     _positions.itemPositions.addListener(_onVisiblePages);
     ReaderActivity.enter();
+    _readerImageBudget.enter();
   }
 
   @override
@@ -687,6 +723,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   @override void didHaveMemoryPressure() {
     _memoryPressure = true;
+    _readerImageBudget.release();
     _geometryCandidates.clear();
     _geometryWindow = null;
     final range = _requestedPixelWindow;
@@ -1018,6 +1055,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     unawaited(_flushPosition());
     _visiblePage.dispose();
     ReaderActivity.leave();
+    _readerImageBudget.leave();
     super.dispose();
   }
 
@@ -1452,7 +1490,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               if (notice is ScrollUpdateNotification) {
                 final now = _motionClock.elapsedMicroseconds;
                 final delta = notice.scrollDelta ?? 0;
-                if (delta != 0) _motionUpdates++;
+                if (delta != 0) { _motionUpdates++; _frameMetrics?.motion(); }
                 if (delta != 0) {
                   _openingAnchorActive = false;
                   _forward = delta > 0;
