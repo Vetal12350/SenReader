@@ -364,6 +364,24 @@ class LibraryStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// [load] for hot loops (the scheduled scanner): same profile resolution,
+  /// but skips the full decode when this instance already holds exactly the
+  /// persisted strings. Any change by another isolate triggers [load] logic.
+  Future<void> loadIfChanged() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    final id = prefs.getString(activeProfileKey) ?? '';
+    final key = id.isEmpty ? storageKey : '$storageKey.user.$id';
+    if (_storageKnown && key == _storageKey &&
+        prefs.getString(_storageKey) == _knownLibraryRaw &&
+        prefs.getString(_deletedKey) == _knownDeletedRaw) {
+      return;
+    }
+    _storageKey = key;
+    await _reload();
+    notifyListeners();
+  }
+
   Future<void> _reload() => traceReaderTask('SenReader.LibraryReload', _reloadImpl);
 
   Future<void> _reloadImpl() async {

@@ -95,6 +95,11 @@ class ChapterScanRunner {
         await record('skipped', 'disabled');
         return true;
       }
+      if (shouldStop?.call() ?? false) {
+        // Reader open: avoid even the library decode on the shared thread.
+        await record('skipped', 'reader_active');
+        return true;
+      }
       await ChapterScanTrace.stage('library_load', library.load);
       if (library.profileId != profile) {
         await record('skipped', 'profile_changed');

@@ -33,7 +33,11 @@ void chapterWorkDispatcher() {
           WidgetsFlutterBinding.ensureInitialized();
           DartPluginRegistrant.ensureInitialized();
         });
-        final success = await ChapterScanRunner().run();
+        // The worker engine shares the Android main thread with the app UI
+        // (merged platform/UI threads): never scan while a reader is open.
+        final reader = ReaderActivity.marker;
+        await reader.prepare();
+        final success = await ChapterScanRunner().run(shouldStop: reader.activeNow);
         trace.event('worker_result', success ? 'success' : 'retry');
         return success;
       });

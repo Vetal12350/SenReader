@@ -346,6 +346,28 @@ class ChapterChecker {
         skippedSources: skippedSources, chapterDecisions: decisions, reason: library.profileId != scanProfile
             ? 'profile_changed' : failureReason);
   }
+  /// A hanging request is not awaited while a reader is open: poll the
+  /// (cheap, cached) stop signal and abandon the pair with a timeout. The
+  /// abandoned future keeps running in its permanently expired zone.
+  static Future<ChapterScanReport> _untilStopped(
+      Future<ChapterScanReport> pair, bool Function() interrupted) {
+    final result = Completer<ChapterScanReport>();
+    Timer? poll;
+    poll = Timer.periodic(const Duration(milliseconds: 250), (_) {
+      if (!interrupted() || result.isCompleted) return;
+      poll?.cancel();
+      result.completeError(TimeoutException('Reader opened'));
+    });
+    pair.then((value) {
+      poll?.cancel();
+      if (!result.isCompleted) result.complete(value);
+    }, onError: (Object error, StackTrace stack) {
+      poll?.cancel();
+      if (!result.isCompleted) result.completeError(error, stack);
+    });
+    return result.future;
+  }
+
   Future<ChapterScanReport> _scheduled(bool diagnostics, Duration budget,
       [bool Function()? shouldStop]) async {
     final watch = Stopwatch()..start();
@@ -371,15 +393,18 @@ class ChapterChecker {
     var failed = 0;
     var cursor = 0;
     var empty = 0;
+    var stoppedForReader = false;
+    bool stopRequested() => shouldStop?.call() ?? false;
     Future<void> progress() async => onProgress?.call(ChapterScanReport(
       found.values.toList(), List.of(warnings), checked,
       availableSources: jobs.length, checkedSources: checked,
       successfulSources: successful, failedSources: failed, chapterDecisions: Map.of(decisions),
       skippedSources: remainingJobs.length, reason: failureReason));
     await progress();
-    while (sources.isNotEmpty && spent() < budget && empty < sources.length &&
-        !(shouldStop?.call() ?? false)) {
-      await library.load();
+    while (sources.isNotEmpty && spent() < budget && empty < sources.length) {
+      if (stopRequested()) { stoppedForReader = true; break; }
+      // Full decode only when another isolate changed the library.
+      await library.loadIfChanged();
       if (library.profileId != profile) break;
       final source = sources[cursor++ % sources.length];
       final lease = await ChapterScanTrace.stage('queue_claim', () => queue.claim(
@@ -387,6 +412,7 @@ class ChapterChecker {
       if (lease == null) { empty++; continue; }
       empty = 0;
       var pairOpen = true;
+      var pairStopped = false;
       try {
         final remaining = budget - spent();
         final slice = remaining < sourceSlice ? remaining : sourceSlice;
@@ -398,13 +424,31 @@ class ChapterChecker {
             found[(normalizedTitle(discovery.book.title), discovery.canonicalKey)] = discovery;
             await progress(); // A later timeout must not erase durable discoveries.
           });
-        final report = await runZoned(() => child.check(diagnostics: diagnostics,
+        // Latched: once a reader interrupted this pair, its zone stays
+        // expired, so late transport results can never commit afterwards.
+        bool pairInterrupted() => pairStopped || (pairStopped = stopRequested());
+        final pairRun = runZoned(() => child.check(diagnostics: diagnostics,
           onlyBook: lease.job.book, onlySource: source).timeout(slice),
           zoneValues: {
             LocalSourceGate.backgroundScanKey: true,
+            // A reader opening aborts at the next request/chapter step,
+            // not after the remaining (up to 45 s) slice.
             LocalSourceGate.deadlineKey:
-                () => pairWatch.elapsed >= slice || spent() >= budget,
+                () => pairWatch.elapsed >= slice || spent() >= budget || pairInterrupted(),
           });
+        final report = shouldStop == null ? await pairRun
+            : await _untilStopped(pairRun, pairInterrupted);
+        if (pairStopped || stopRequested()) {
+          // The pair was interrupted for the reader: not a source failure.
+          // Durable discoveries were already committed; retry it later.
+          stoppedForReader = true;
+          for (final discovery in report.discoveries) {
+            found[(normalizedTitle(discovery.book.title), discovery.canonicalKey)] = discovery;
+          }
+          await ChapterScanTrace.stage('queue_finish', () => queue.finish(
+            profile, lease, DateTime.now().millisecondsSinceEpoch, success: false));
+          break;
+        }
         checked += report.checkedSources;
         for (final discovery in report.discoveries) {
           found[(normalizedTitle(discovery.book.title), discovery.canonicalKey)] = discovery;
@@ -427,6 +471,12 @@ class ChapterChecker {
         await progress();
         await afterPair?.call();
       } on TimeoutException {
+        if (pairStopped || stopRequested()) {
+          // Same transport caveat as below: keep the finite lease.
+          stoppedForReader = true;
+          ChapterScanTrace.current?.event('source_slice', 'reader_active');
+          break;
+        }
         ChapterScanTrace.current?.processed(lease.job.book);
         ChapterScanTrace.current?.event('source_slice', 'timeout');
         // Future.timeout does not cancel transport. Keep the finite job lease
@@ -457,6 +507,7 @@ class ChapterChecker {
       checkedSources: checked, skippedSources: remainingJobs.length,
       skipReasons: skipReasons, diagnostics: details, chapterDecisions: decisions,
       reason: library.profileId != profile ? 'profile_changed' :
+          stoppedForReader ? 'reader_active' :
           warnings.isNotEmpty ? (failureReason.isNotEmpty ? failureReason : 'source_error') :
           jobs.isEmpty ? 'no_reading' : remainingJobs.isNotEmpty ? state.reason : '',
       nextEligibleAt: state.nextEligibleAt);
