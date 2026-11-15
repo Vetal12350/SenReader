@@ -54,11 +54,13 @@ class ChapterScanRunner {
     return report;
   }
 
-  Future<bool> run({String origin = 'workmanager'}) =>
+  /// [shouldStop] is checked between title/source pairs (foreground only).
+  Future<bool> run({String origin = 'workmanager', bool Function()? shouldStop}) =>
       (ChapterScanTrace.current ?? ChapterScanTrace()).run(
-        origin == 'app' ? 'app' : 'workmanager', () => _run(origin: origin));
+        origin == 'app' ? 'app' : 'workmanager',
+        () => _run(origin: origin, shouldStop: shouldStop));
 
-  Future<bool> _run({required String origin}) async {
+  Future<bool> _run({required String origin, bool Function()? shouldStop}) async {
     final at = DateTime.now();
     final profile = await ChapterScanTrace.stage('profile_load', activeProfile);
     var latest = const ChapterScanReport([], [], 0);
@@ -105,7 +107,8 @@ class ChapterScanRunner {
           await record('running', '');
         });
       latest = await ChapterScanTrace.stage('scan',
-        () => scan?.call(checker) ?? checker.check(smartSchedule: true));
+        () => scan?.call(checker) ??
+          checker.check(smartSchedule: true, shouldStop: shouldStop));
       await ChapterScanTrace.stage('library_load', library.load);
       if (library.profileId != profile) {
         await record('skipped', 'profile_changed');

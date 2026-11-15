@@ -253,6 +253,15 @@ class LibraryStore extends ChangeNotifier {
   final Map<String, SavedBook> _books = {};
   final Map<String, int> _tombstones = {};
   final Map<String, String> _lastSavedPayload = {};
+  // Exact storage strings this instance last decoded or wrote. When the
+  // persisted strings are still identical, the in-memory books already
+  // represent them and a hot-path write can skip a full decode/re-snapshot.
+  bool _storageKnown = false;
+  /// Number of full storage decodes; regression tests assert the hot path.
+  @visibleForTesting
+  int debugFullReloads = 0;
+  String? _knownLibraryRaw;
+  String? _knownDeletedRaw;
   String _storageKey = storageKey;
   String get profileId => _storageKey == storageKey ? '' :
       _storageKey.substring(storageKey.length + '.user.'.length);
@@ -362,10 +371,14 @@ class LibraryStore extends ChangeNotifier {
     // Background WorkManager and the foreground have separate plugin caches.
     await prefs.reload();
     final raw = prefs.getString(_storageKey);
+    debugFullReloads++;
     _books.clear();
+    _storageKnown = false;
+    var decodedCleanly = raw == null;
     if (raw != null) {
       try {
         final decoded = traceReaderWork('SenReader.LibraryDecode', () => jsonDecode(raw));
+        decodedCleanly = decoded is List;
         if (decoded is List) {
           final restored = <String, SavedBook>{};
           for (final item in decoded) {
@@ -376,6 +389,7 @@ class LibraryStore extends ChangeNotifier {
         }
       } catch (_) {
         // Preserve malformed storage (do not overwrite it until user changes the library).
+        decodedCleanly = false;
       }
     }
     // Additive device-local scan state, scoped to the exact source ID. Legacy
@@ -413,6 +427,27 @@ class LibraryStore extends ChangeNotifier {
       ..clear()
       ..addEntries(_books.entries.map((entry) =>
         MapEntry(entry.key, _comparisonPayload(entry.value))));
+    // Malformed storage is never treated as known: every later write path
+    // keeps re-reading it exactly as before.
+    if (decodedCleanly) {
+      _knownLibraryRaw = raw;
+      _knownDeletedRaw = rawDeleted;
+      _storageKnown = true;
+    }
+  }
+
+  /// Hot reader path: re-read plugin storage (another isolate may have
+  /// written), but skip the full decode when nothing changed since this
+  /// instance last loaded or wrote it. Any difference falls back to [_reload].
+  Future<void> _reloadIfChanged() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    if (_storageKnown &&
+        prefs.getString(_storageKey) == _knownLibraryRaw &&
+        prefs.getString(_deletedKey) == _knownDeletedRaw) {
+      return;
+    }
+    await _reload();
   }
 
   bool has(UnifiedManga book) => _books.containsKey(normalizedTitle(book.title));
@@ -429,13 +464,16 @@ class LibraryStore extends ChangeNotifier {
     final savedStorageKey = _storageKey;
     final savedDeletedKey = _deletedKey;
     final savedBooks = <Map<String, dynamic>>[];
+    final comparisons = <String, String>{};
     if (!fromCloud) {
       traceReaderWork('SenReader.LibraryRevisionScan', () {
         var clock = DateTime.now().microsecondsSinceEpoch;
         for (final entry in _books.entries) {
           final book = entry.value;
           final payload = book.toJson()..remove('syncEditedAt');
-          if (_lastSavedPayload[entry.key] != jsonEncode(payload)) {
+          final comparison = jsonEncode(payload);
+          comparisons[entry.key] = comparison;
+          if (_lastSavedPayload[entry.key] != comparison) {
             clock = clock > book.syncEditedAt ? clock : book.syncEditedAt + 1;
             book.syncEditedAt = clock++;
             _tombstones.remove(entry.key);
@@ -457,10 +495,20 @@ class LibraryStore extends ChangeNotifier {
     await prefs.setString(savedStorageKey, savedLibraryJson);
     await prefs.setString(savedDeletedKey, savedTombstonesJson);
     if (savedStorageKey != _storageKey) return;
-    traceReaderWork('SenReader.LibraryPayloadSnapshot', () => _lastSavedPayload
-      ..clear()
-      ..addEntries(_books.entries.map((entry) =>
-        MapEntry(entry.key, _comparisonPayload(entry.value)))));
+    // Snapshot exactly what was written. Re-encoding after the awaits would
+    // also mark a mutation made during the write as saved although it was not.
+    traceReaderWork('SenReader.LibraryPayloadSnapshot', () {
+      _lastSavedPayload.clear();
+      if (fromCloud) {
+        _lastSavedPayload.addEntries(_books.entries.map((entry) =>
+          MapEntry(entry.key, _comparisonPayload(entry.value))));
+      } else {
+        _lastSavedPayload.addAll(comparisons);
+      }
+    });
+    _knownLibraryRaw = savedLibraryJson;
+    _knownDeletedRaw = savedTombstonesJson;
+    _storageKnown = true;
     notifyListeners();
   }
 
@@ -647,7 +695,9 @@ class LibraryStore extends ChangeNotifier {
   Future<void> savePosition(UnifiedManga book, Chapter chapter, String source,
       {required int pageIndex, required int pageCount,
        String? expectedProfile}) async {
-    await _reload();
+    // Called every few pages while reading: avoid a full library decode
+    // unless storage changed underneath this instance.
+    await _reloadIfChanged();
     if (expectedProfile != null && profileId != expectedProfile) return;
     final key = normalizedTitle(book.title);
     final item = _books.putIfAbsent(key,

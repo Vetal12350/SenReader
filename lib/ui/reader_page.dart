@@ -11,9 +11,17 @@ import '../data/catalog_repository.dart';
 import '../data/page_load_retry.dart';
 import '../data/library_store.dart';
 import '../data/reading_completion.dart';
+import '../data/reader_activity.dart';
 import 'detail_page.dart';
 import 'reader_prefetch_policy.dart';
 import 'reader_frame_metrics.dart';
+
+/// Progress checkpoint during long motion (see `_onSaveDeadline`).
+const saveCheckpointInterval = Duration(seconds: 5);
+/// A checkpoint is postponed while a scroll update arrived this recently.
+const saveMotionQuietWindow = Duration(milliseconds: 300);
+/// Continuous motion (autoscroll) still checkpoints at least this often.
+const saveCheckpointHardCap = Duration(seconds: 15);
 
 /// Chapter page URLs are kept as lightweight metadata; the indexed list
 /// lazily builds image widgets, so scrolling does not retain all image widgets.
@@ -215,6 +223,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   final ScrollOffsetController _scrollOffset = ScrollOffsetController();
   Timer? _saveTimer;
   Timer? _saveDeadline;
+  // Scroll updates delivered so far; compared across a quiet window to tell
+  // an actively moving list from a held/idle one without a wall clock.
+  int _motionUpdates = 0, _motionAtCheck = 0, _saveDeadlineRetries = 0;
   int _pageCount = 0;
   String? _lastSavedKey;
   _VisibleChapterPage? _pendingPosition;
@@ -317,6 +328,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _visiblePage.value = _initialPage;
     future = _loadInitialChapter();
     _positions.itemPositions.addListener(_onVisiblePages);
+    ReaderActivity.enter();
   }
 
   @override
@@ -873,12 +885,37 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _saveTimer?.cancel();
     // Coalesce page changes during a gesture. Bound the unsaved interval even
     // during a long fling/autoscroll, and flush explicitly on navigation/pause.
-    _saveDeadline ??= Timer(const Duration(seconds: 5),
-      () => unawaited(_flushPosition()));
+    if (_saveDeadline == null) {
+      _saveDeadlineRetries = 0;
+      // Sample motion one quiet window before the checkpoint so an idle list
+      // still saves exactly at [saveCheckpointInterval].
+      _saveDeadline = Timer(saveCheckpointInterval - saveMotionQuietWindow, () {
+        _motionAtCheck = _motionUpdates;
+        _saveDeadline = Timer(saveMotionQuietWindow, _onSaveDeadline);
+      });
+    }
     if (!_scrollMoving) {
       _saveTimer = Timer(const Duration(milliseconds: 600),
         () => unawaited(_flushPosition()));
     }
+  }
+
+  /// The checkpoint waits for a frame gap: while the list is actually moving
+  /// (a fling, drag or autoscroll delivered an update within
+  /// [saveMotionQuietWindow]) the write is retried shortly instead of running
+  /// between two animation frames. [saveCheckpointHardCap] still bounds the
+  /// unsaved interval during continuous motion such as autoscroll.
+  void _onSaveDeadline() {
+    final moving = _motionUpdates != _motionAtCheck;
+    final maxRetries = (saveCheckpointHardCap - saveCheckpointInterval)
+        .inMilliseconds ~/ saveMotionQuietWindow.inMilliseconds;
+    if (moving && _saveDeadlineRetries < maxRetries) {
+      _saveDeadlineRetries++;
+      _motionAtCheck = _motionUpdates;
+      _saveDeadline = Timer(saveMotionQuietWindow, _onSaveDeadline);
+      return;
+    }
+    unawaited(_flushPosition());
   }
 
   @override void didChangeAppLifecycleState(AppLifecycleState state) {
@@ -968,6 +1005,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _saveTimer?.cancel();
     unawaited(_flushPosition());
     _visiblePage.dispose();
+    ReaderActivity.leave();
     super.dispose();
   }
 
@@ -1401,6 +1439,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
               if (notice is ScrollUpdateNotification) {
                 final now = _motionClock.elapsedMicroseconds;
                 final delta = notice.scrollDelta ?? 0;
+                if (delta != 0) _motionUpdates++;
                 if (delta != 0) {
                   _openingAnchorActive = false;
                   _forward = delta > 0;

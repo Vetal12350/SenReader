@@ -85,6 +85,43 @@ void main() {
     await tester.pumpAndSettle();
   });
 
+  testWidgets('A2: checkpoint never writes between frames of an active drag', (tester) async {
+    final (library, _) = await mount(tester);
+    final gesture = await tester.startGesture(const Offset(200, 750));
+    await gesture.moveBy(const Offset(0, -20));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, -650));
+    await tick(tester);
+    // Keep the list moving every 100 ms past the 5 s checkpoint.
+    for (var i = 0; i < 70; i++) {
+      await gesture.moveBy(const Offset(0, -2));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(library.pages, isEmpty, reason: 'write during motion at ${i * 100} ms');
+    }
+    // Motion pauses with the finger still down: the checkpoint runs now.
+    await tester.pump(const Duration(milliseconds: 400));
+    await tick(tester);
+    expect(library.pages, hasLength(1));
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('A2: continuous motion still checkpoints within the hard cap', (tester) async {
+    final (library, _) = await mount(tester);
+    final gesture = await tester.startGesture(const Offset(200, 750));
+    await gesture.moveBy(const Offset(0, -20));
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, -650));
+    await tick(tester);
+    for (var i = 0; i < 170 && library.pages.isEmpty; i++) {
+      await gesture.moveBy(const Offset(0, -1));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(library.pages, hasLength(1), reason: 'bounded by saveCheckpointHardCap');
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('returning before debounce saves the actual last visible page', (tester) async {
     final (library, list) = await mount(tester);
     list.itemScrollController!.jumpTo(index: 3);

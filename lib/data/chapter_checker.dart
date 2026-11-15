@@ -89,8 +89,8 @@ class ChapterChecker {
   /// additionally staggered. No scanning of other library statuses.
   Future<ChapterScanReport> check({bool diagnostics = false,
       bool smartSchedule = false, Duration budget = const Duration(seconds: 120),
-      String? onlyBook, String? onlySource}) async {
-    if (smartSchedule) return _scheduled(diagnostics, budget);
+      String? onlyBook, String? onlySource, bool Function()? shouldStop}) async {
+    if (smartSchedule) return _scheduled(diagnostics, budget, shouldStop);
     final discoveries = <ChapterDiscovery>[];
     final warnings = <String>[];
     final scanDetails = <String>[];
@@ -346,7 +346,8 @@ class ChapterChecker {
         skippedSources: skippedSources, chapterDecisions: decisions, reason: library.profileId != scanProfile
             ? 'profile_changed' : failureReason);
   }
-  Future<ChapterScanReport> _scheduled(bool diagnostics, Duration budget) async {
+  Future<ChapterScanReport> _scheduled(bool diagnostics, Duration budget,
+      [bool Function()? shouldStop]) async {
     final watch = Stopwatch()..start();
     Duration spent() => elapsed?.call() ?? watch.elapsed;
     final profile = library.profileId;
@@ -376,7 +377,8 @@ class ChapterChecker {
       successfulSources: successful, failedSources: failed, chapterDecisions: Map.of(decisions),
       skippedSources: remainingJobs.length, reason: failureReason));
     await progress();
-    while (sources.isNotEmpty && spent() < budget && empty < sources.length) {
+    while (sources.isNotEmpty && spent() < budget && empty < sources.length &&
+        !(shouldStop?.call() ?? false)) {
       await library.load();
       if (library.profileId != profile) break;
       final source = sources[cursor++ % sources.length];

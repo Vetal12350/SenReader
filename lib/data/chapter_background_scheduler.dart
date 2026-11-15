@@ -7,10 +7,17 @@ import 'package:workmanager/workmanager.dart';
 import 'chapter_alert_preferences.dart';
 import 'chapter_scan_runner.dart';
 import 'chapter_scan_schedule.dart';
+import 'reader_activity.dart';
 
 const chapterCheckWork = 'senreader.periodic.chapter_check';
 const chapterCheckUniqueName = 'senreader.chapter-check.unique';
 const chapterCatchUpUniqueName = 'senreader.chapter-catchup.unique';
+
+/// Only network is required. `requiresBatteryNotLow` was dropped (B1): on a
+/// phone that is often below ~15-20 % it silently held every periodic and
+/// catch-up check. Android's own Doze/standby limits still apply.
+Constraints chapterCheckConstraints() =>
+    Constraints(networkType: NetworkType.connected);
 
 @pragma('vm:entry-point')
 void chapterWorkDispatcher() {
@@ -59,9 +66,18 @@ void chapterWorkDispatcher() {
 /// A resume must not depend on native registration or Firebase completing.
 /// SQLite claims and provider gates arbitrate simultaneous workers.
 class ChapterResumeCatchUp {
-  ChapterResumeCatchUp({required this.register, required this.scan});
+  ChapterResumeCatchUp({required this.register, required this.scan,
+    this.readerOpen, this.delay = Duration.zero});
   final Future<void> Function() register, scan;
+  /// Open reader screens. While positive, the UI-isolate scan is deferred
+  /// until the reader closes; the native one-off task is still registered.
+  final ValueListenable<int>? readerOpen;
+  /// Lets the first frames/reader opening settle before foreground parsing.
+  final Duration delay;
   Future<void>? _active;
+  VoidCallback? _waitingForReaderClose;
+
+  bool get _reading => (readerOpen?.value ?? 0) > 0;
 
   Future<void> run() {
     final active = _active;
@@ -69,7 +85,29 @@ class ChapterResumeCatchUp {
     // Schedule native continuation independently. Reading/first frame never
     // awaits either this registration or the bounded async network scan.
     unawaited(Future<void>.sync(register).catchError((Object _) {}));
-    return _active = Future<void>.sync(scan).whenComplete(() { _active = null; });
+    return _active = _gatedScan().whenComplete(() { _active = null; });
+  }
+
+  Future<void> _gatedScan() async {
+    if (delay > Duration.zero) await Future<void>.delayed(delay);
+    if (_reading) {
+      _deferUntilReaderCloses();
+      return;
+    }
+    await scan();
+  }
+
+  void _deferUntilReaderCloses() {
+    final notifier = readerOpen;
+    if (notifier == null || _waitingForReaderClose != null) return;
+    void listener() {
+      if (notifier.value > 0) return;
+      notifier.removeListener(listener);
+      _waitingForReaderClose = null;
+      unawaited(run().catchError((Object _) {}));
+    }
+    _waitingForReaderClose = listener;
+    notifier.addListener(listener);
   }
 }
 
@@ -77,7 +115,11 @@ class ChapterResumeCatchUp {
 class ChapterBackgroundScheduler {
   static Future<void>? _initialization;
   static final _catchUp = ChapterResumeCatchUp(register: _registerCatchUp,
-    scan: () async { await ChapterScanRunner().run(origin: 'app'); });
+    readerOpen: ReaderActivity.open, delay: const Duration(seconds: 20),
+    // A reader opened mid-scan stops it before the next title; unchecked
+    // titles stay due in the SQLite queue for WorkManager or the next resume.
+    scan: () async { await ChapterScanRunner().run(origin: 'app',
+      shouldStop: () => ReaderActivity.isOpen); });
 
   static Future<void> initialize() async {
     if (defaultTargetPlatform != TargetPlatform.android) return;
@@ -114,8 +156,7 @@ class ChapterBackgroundScheduler {
         existingWorkPolicy: ExistingWorkPolicy.keep,
         backoffPolicy: BackoffPolicy.exponential,
         backoffPolicyDelay: const Duration(minutes: 5),
-        constraints: Constraints(networkType: NetworkType.connected,
-          requiresBatteryNotLow: true),
+        constraints: chapterCheckConstraints(),
       );
       await _registration(true);
     } catch (_) {
@@ -137,8 +178,7 @@ class ChapterBackgroundScheduler {
         frequency: Duration(minutes: await settings.intervalMinutes()),
         backoffPolicy: BackoffPolicy.exponential,
         backoffPolicyDelay: const Duration(minutes: 5),
-        constraints: Constraints(networkType: NetworkType.connected,
-          requiresBatteryNotLow: true),
+        constraints: chapterCheckConstraints(),
         existingWorkPolicy: ExistingPeriodicWorkPolicy.update,
       );
       await _registration(true);
