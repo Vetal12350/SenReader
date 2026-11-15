@@ -155,9 +155,14 @@ void main() {
     expect(await ChapterInboxStore().load(), isEmpty);
   });
 
-  testWidgets('open Home polls new SQLite rows and removes archived suggestions',
+  testWidgets('Читаемое сейчас opens the saved page even when a newer chapter is in the inbox',
       (tester) async {
-    final source = FakeSource('readmanga');
+    // Owner decision (2026-11-15): the card says "Вернуться к сохранённой
+    // странице", so a new unread chapter must neither relabel nor redirect it.
+    final source = FakeSource('readmanga')..chapters = [
+      const Chapter(id: '2', name: 'Глава 2'),
+      const Chapter(id: '1', name: 'Глава 1'),
+    ];
     final library = await makeLibrary([source]);
     await library.savePosition(library.items.single.toUnified(),
         const Chapter(id: '1', name: 'Глава 1'), source.key,
@@ -169,16 +174,15 @@ void main() {
           preferences: MemoryAlertPreferences()..shown = true),
     )));
     await tester.pumpAndSettle();
-    final inbox = ChapterInboxStore(profileId: '');
-    await inbox.add('example', 'Example', '', source.key,
+    await ChapterInboxStore(profileId: '').add('example', 'Example', '', source.key,
         const Chapter(id: '2', name: 'Глава 2'));
-    await tester.pump(const Duration(seconds: 21));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Новая:'), findsOneWidget);
-    await inbox.hideEntry((await inbox.load()).single.key);
-    await tester.pump(const Duration(seconds: 21));
+    await tester.pump(const Duration(seconds: 21)); // Home inbox poll
     await tester.pumpAndSettle();
     expect(find.textContaining('Новая:'), findsNothing);
+    await tester.tap(find.textContaining('Сохранено:'));
+    await tester.pumpAndSettle();
+    final reader = tester.widget<ReaderPage>(find.byType(ReaderPage));
+    expect(reader.chapter.id, '1');
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

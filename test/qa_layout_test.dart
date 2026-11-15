@@ -77,7 +77,7 @@ void main() {
         await tester.drag(horizontal, const Offset(-140, 0));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
-        await tester.scrollUntilVisible(find.text('Продолжить чтение'), 200,
+        await tester.scrollUntilVisible(find.text('Читаемое сейчас'), 200,
           scrollable: find.byType(Scrollable).first);
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
