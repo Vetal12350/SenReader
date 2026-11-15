@@ -11,6 +11,7 @@ import 'package:senreader/data/chapter_checker.dart';
 import 'package:senreader/data/chapter_inbox_store.dart';
 import 'package:senreader/data/chapter_notification_service.dart';
 import 'package:senreader/data/library_store.dart';
+import 'package:senreader/data/reader_activity.dart';
 import 'package:senreader/main.dart';
 import 'chapter_alert_opt_in_test.dart' show MemoryAlertPreferences;
 import 'chapter_checker_test.dart' show FakeSource, makeLibrary;
@@ -183,6 +184,30 @@ void main() {
     await tester.pumpAndSettle();
     final reader = tester.widget<ReaderPage>(find.byType(ReaderPage));
     expect(reader.chapter.id, '1');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('Home does not poll the inbox while a reader is open, catches up after', (tester) async {
+    final source = FakeSource('readmanga');
+    final library = await makeLibrary([source]);
+    await tester.pumpWidget(MaterialApp(home: MainShell(
+      library: library,
+      repository: CatalogRepository(sources: {source.key: source}),
+      alerts: ChapterAlertController(
+          preferences: MemoryAlertPreferences()..shown = true),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('1'), findsNothing);
+    ReaderActivity.enter(); // a chapter is open on top of Home
+    addTearDown(() { if (ReaderActivity.isOpen) ReaderActivity.leave(); });
+    await ChapterInboxStore(profileId: '').add('example', 'Example', '', source.key,
+        const Chapter(id: '2', name: 'Глава 2'));
+    await tester.pump(const Duration(seconds: 41)); // two 20 s poll ticks
+    await tester.pumpAndSettle();
+    expect(find.text('1'), findsNothing, reason: 'no Home SQLite reload/rebuild while reading');
+    ReaderActivity.leave();
+    await tester.pumpAndSettle();
+    expect(find.text('1'), findsOneWidget, reason: 'badge catches up when the reader closes');
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

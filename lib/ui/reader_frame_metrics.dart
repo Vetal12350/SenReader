@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' show Timeline;
 import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/foundation.dart';
@@ -20,12 +21,42 @@ class ReaderFrameMetrics {
   void anchorCorrected() => anchorCorrections++;
   void sampleCache(int bytes) => maxImageCacheBytes = math.max(maxImageCacheBytes, bytes);
 
+  // Recent reader events (monotonic µs, label) for slow-frame attribution.
+  final _events = <(int, String)>[];
+  int slowFramesLogged = 0;
+  /// Record what the reader is doing; correlated with slow frames below.
+  void note(String event) {
+    _events.add((Timeline.now, event));
+    if (_events.length > 64) _events.removeRange(0, _events.length - 64);
+  }
+
   void add(List<FrameTiming> timings) {
     for (final frame in timings) {
       if (_build.length >= 12000) { truncated = true; break; }
       _build.add(frame.buildDuration.inMicroseconds);
       _raster.add(frame.rasterDuration.inMicroseconds);
+      _logIfSlow(frame);
     }
+  }
+
+  /// One line per frame over 1.5× budget (max 200): phases plus the reader
+  /// events from 150 ms before vsync to raster end. No titles or URLs.
+  void _logIfSlow(FrameTiming frame) {
+    final build = frame.buildDuration.inMicroseconds;
+    final raster = frame.rasterDuration.inMicroseconds;
+    if (math.max(build, raster) < budgetMicros * 1.5 || slowFramesLogged >= 200) return;
+    slowFramesLogged++;
+    final vsync = frame.timestampInMicroseconds(FramePhase.vsyncStart);
+    final end = frame.timestampInMicroseconds(FramePhase.rasterFinish);
+    final near = [for (final e in _events)
+      if (e.$1 >= vsync - 150000 && e.$1 <= end + 5000) '${((e.$1 - vsync) / 1000).round()}ms:${e.$2}'];
+    debugPrint('SenReader.SlowFrame ${jsonEncode({
+      'vsyncUs': vsync, 'buildUs': build, 'rasterUs': raster,
+      'uiStartDelayUs': frame.timestampInMicroseconds(FramePhase.buildStart) - vsync,
+      'rasterWaitUs': frame.timestampInMicroseconds(FramePhase.rasterStart) -
+          frame.timestampInMicroseconds(FramePhase.buildFinish),
+      'layerCacheBytes': frame.layerCacheBytes, 'pictureCacheBytes': frame.pictureCacheBytes,
+      'events': near})}');
   }
 
   Map<String, Object> report() {

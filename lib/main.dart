@@ -21,6 +21,7 @@ import 'ui/settings_page.dart';
 import 'data/theme_controller.dart';
 import 'data/firebase_account_service.dart';
 import 'ui/app_theme.dart';
+import 'data/reader_activity.dart';
 
 /// Reader route destinations, separate from saved library state.
 final ValueNotifier<int> mainTabRequest = ValueNotifier<int>(0);
@@ -137,8 +138,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   /// Re-read local results while the user watches Home or New Chapters.
   /// This performs no network requests and does not start a new scan.
   Future<void> _pollChapterInbox() async {
+    // Home stays mounted under the reader route. Its 20 s SQLite reload and
+    // full-screen setState measured as 15-42 ms main-thread frames while
+    // reading; nothing of it is visible then. Catch up when the reader closes.
     if (!mounted || !_isInForeground || _inboxPollInFlight ||
-        (tab != 0 && tab != 3)) return;
+        ReaderActivity.isOpen || (tab != 0 && tab != 3)) return;
     _inboxPollInFlight = true;
     try {
       await _refreshInboxCount();
@@ -232,6 +236,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     unawaited(_refreshInboxCount());
     _inboxRefreshTimer = Timer.periodic(const Duration(seconds: 20),
         (_) => unawaited(_pollChapterInbox()));
+    ReaderActivity.open.addListener(_onReaderActivity);
     ChapterNotificationService.instance.openedPayload.addListener(_onNotificationTap);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onNotificationTap());
   }
@@ -245,7 +250,12 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     }
   }
 
+  void _onReaderActivity() {
+    if (!ReaderActivity.isOpen) unawaited(_pollChapterInbox());
+  }
+
   @override void dispose() {
+    ReaderActivity.open.removeListener(_onReaderActivity);
     WidgetsBinding.instance.removeObserver(this);
     debounce?.cancel();
     _inboxRefreshTimer?.cancel();

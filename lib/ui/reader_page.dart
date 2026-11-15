@@ -534,6 +534,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   void _registerLoadedPage(_VisibleChapterPage item) {
     if (_loadedPageKeys.contains(item.key) ||
         !_loadingPageKeys.add(item.key)) return;
+    _frameMetrics?.note('shown:p${item.index}');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadingPageKeys.remove(item.key);
       if (!mounted) return;
@@ -593,6 +594,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   void _rememberHeight(String key, double height, {required double width}) {
     if (!height.isFinite || height <= 0 || width <= 0) return;
+    _frameMetrics?.note('height:${(height / width * 100).round()}%w');
     final ratio = height / width;
     final known = _ratioFor(key).value;
     // A sub-logical-pixel difference can be a visible physical-pixel gap on
@@ -670,6 +672,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       correctAnchor |= beforeAnchor;
       refreshVisiblePositions |= visible.isNotEmpty && index <= visible.last.index;
       _frameMetrics?.geometryCommitted();
+      _frameMetrics?.note('geometry');
     }
     // PositionedList reports positions on scroll/widget updates, not on a
     // child's intrinsic relayout. Refresh only the list after a visible batch:
@@ -678,6 +681,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (correctAnchor && anchor != null && _itemScroll.isAttached) {
       _itemScroll.jumpTo(index: anchor.index, alignment: anchor.itemLeadingEdge);
       _frameMetrics?.anchorCorrected();
+      _frameMetrics?.note('jump');
     }
   }
 
@@ -766,6 +770,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         if (mounted) _pumpGeometry();
       }); }
       listener = ImageStreamListener((info, _) {
+        _frameMetrics?.note('decoded:${info.image.width}x${info.image.height}');
         try {
           if (mounted && epoch == _geometryEpoch && !_fitHeight) {
             final height = readerLogicalImageHeight(width, info.image.width, info.image.height);
@@ -858,6 +863,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   Future<void> _flushPosition() {
+    if (_pendingPosition != null) _frameMetrics?.note('save');
     _saveTimer?.cancel();
     _saveDeadline?.cancel();
     _saveDeadline = null;
@@ -959,6 +965,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   Future<void> _appendNextChapter() async {
+    _frameMetrics?.note('appendChapter');
     if (!_continuous) { if (mounted) setState(() => _atSeriesEnd = true); return; }
     if (_nextLoading || _atSeriesEnd || _segments.isEmpty ||
         _nextError != null) return;
@@ -1378,6 +1385,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   @override Widget build(BuildContext context) {
     _frameMetrics?.readerBuilt();
+    _frameMetrics?.note('rootBuild');
     return Scaffold(
       backgroundColor: _lightTheme ? Colors.white : Colors.black,
       body: Stack(children: [
