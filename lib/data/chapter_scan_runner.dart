@@ -10,6 +10,12 @@ import 'library_store.dart';
 
 /// Shared bounded automatic path for WorkManager and foreground catch-up.
 /// Persistence/leases and source limits are identical in both entry points.
+/// The WorkManager pass runs as a foreground service and pauses for an open
+/// reader, so it can cover the whole queue; the in-app catch-up shares the
+/// UI thread and stays short.
+const workerScanBudget = Duration(minutes: 6);
+const appScanBudget = Duration(seconds: 120);
+
 class ChapterScanRunner {
   ChapterScanRunner({ChapterAlertPreferences? preferences, LibraryStore? library,
     CatalogRepository? repository, ChapterScanScheduleStore? schedule, this.scan, this.deliver})
@@ -113,7 +119,8 @@ class ChapterScanRunner {
         });
       latest = await ChapterScanTrace.stage('scan',
         () => scan?.call(checker) ??
-          checker.check(smartSchedule: true, shouldStop: shouldStop));
+          checker.check(smartSchedule: true, shouldStop: shouldStop,
+            budget: origin == 'app' ? appScanBudget : workerScanBudget));
       await ChapterScanTrace.stage('library_load', library.load);
       if (library.profileId != profile) {
         await record('skipped', 'profile_changed');

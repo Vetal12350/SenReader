@@ -32,6 +32,8 @@ android {
     }
 }
 """, encoding="utf-8")
+        (root / "android/gradle.properties").write_text(
+            "android.useAndroidX=true\nandroid.builtInKotlin=false\n", encoding="utf-8")
         if signed:
             (root / "android/key.properties").write_text(
                 "storeFile=senreader-upload.jks\nstorePassword=test\n"
@@ -41,6 +43,7 @@ android {
         subprocess.run([sys.executable, str(script)], cwd=root, check=True)
         body = manifest.read_text(encoding="utf-8")
         assert 'android:label="SenReader"' in body
+        assert 'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS' in body
         assert 'android:icon="@mipmap/senreader_launcher"' in body
         assert 'android:roundIcon="@mipmap/senreader_launcher"' in body
         assert body.count('android:label=') == 1
@@ -65,6 +68,10 @@ android {
         result = gradle.read_text(encoding="utf-8")
         assert "compileSdk = 36" in result
         assert "isCoreLibraryDesugaringEnabled = true" in result
+        props = (root / "android/gradle.properties").read_text(encoding="utf-8")
+        assert "workmanager.enableDataSyncForegroundService=true" in props
+        assert "android.builtInKotlin=true" in props
+        assert "android.builtInKotlin=false" not in props
         if signed:
             assert result.startswith("import java.util.Properties\n")
             assert "signingConfigs.getByName(\"senreaderStable\")" in result

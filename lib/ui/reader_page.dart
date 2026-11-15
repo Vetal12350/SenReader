@@ -12,6 +12,8 @@ import '../data/page_load_retry.dart';
 import '../data/library_store.dart';
 import '../data/reading_completion.dart';
 import '../data/reader_activity.dart';
+import '../data/page_disk_cache.dart';
+import 'cached_page_image.dart';
 import 'detail_page.dart';
 import 'reader_prefetch_policy.dart';
 import 'reader_frame_metrics.dart';
@@ -139,7 +141,7 @@ class _RetryableReaderImageState extends State<_RetryableReaderImage> {
           child: Center(child: CircularProgressIndicator(strokeWidth: 2))));
     }
     final provider = widget.imageProvider ?? ResizeImage.resizeIfNeeded(widget.decodeWidth, null,
-      NetworkImage(widget.page.url, headers: widget.page.headers));
+      CachedPageImage(widget.page));
     return Semantics(image: true, label: 'Страница ${widget.pageIndex + 1}', child: Image(
       key: ValueKey('reader-image-attempt-$_attempt'),
       image: provider, width: widget.width, excludeFromSemantics: true,
@@ -360,6 +362,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         }
         setState(() {
           _segments.add(_ChapterSegment(widget.chapter, pages));
+          // C2: download the rest of the chapter to disk off the UI isolate,
+          // starting from the reopened page, so scrolling reads local files.
+          unawaited(PageDiskCache.instance.prefetch(pages, from: _initialPage));
           // Restored progress proves earlier pages were already traversed.
           // The last image must still load before this chapter auto-completes.
           for (var i = 0; i < _initialPage; i++) {
@@ -744,8 +749,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       final segment = _segments.firstWhere((s) => s.chapter.id == item.chapter.id);
       final page = segment.pages[item.index];
       final provider = widget.imageProviderFactory?.call(page, decodeWidth) ??
-        ResizeImage.resizeIfNeeded(decodeWidth, null,
-          NetworkImage(page.url, headers: page.headers));
+        ResizeImage.resizeIfNeeded(decodeWidth, null, CachedPageImage(page));
       final epoch = _geometryEpoch;
       final stream = provider.resolve(createLocalImageConfiguration(context));
       late ImageStreamListener listener;
@@ -985,6 +989,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         return;
       }
       setState(() => _segments.add(_ChapterSegment(next, pages)));
+      unawaited(PageDiskCache.instance.prefetch(pages));
     } catch (_) {
       if (mounted) setState(() => _nextError = 'Не удалось загрузить следующую главу');
     } finally {

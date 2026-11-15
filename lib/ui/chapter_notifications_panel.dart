@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/chapter_alert_controller.dart';
 import '../data/chapter_scan_schedule.dart';
 import '../data/chapter_scan_runner.dart';
+import 'battery_optimization_tile.dart';
 
 class ChapterNotificationsPanel extends StatefulWidget {
   const ChapterNotificationsPanel({super.key, required this.alerts});
@@ -126,11 +127,12 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
             value: systemEnabled,
             onChanged: systemLoading ? null : _toggleSystem,
           ),
+          if (enabled) const BatteryOptimizationTile(),
           Text(
-            'Проверки раз в 15 минут — по возможности Android: Doze и экономия батареи '
-            'могут задерживать их. Фоновая задача требует сети и достаточного заряда. '
-            'За один запуск очередь обрабатывается до 2 минут; '
-            'при большой библиотеке очередь занимает несколько запусков. '
+            'Проверки примерно раз в час — по возможности Android: Doze и экономия '
+            'батареи могут задерживать их. Фоновая задача требует сети и на время '
+            'проверки показывает уведомление «Проверка новых глав». За один запуск '
+            'очередь обрабатывается до 6 минут; пока открыта глава, проверка ждёт. '
             'Только книги со статусом «Читаю» проверяются не чаще '
             'раза в 30 минут после успешной проверки. «В планах» и «Прочитано» '
             'не проверяются даже при ручном обновлении уведомлений. '

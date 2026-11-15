@@ -19,6 +19,19 @@ const chapterCatchUpUniqueName = 'senreader.chapter-catchup.unique';
 Constraints chapterCheckConstraints() =>
     Constraints(networkType: NetworkType.connected);
 
+/// Run the worker as an Android foreground service (as Mihon/Kotatsu do):
+/// Android then rarely stops or defers it, and a full pass fits in one run.
+/// If Android refuses to start the service, the plugin still runs the task
+/// as ordinary background work.
+ForegroundServiceConfig chapterCheckForeground() => ForegroundServiceConfig(
+  notificationTitle: 'SenReader',
+  notificationText: 'Проверка новых глав…',
+  notificationChannelId: 'senreader_chapter_check',
+  notificationChannelName: 'Проверка новых глав',
+  notificationId: 47021,
+  foregroundServiceType: ForegroundServiceType.dataSync,
+);
+
 @pragma('vm:entry-point')
 void chapterWorkDispatcher() {
   ChapterScanTrace().event('dispatcher_entry', 'begin');
@@ -161,6 +174,7 @@ class ChapterBackgroundScheduler {
         backoffPolicy: BackoffPolicy.exponential,
         backoffPolicyDelay: const Duration(minutes: 5),
         constraints: chapterCheckConstraints(),
+        foregroundServiceConfig: chapterCheckForeground(),
       );
       await _registration(true);
     } catch (_) {
@@ -183,6 +197,7 @@ class ChapterBackgroundScheduler {
         backoffPolicy: BackoffPolicy.exponential,
         backoffPolicyDelay: const Duration(minutes: 5),
         constraints: chapterCheckConstraints(),
+        foregroundServiceConfig: chapterCheckForeground(),
         existingWorkPolicy: ExistingPeriodicWorkPolicy.update,
       );
       await _registration(true);

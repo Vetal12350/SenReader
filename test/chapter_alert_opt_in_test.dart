@@ -22,7 +22,7 @@ class MemoryAlertPreferences extends ChapterAlertPreferences {
 void main() {
   test('all former/default/sub-minimum intervals migrate to 15 minutes', () {
     for (final value in [null, -1, 0, 5, 14, 15, 30, 60, 180, 360, 9999]) {
-      expect(ChapterAlertPreferences.migrateInterval(value), 15);
+      expect(ChapterAlertPreferences.migrateInterval(value), 60);
     }
     expect(ChapterAlertPreferences.availableIntervals, [15]);
     for (final value in [0, 5, 14, 30, 60]) {
