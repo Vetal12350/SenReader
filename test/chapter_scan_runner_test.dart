@@ -127,12 +127,26 @@ void main() {
     });
   }
 
+  test('A3: a foreground scan stops before the next title when a reader opens', () async {
+    final source = FakeSource('senkuro')
+      ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final library = await makeLibrary([source]);
+    final runner = ChapterScanRunner(preferences: MemoryAlertPreferences()..on = true,
+      library: library, repository: CatalogRepository(sources: {source.key: source}),
+      deliver: (_) async {});
+    expect(await runner.run(origin: 'app', shouldStop: () => true), isTrue);
+    expect(source.detailCalls, 0, reason: 'no source request while reading');
+    // The unchecked title stays due; the next unrestricted run checks it.
+    await runner.run(origin: 'app');
+    expect(source.detailCalls, greaterThan(0));
+  });
+
   test('offline is partial, with a safe reason and a retryable queue', () async {
     final source = FakeSource('senkuro')..available = false;
     final library = await makeLibrary([source]);
     final runner = ChapterScanRunner(preferences: MemoryAlertPreferences()..on = true,
       library: library, repository: CatalogRepository(sources: {source.key: source}));
-    await runner.run();
+    expect(await runner.run(), isFalse);
     final summary = (await ChapterScanScheduleStore().lastRun(''))!;
     expect(summary.outcome, 'partial');
     expect(summary.reason, 'source_error');
@@ -244,6 +258,12 @@ void main() {
       final original = prefs.getString(LibraryStore.storageKey);
       final library = LibraryStore();
       await library.load();
+      for (final book in library.items) {
+        for (final source in [a, b]) {
+          await ChapterInboxStore(profileId: '').recordScan(
+            book.key, source.key, book.entries[source.key]!.id, ['v0:c1'], {});
+        }
+      }
       final repo = CatalogRepository(sources: {a.key: a, b.key: b});
       var pairs = 0;
       final first = await ChapterChecker(repository: repo, library: library,

@@ -1,3 +1,4 @@
+import 'chapter_scan_trace.dart';
 import 'local_source_gate.dart';
 import 'dart:convert';
 import 'package:html/parser.dart' as html_parser;
@@ -72,8 +73,8 @@ class ReadMangaSource implements MangaSource {
         'Accept-Language': 'ru-RU,ru;q=0.9',
         'Referer': '$baseUrl/',
       };
-      response = await _session.get(uri, headers: headers)
-          .timeout(const Duration(seconds: 18));
+      response = await ChapterScanTrace.stage('readmanga_http',
+        () => _session.get(uri, headers: headers).timeout(const Duration(seconds: 18)));
     } catch (e) {
       throw SourceException('Нет соединения с ReadManga ($e)');
     }
@@ -227,7 +228,8 @@ class ReadMangaSource implements MangaSource {
     }
     return MangaDetail(entry: MangaEntry(source: key, id: entry.id, title: name,
         coverUrl: cover.isNotEmpty ? cover : entry.coverUrl),
-        chapters: chapters, description: description, genres: genres,
+        chapters: chapters, chaptersComplete: chapters.isNotEmpty,
+        description: description, genres: genres,
         rating: score);
   }
 

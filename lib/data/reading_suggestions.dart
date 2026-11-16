@@ -44,7 +44,7 @@ Map<String, Chapter> unreadInboxSuggestions(Iterable<SavedBook> savedBooks,
   final books = {for (final book in savedBooks) book.key: book};
   final suggestions = <String, Chapter>{};
   for (final entry in inbox) {
-    if (entry.hidden) continue;
+    if (entry.hidden || entry.read || entry.deleted) continue;
     final saved = books[entry.bookKey];
     if (saved == null || saved.preferredSource != entry.source ||
         !saved.entries.containsKey(entry.source)) continue;
@@ -102,4 +102,41 @@ bool showContinueCard(SavedBook saved, {Chapter? newlyAvailable}) {
   if (saved.lastPageCount > 0 &&
       saved.lastPageIndex >= saved.lastPageCount - 1) return false;
   return true;
+}
+
+/// Home history uses persisted reader visits. Unknown legacy dates stay zero.
+/// The last visit is the newest chapter this source is known to have, and it
+/// is marked read: nothing is left to continue. Uses only source-backed
+/// `latestKnownChapterId`; an unknown latest chapter keeps the card visible.
+/// A newer chapter recorded later makes the title reappear.
+bool _caughtUp(SavedBook book, ReadingVisit visit) {
+  if (visit.chapterId.isEmpty || book.latestKnownSource != visit.source ||
+      book.latestKnownChapterId != visit.chapterId) return false;
+  final chapter = Chapter(id: visit.chapterId, name: visit.chapterName);
+  return book.readChapterKeys.contains(sourceChapterKey(chapter, visit.source)) ||
+      book.readChapterKeys.contains('${visit.source}|id:name:${visit.chapterName}');
+}
+
+List<SavedBook> recentReadingBooks(Iterable<SavedBook> books) {
+  final byIdentity = <String, SavedBook>{};
+  for (final book in books) {
+    final visit = book.lastReading;
+    if (visit == null || visit.chapterName.isEmpty ||
+        book.entries[visit.source]?.id != visit.titleId ||
+        book.preferredSource != visit.source) continue;
+    if (_caughtUp(book, visit)) continue;
+    final snapshot = SavedBook.fromJson(book.toJson()
+      ..addAll({'lastChapter': visit.chapterName, 'lastChapterId': visit.chapterId,
+        'lastSource': visit.source, 'lastPageIndex': visit.pageIndex,
+        'lastPageCount': visit.pageCount, 'lastUpdatedAt': visit.at}));
+    final identity = '${visit.source}|${visit.titleId}';
+    final existing = byIdentity[identity];
+    if (existing == null || snapshot.lastUpdatedAt > existing.lastUpdatedAt) {
+      byIdentity[identity] = snapshot;
+    }
+  }
+  return byIdentity.values.toList()..sort((a, b) {
+    final date = b.lastUpdatedAt.compareTo(a.lastUpdatedAt);
+    return date != 0 ? date : a.key.compareTo(b.key);
+  });
 }

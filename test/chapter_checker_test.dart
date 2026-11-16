@@ -16,6 +16,7 @@ class FakeSource implements MangaSource {
   @override Map<String, String> get imageHeaders => {};
   bool available;
   bool readable = true;
+  bool complete = true;
   List<Chapter> chapters = [];
   int pageCalls = 0;
   int detailCalls = 0;
@@ -30,7 +31,7 @@ class FakeSource implements MangaSource {
   @override Future<MangaDetail> detail(MangaEntry record) async {
     detailCalls++;
     if (!available) throw SourceException('offline');
-    return MangaDetail(entry: record, chapters: chapters);
+    return MangaDetail(entry: record, chapters: chapters, chaptersComplete: complete);
   }
   @override Future<List<PageImage>> pages(Chapter chapter) async {
     pageCalls++;
@@ -113,10 +114,40 @@ void main() {
     expect(report.discoveries, isEmpty);
     expect(source.pageCalls, 0);
     expect(library.items.single.initializedSources, contains('senkuro'));
-    expect(library.items.single.seenChapterKeys, {'v0:c1', 'v0:c2'});
+    expect(library.items.single.seenChapterKeys, {'v0:c1', 'v0:c2', 'id:x', 'id:y'});
   });
 
-  test('first account scan catches a recently published unread chapter after 112',
+  test('partial lists do not advance the last complete snapshot or replay known IDs', () async {
+    final source = FakeSource('senkuro')..chapters = [
+      const Chapter(id: 'a', name: 'Глава 1'),
+      const Chapter(id: 'b', name: 'Глава 2'),
+    ];
+    final library = await makeLibrary([source]);
+    final repo = CatalogRepository(sources: {source.key: source});
+    final checker = ChapterChecker(repository: repo, library: library);
+    final inbox = ChapterInboxStore(profileId: '');
+    expect((await checker.check()).updatedTitles, 0);
+    final complete = (await inbox.loadScanState()).single['payload'];
+    source.complete = false;
+    source.chapters = [const Chapter(id: 'c', name: 'Глава 3')];
+    expect((await checker.check()).warnings, isNotEmpty);
+    expect((await inbox.loadScanState()).single['payload'], complete);
+
+    final reopened = LibraryStore();
+    await reopened.load();
+    source.complete = true;
+    source.chapters = [
+      const Chapter(id: 'b', name: 'Глава 2.1'),
+      const Chapter(id: 'a', name: 'Глава 1'),
+      const Chapter(id: 'c', name: 'Глава 3'),
+    ];
+    final after = ChapterChecker(repository: repo, library: reopened);
+    expect((await after.check()).discoveries.map((d) => d.chapter.id), ['c']);
+    expect((await after.check()).updatedTitles, 0);
+    expect((await inbox.load()).length, 1);
+  });
+
+  test('first account scan is silent even when an unread chapter was published recently',
       () async {
     final oldDate = DateTime.now().subtract(const Duration(days: 7));
     final newDate = DateTime.now().subtract(const Duration(hours: 2));
@@ -136,12 +167,8 @@ void main() {
       'readmanga': source,
     }), library: library);
     final first = await checker.check();
-    expect(first.discoveries.map((d) => d.canonicalKey), ['v0:c113']);
+    expect(first.discoveries, isEmpty);
     expect(library.items.single.initializedSources, contains('readmanga'));
-    // The foreground inbox/background notification service records delivery
-    // after check() returns; simulate that handoff to prevent replay.
-    await ChapterInboxStore().add(library.items.single.key, 'Example', '',
-        'readmanga', source.chapters.first);
     expect((await checker.check()).discoveries, isEmpty);
     final reopened = LibraryStore();
     await reopened.load();
@@ -168,7 +195,7 @@ void main() {
     expect(library.items.single.seenChapterKeys, contains('v0:c113'));
   });
 
-  test('old silent baseline can recover recent chapter 113 exactly once', () async {
+  test('an already baselined unread chapter is never rediscovered', () async {
     final now = DateTime.now();
     final source = FakeSource('readmanga')..chapters = [
       Chapter(id: '113', name: 'Глава 113',
@@ -186,9 +213,8 @@ void main() {
         repository: CatalogRepository(sources: {'readmanga': source}),
         library: library);
     final first = await checker.check();
-    expect(first.discoveries.map((item) => item.canonicalKey), ['v0:c113']);
-    await ChapterInboxStore().add(key, 'Example', '', 'readmanga',
-        source.chapters.first);
+    expect(first.discoveries, isEmpty);
+    expect(await ChapterInboxStore().load(), isEmpty);
     expect((await checker.check()).discoveries, isEmpty);
     expect(library.items.single.readChapterKeys, contains('readmanga|v0:c112'));
   });

@@ -20,10 +20,11 @@ class _ManyStrips extends GeometrySource {
 
 const _captureKey = ValueKey('reader-pixel-capture');
 
-Future<ui.Image> bitmap(int width, int height, {bool whiteBottom = false}) async {
+Future<ui.Image> bitmap(int width, int height,
+    {bool whiteBottom = false, bool transparent = false}) async {
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder);
-  canvas.drawColor(const Color(0xff101010), BlendMode.src);
+  canvas.drawColor(transparent ? Colors.transparent : const Color(0xff101010), BlendMode.src);
   if (whiteBottom) {
     canvas.drawRect(Rect.fromLTWH(0, height - 1, width.toDouble(), 1),
       Paint()..color = Colors.white);
@@ -60,6 +61,8 @@ void main() {
     images[1200] = await bitmap(777, 1200);
     images[1201] = await bitmap(778, 1201);
     images[198] = await bitmap(113, 197, whiteBottom: true);
+    images[199] = await bitmap(113, 197, transparent: true);
+    images[600] = await bitmap(113, 600);
   });
   tearDownAll(() { for (final image in images.values) { image.dispose(); } });
   setUp(() => SharedPreferences.setMockInitialValues({
@@ -91,7 +94,7 @@ void main() {
 
   for (final (width, dpr, alignment) in [
     (400, 1.0, .5), (537, 1.25, .501),
-    (1344, 3.0, .501), (1080, 2.625, .5005),
+    (1344, 3.0, .501), (1080, 2.625, .5005), (1008, 2.25, .36),
   ]) {
     testWidgets('opaque source has no bright seam: $width px DPR $dpr at $alignment', (tester) async {
       final (fixtures, _) = await mount(tester, physicalWidth: width, dpr: dpr);
@@ -106,6 +109,24 @@ void main() {
         isTrue, reason: 'the source has no white/transparent edge; seam pixels=$pixels');
     });
   }
+
+  testWidgets('Pixel 8 Pro dimensions stay joined across fractional physical offsets', (tester) async {
+    const dpr = 2.625;
+    final (fixtures, _) = await mount(tester,
+      physicalWidth: 1008, physicalHeight: 2244, dpr: dpr);
+    fixtures.complete('1/0/0', 197);
+    fixtures.complete('1/1/0', 197);
+    await tick(tester);
+    final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
+    for (final offset in [0.0, .125, .25, .375, .5, .625, .75, .875]) {
+      final alignment = .5 + offset / 2244;
+      list.itemScrollController!.jumpTo(index: 1, alignment: alignment);
+      await tick(tester);
+      final pixels = await seamPixels(tester, dpr, alignment);
+      expect(pixels.every((p) => p[0] <= 20 && p[1] <= 20 && p[2] <= 20 && p[3] == 255),
+        isTrue, reason: 'fractional physical offset=$offset, seam pixels=$pixels');
+    }
+  });
 
   testWidgets('long short-strip chapter does not start decodes for multiple offscreen screens', (tester) async {
     final (fixtures, _) = await mount(tester, count: 200);
@@ -185,6 +206,38 @@ void main() {
     final pixels = await seamPixels(tester, 1.25, .5);
     expect(pixels.any((p) => p[0] > 200 && p[1] > 200 && p[2] > 200), isTrue);
     expect(pixels.last[0], lessThan(30));
+  });
+
+  testWidgets('late geometry keeps the anchor and transparent next page intact during a drag', (tester) async {
+    final (fixtures, _) = await mount(tester);
+    fixtures.complete('1/0/0', 197);
+    fixtures.complete('1/1/0', 199);
+    await tick(tester);
+    final list = tester.widget<ScrollablePositionedList>(find.byType(ScrollablePositionedList));
+    list.itemScrollController!.jumpTo(index: 1, alignment: .5);
+    await tick(tester);
+    final reserved = tester.getSize(page(0)).height;
+    final gesture = await tester.startGesture(const Offset(200, 550));
+    await gesture.moveBy(const Offset(0, -20));
+    await tester.pump();
+    final dynamic tile = tester.widget(page(0));
+    final source = tester.widget<ReaderPage>(find.byType(ReaderPage))
+        .repository.sources['senkuro']! as GeometrySource;
+    source.revision++;
+    await tile.onRefreshLinks();
+    await tick(tester);
+    fixtures.complete('1/0/1', 600);
+    fixtures.complete('1/1/1', 199);
+    await tick(tester);
+    // Geometry above the anchor must stay deferred until the gesture ends.
+    expect(tester.getSize(page(0, 1)).height, closeTo(reserved, 1e-6));
+    final alignment = tester.getTopLeft(page(1, 1)).dy / 600;
+    final pixels = await seamPixels(tester, 1, alignment);
+    expect(pixels.last, [255, 255, 255, 255],
+      reason: 'the transparent next page must expose the white background, not the overflowing bitmap');
+    await gesture.up();
+    await tick(tester);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('fast return and reopening a long chapter preserve page progress and cached pixels', (tester) async {

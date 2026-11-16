@@ -25,7 +25,7 @@ void main() {
     final decoded = ChapterNotificationService.decodePayload(encoded)!;
     expect(decoded, {
       'book': 'example', 'source': 'remanga',
-      'chapter': '321', 'canonical': 'v0:c3.5',
+      'chapter': '321', 'canonical': 'v0:c3.5', 'titleId': 'manga',
     });
     expect(jsonDecode(encoded), isA<Map>());
     expect(encoded, isNot(contains('http')));
@@ -41,11 +41,11 @@ void main() {
     }
   });
 
-  test('same chapter on a different source gets stable notification id', () {
+  test('different source chapter identities get independent notification ids', () {
     final first = discovery('Example', 'senkuro', 'v0:c3', 'first');
     final second = discovery('Example', 'remanga', 'v0:c3', 'second');
     expect(ChapterNotificationService.notificationId(first),
-        ChapterNotificationService.notificationId(second));
+        isNot(ChapterNotificationService.notificationId(second)));
     expect(ChapterNotificationService.notificationId(first),
         isNot(ChapterNotificationService.notificationId(
           discovery('Different', 'remanga', 'v0:c3', 'third'),

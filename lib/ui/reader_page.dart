@@ -6,13 +6,60 @@ import 'package:flutter/services.dart';
 import '../main.dart' show mainTabRequest;
 import '../core/models.dart';
 import '../core/chapter_identity.dart';
+import '../core/reader_trace.dart';
 import '../data/catalog_repository.dart';
 import '../data/page_load_retry.dart';
 import '../data/library_store.dart';
 import '../data/reading_completion.dart';
+import '../data/reader_activity.dart';
+import '../data/page_disk_cache.dart';
+import 'cached_page_image.dart';
+import '../data/image_header.dart';
 import 'detail_page.dart';
 import 'reader_prefetch_policy.dart';
 import 'reader_frame_metrics.dart';
+
+/// Raises the bitmap cache while any reader is open; restores it afterwards.
+/// Memory pressure gives the memory back immediately.
+class ReaderImageBudget {
+  ReaderImageBudget({ImageCache? cache}) : _cache = cache;
+  final ImageCache? _cache;
+  ImageCache get cache => _cache ?? PaintingBinding.instance.imageCache;
+  int _readers = 0;
+  int? _savedBytes, _savedEntries;
+  void enter() {
+    if (_readers++ > 0 || _savedBytes != null) return;
+    _savedBytes = cache.maximumSizeBytes;
+    _savedEntries = cache.maximumSize;
+    if (cache.maximumSizeBytes < ReaderPrefetchPolicy.readerCacheBytes) {
+      cache.maximumSizeBytes = ReaderPrefetchPolicy.readerCacheBytes;
+    }
+    if (cache.maximumSize < ReaderPrefetchPolicy.readerCacheEntries) {
+      cache.maximumSize = ReaderPrefetchPolicy.readerCacheEntries;
+    }
+  }
+  void leave() {
+    if (_readers == 0) return;
+    if (--_readers == 0) release();
+  }
+  /// Restore the previous limits (the cache evicts down to them at once).
+  void release() {
+    final bytes = _savedBytes, entries = _savedEntries;
+    if (bytes == null || entries == null) return;
+    cache.maximumSizeBytes = bytes;
+    cache.maximumSize = entries;
+    _savedBytes = _savedEntries = null;
+  }
+}
+
+final _readerImageBudget = ReaderImageBudget();
+
+/// Progress checkpoint during long motion (see `_onSaveDeadline`).
+const saveCheckpointInterval = Duration(seconds: 5);
+/// A checkpoint is postponed while a scroll update arrived this recently.
+const saveMotionQuietWindow = Duration(milliseconds: 300);
+/// Continuous motion (autoscroll) still checkpoints at least this often.
+const saveCheckpointHardCap = Duration(seconds: 15);
 
 /// Chapter page URLs are kept as lightweight metadata; the indexed list
 /// lazily builds image widgets, so scrolling does not retain all image widgets.
@@ -130,7 +177,7 @@ class _RetryableReaderImageState extends State<_RetryableReaderImage> {
           child: Center(child: CircularProgressIndicator(strokeWidth: 2))));
     }
     final provider = widget.imageProvider ?? ResizeImage.resizeIfNeeded(widget.decodeWidth, null,
-      NetworkImage(widget.page.url, headers: widget.page.headers));
+      CachedPageImage(widget.page));
     return Semantics(image: true, label: 'Страница ${widget.pageIndex + 1}', child: Image(
       key: ValueKey('reader-image-attempt-$_attempt'),
       image: provider, width: widget.width, excludeFromSemantics: true,
@@ -149,10 +196,11 @@ class _RetryableReaderImageState extends State<_RetryableReaderImage> {
               widget.onMeasuredHeight(measured);
             }
           }
-          // Keep the old box until the geometry coordinator can safely commit
-          // the ratio. A late image above the viewport must not move content.
+          // Preserve the old box until the geometry coordinator can commit.
+          // Image's fitWidth/contain paint stays inside this box. An extra
+          // fractional ClipRect exposes a bright seam on Impeller/Vulkan.
           return SizedBox(height: widget.height ?? widget.knownHeight ?? widget.width * 1.5,
-            child: ClipRect(child: child));
+            child: child);
         }
         // Preserve the previous layout when the image cache evicts a bitmap.
         // The former fixed 170px tile caused scroll corrections on return.
@@ -204,12 +252,18 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   // Profile identity is fixed for the lifetime of this route, including
   // delayed page loading, debounced position writes and disposal.
   late final String _readerProfile;
+  late int _initialPage;
+  bool _openingAnchorActive = true;
   bool get _sessionActive => widget.library.profileId == _readerProfile;
   final ItemPositionsListener _positions = ItemPositionsListener.create();
   final ItemScrollController _itemScroll = ItemScrollController();
   // Pixel-relative scrolling keeps movement smooth across tall webtoon images.
   final ScrollOffsetController _scrollOffset = ScrollOffsetController();
   Timer? _saveTimer;
+  Timer? _saveDeadline;
+  // Scroll updates delivered so far; compared across a quiet window to tell
+  // an actively moving list from a held/idle one without a wall clock.
+  int _motionUpdates = 0, _motionAtCheck = 0, _saveDeadlineRetries = 0;
   int _pageCount = 0;
   String? _lastSavedKey;
   _VisibleChapterPage? _pendingPosition;
@@ -308,9 +362,12 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     unawaited(_restoreReaderSettings());
     _chapters = widget.chapters;
     _activeChapter = widget.chapter;
-    _visiblePage.value = _resumePage;
+    _initialPage = _resumePage;
+    _visiblePage.value = _initialPage;
     future = _loadInitialChapter();
     _positions.itemPositions.addListener(_onVisiblePages);
+    ReaderActivity.enter();
+    _readerImageBudget.enter();
   }
 
   @override
@@ -337,11 +394,18 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     final pages = await loadChapterPagesWithRetry(
       widget.repository.sources[widget.sourceKey]!, widget.chapter);
       if (mounted && _sessionActive) {
+        if (pages.isNotEmpty) {
+          _initialPage = _initialPage.clamp(0, pages.length - 1).toInt();
+        }
         setState(() {
           _segments.add(_ChapterSegment(widget.chapter, pages));
+          // C2: download the rest of the chapter to disk off the UI isolate,
+          // starting from the reopened page, so scrolling reads local files.
+          unawaited(PageDiskCache.instance.prefetch(pages, from: _initialPage)
+            .then((_) => _applyDiskSizes()));
           // Restored progress proves earlier pages were already traversed.
           // The last image must still load before this chapter auto-completes.
-          for (var i = 0; i < _resumePage && i < pages.length; i++) {
+          for (var i = 0; i < _initialPage; i++) {
             _loadedPageKeys.add(
               _VisibleChapterPage(widget.chapter, i, pages.length).key);
           }
@@ -350,7 +414,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         if (pages.isNotEmpty) {
           // An opened chapter has an open eye immediately. Progress remains
           // independent so merely entering a page cannot skip the chapter.
-          final page = _resumePage.clamp(0, pages.length - 1).toInt();
+          final page = _initialPage;
           final initial = _VisibleChapterPage(widget.chapter, page, pages.length);
           if (_lastSavedKey == null && _pendingPosition == null) {
             _lastSavedKey = initial.key;
@@ -395,12 +459,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   int get _resumePage {
     if (!_sessionActive) return 0;
-    final saved = widget.library.get(widget.book);
-    if (saved == null || saved.lastSource != widget.sourceKey) return 0;
-    if (saved.lastChapterId.isNotEmpty) {
-      return saved.lastChapterId == widget.chapter.id ? saved.lastPageIndex : 0;
-    }
-    return saved.lastChapter == widget.chapter.name ? saved.lastPageIndex : 0;
+    return widget.library.get(widget.book)?.pageIndexFor(widget.chapter, widget.sourceKey) ?? 0;
   }
 
   int get _itemCount {
@@ -513,6 +572,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   void _registerLoadedPage(_VisibleChapterPage item) {
     if (_loadedPageKeys.contains(item.key) ||
         !_loadingPageKeys.add(item.key)) return;
+    _frameMetrics?.note('shown:p${item.index}');
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadingPageKeys.remove(item.key);
       if (!mounted) return;
@@ -527,13 +587,21 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   ValueNotifier<bool> _pixelsFor(String key, int index) =>
       _pagePixels.putIfAbsent(key, () => ValueNotifier(
         _activePixelKeys.contains(key) || (_activePixelKeys.isEmpty &&
-          index >= _resumePage && index <= _resumePage + 1)));
+          index == _resumePage)));
 
   void _updatePixelWindow(int first, int last, List<int> candidates) {
     final desired = <String>{};
     for (final index in {for (var i = first; i <= last; i++) i, ...candidates}) {
       final item = _pageAt(index);
       if (item == null) continue;
+      // Only visible pages may start independently of the speculative queue.
+      // Activating every candidate here lets Image.resolve bypass its limit,
+      // memory/giant-bitmap guards and the slots held by obsolete requests.
+      if ((index < first || index > last) &&
+          !_activePixelKeys.contains(item.key) &&
+          _geometryProbeEpochs[item.key] != _geometryEpoch) {
+        continue;
+      }
       desired.add(item.key);
       if (!_activePixelKeys.contains(item.key)) _pixelsFor(item.key, index).value = true;
     }
@@ -562,8 +630,54 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     WidgetsBinding.instance.ensureVisualUpdate();
   }
 
+  bool _diskSizesRunning = false;
+  int _diskSizesAtMs = 0;
+  final Set<String> _diskSized = {};
+
+  /// Give downloaded pages their final height from the file header, before
+  /// they are decoded or scrolled to. Runs at chapter load, when a chapter
+  /// finishes downloading and when scrolling stops — never mid-gesture, so
+  /// the list relayout this causes happens while nothing moves.
+  Future<void> _applyDiskSizes() async {
+    if (!mounted || _fitHeight || _diskSizesRunning || _segments.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _diskSizesAtMs < 1500) return;
+    _diskSizesAtMs = now;
+    _diskSizesRunning = true;
+    try {
+      final width = _layoutWidth > 0 ? _layoutWidth : MediaQuery.sizeOf(context).width;
+      final decodeWidth = readerDecodeWidth(width, MediaQuery.devicePixelRatioOf(context));
+      final found = <String, double>{};
+      for (final segment in List.of(_segments)) {
+        for (var i = 0; i < segment.pages.length; i++) {
+          final key = _VisibleChapterPage(segment.chapter, i, segment.pages.length).key;
+          if (_diskSized.contains(key) || _pageRatios[key]?.value != null) continue;
+          final size = await PageDiskCache.instance.dimensions(segment.pages[i].url);
+          if (!mounted) return;
+          if (size == null) continue; // not downloaded yet: retried later
+          _diskSized.add(key);
+          final (decodedWidth, decodedHeight) =
+              readerDecodedSize(size.$1, size.$2, decodeWidth);
+          final height = readerLogicalImageHeight(width, decodedWidth, decodedHeight);
+          if (height != null) found[key] = height;
+        }
+      }
+      if (!mounted || found.isEmpty) return;
+      if (_scrollMoving || _autoScrolling) {
+        _diskSized.removeAll(found.keys); // apply at the next scroll end
+        _diskSizesAtMs = 0;
+        return;
+      }
+      _frameMetrics?.note('diskSizes:${found.length}');
+      found.forEach((key, height) => _rememberHeight(key, height, width: width));
+    } finally {
+      _diskSizesRunning = false;
+    }
+  }
+
   void _rememberHeight(String key, double height, {required double width}) {
     if (!height.isFinite || height <= 0 || width <= 0) return;
+    _frameMetrics?.note('height:${(height / width * 100).round()}%w');
     final ratio = height / width;
     final known = _ratioFor(key).value;
     // A sub-logical-pixel difference can be a visible physical-pixel gap on
@@ -614,7 +728,14 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     // Prefer already decoded content, not an unknown loading box above it.
     final known = visible.where((p) =>
       _pageRatios[_pageAt(p.index)!.key]?.value != null).toList();
-    final anchor = known.where((p) => p.itemLeadingEdge >= 0).firstOrNull ??
+    final first = visible.firstOrNull;
+    // While the opening page is aligned at the top, preserve it even if a
+    // later image decoded first. Anchoring the later image would scroll as
+    // soon as the opening placeholder grows to its actual height.
+    final openingAnchor = _openingAnchorActive && first?.index == _initialPage &&
+        first?.itemLeadingEdge == 0 ? first : null;
+    final anchor = openingAnchor ??
+        known.where((p) => p.itemLeadingEdge >= 0).firstOrNull ??
         known.firstOrNull ?? visible.firstOrNull;
     var correctAnchor = false;
     var refreshVisiblePositions = false;
@@ -634,6 +755,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       correctAnchor |= beforeAnchor;
       refreshVisiblePositions |= visible.isNotEmpty && index <= visible.last.index;
       _frameMetrics?.geometryCommitted();
+      _frameMetrics?.note('geometry');
     }
     // PositionedList reports positions on scroll/widget updates, not on a
     // child's intrinsic relayout. Refresh only the list after a visible batch:
@@ -642,11 +764,13 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     if (correctAnchor && anchor != null && _itemScroll.isAttached) {
       _itemScroll.jumpTo(index: anchor.index, alignment: anchor.itemLeadingEdge);
       _frameMetrics?.anchorCorrected();
+      _frameMetrics?.note('jump');
     }
   }
 
   @override void didHaveMemoryPressure() {
     _memoryPressure = true;
+    _readerImageBudget.release();
     _geometryCandidates.clear();
     _geometryWindow = null;
     final range = _requestedPixelWindow;
@@ -688,20 +812,20 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         ..clear()
         ..addAll(candidates);
     }
-    if (_fitHeight) return;
     _frameMetrics?.sampleCache(cache.currentSizeBytes);
     _pumpGeometry();
   }
 
   void _pumpGeometry() {
-    if (!mounted || _fitHeight) return;
+    if (!mounted) return;
     final cache = PaintingBinding.instance.imageCache;
     final limit = ReaderPrefetchPolicy.concurrency(cache.currentSizeBytes,
       cache.maximumSizeBytes, memoryPressure: _memoryPressure);
     final width = _layoutWidth > 0 ? _layoutWidth : MediaQuery.sizeOf(context).width;
     final decodeWidth = readerDecodeWidth(width, MediaQuery.devicePixelRatioOf(context));
     while (_geometryProbes.length < limit && _geometryCandidates.isNotEmpty) {
-      final item = _pageAt(_geometryCandidates.removeAt(0));
+      final index = _geometryCandidates.removeAt(0);
+      final item = _pageAt(index);
       if (item == null || _geometryProbes.containsKey(item.key) ||
           !_geometryAttempted.add(item.key) ||
           (_geometryRetryAt[item.key]?.isAfter(DateTime.now()) ?? false)) continue;
@@ -713,8 +837,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       final segment = _segments.firstWhere((s) => s.chapter.id == item.chapter.id);
       final page = segment.pages[item.index];
       final provider = widget.imageProviderFactory?.call(page, decodeWidth) ??
-        ResizeImage.resizeIfNeeded(decodeWidth, null,
-          NetworkImage(page.url, headers: page.headers));
+        ResizeImage.resizeIfNeeded(decodeWidth, null, CachedPageImage(page));
       final epoch = _geometryEpoch;
       final stream = provider.resolve(createLocalImageConfiguration(context));
       late ImageStreamListener listener;
@@ -731,8 +854,9 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         if (mounted) _pumpGeometry();
       }); }
       listener = ImageStreamListener((info, _) {
+        _frameMetrics?.note('decoded:${info.image.width}x${info.image.height}');
         try {
-          if (mounted && epoch == _geometryEpoch) {
+          if (mounted && epoch == _geometryEpoch && !_fitHeight) {
             final height = readerLogicalImageHeight(width, info.image.width, info.image.height);
             if (height != null) _rememberHeight(item.key, height, width: width);
           }
@@ -756,6 +880,10 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       });
       _geometryProbes[item.key] = finish;
       _geometryProbeEpochs[item.key] = epoch;
+      // Admission owns speculative activation. The widget will reuse this
+      // pending/decoded stream instead of starting work outside the queue.
+      _activePixelKeys.add(item.key);
+      _pixelsFor(item.key, index).value = true;
       stream.addListener(listener);
     }
   }
@@ -812,15 +940,17 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       });
     }
     _visiblePage.value = progress.index;
-    if (progress.key == _lastSavedKey ||
-        progress.key == _pendingPosition?.key) return;
+    if (progress.key == _pendingPosition?.key ||
+        (_pendingPosition == null && progress.key == _lastSavedKey)) return;
     _pendingPosition = progress;
-    _saveTimer?.cancel();
-    _saveTimer = Timer(const Duration(milliseconds: 600),
-      () => unawaited(_flushPosition()));
+    _schedulePositionSave();
   }
 
   Future<void> _flushPosition() {
+    if (_pendingPosition != null) _frameMetrics?.note('save');
+    _saveTimer?.cancel();
+    _saveDeadline?.cancel();
+    _saveDeadline = null;
     final pending = _pendingPosition;
     _pendingPosition = null;
     if (pending == null || pending.key == _lastSavedKey) return _saveChain;
@@ -832,8 +962,58 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
       widget.book, pending.chapter, widget.sourceKey,
       pageIndex: pending.index, pageCount: pending.total,
       expectedProfile: _readerProfile,
-    )).catchError((Object _) {});
+    )).catchError((Object error) {
+      // Do not treat a failed write as durable or overwrite a newer request.
+      if (_lastSavedKey == pending.key) {
+        _lastSavedKey = null;
+        _pendingPosition ??= pending;
+        if (mounted && _sessionActive) _schedulePositionSave();
+      }
+      debugPrint('SenReader: не удалось сохранить позицию: $error');
+    });
     return _saveChain;
+  }
+
+  void _schedulePositionSave() {
+    if (_pendingPosition == null) return;
+    _saveTimer?.cancel();
+    // Coalesce page changes during a gesture. Bound the unsaved interval even
+    // during a long fling/autoscroll, and flush explicitly on navigation/pause.
+    if (_saveDeadline == null) {
+      _saveDeadlineRetries = 0;
+      // Sample motion one quiet window before the checkpoint so an idle list
+      // still saves exactly at [saveCheckpointInterval].
+      _saveDeadline = Timer(saveCheckpointInterval - saveMotionQuietWindow, () {
+        _motionAtCheck = _motionUpdates;
+        _saveDeadline = Timer(saveMotionQuietWindow, _onSaveDeadline);
+      });
+    }
+    if (!_scrollMoving) {
+      _saveTimer = Timer(const Duration(milliseconds: 600),
+        () => unawaited(_flushPosition()));
+    }
+  }
+
+  /// The checkpoint waits for a frame gap: while the list is actually moving
+  /// (a fling, drag or autoscroll delivered an update within
+  /// [saveMotionQuietWindow]) the write is retried shortly instead of running
+  /// between two animation frames. [saveCheckpointHardCap] still bounds the
+  /// unsaved interval during continuous motion such as autoscroll.
+  void _onSaveDeadline() {
+    final moving = _motionUpdates != _motionAtCheck;
+    final maxRetries = (saveCheckpointHardCap - saveCheckpointInterval)
+        .inMilliseconds ~/ saveMotionQuietWindow.inMilliseconds;
+    if (moving && _saveDeadlineRetries < maxRetries) {
+      _saveDeadlineRetries++;
+      _motionAtCheck = _motionUpdates;
+      _saveDeadline = Timer(saveMotionQuietWindow, _onSaveDeadline);
+      return;
+    }
+    unawaited(_flushPosition());
+  }
+
+  @override void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) unawaited(_flushPosition());
   }
 
   /// Refresh potentially expired image URLs without leaving the chapter or
@@ -869,6 +1049,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
   }
 
   Future<void> _appendNextChapter() async {
+    _frameMetrics?.note('appendChapter');
     if (!_continuous) { if (mounted) setState(() => _atSeriesEnd = true); return; }
     if (_nextLoading || _atSeriesEnd || _segments.isEmpty ||
         _nextError != null) return;
@@ -899,6 +1080,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
         return;
       }
       setState(() => _segments.add(_ChapterSegment(next, pages)));
+      unawaited(PageDiskCache.instance.prefetch(pages)
+        .then((_) => _applyDiskSizes()));
     } catch (_) {
       if (mounted) setState(() => _nextError = 'Не удалось загрузить следующую главу');
     } finally {
@@ -919,6 +1102,8 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
     _saveTimer?.cancel();
     unawaited(_flushPosition());
     _visiblePage.dispose();
+    ReaderActivity.leave();
+    _readerImageBudget.leave();
     super.dispose();
   }
 
@@ -1286,12 +1471,22 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
 
   @override Widget build(BuildContext context) {
     _frameMetrics?.readerBuilt();
+    _frameMetrics?.note('rootBuild');
     return Scaffold(
       backgroundColor: _lightTheme ? Colors.white : Colors.black,
       body: Stack(children: [
         Positioned.fill(child: LayoutBuilder(builder: (context, constraints) {
           _layoutWidth = constraints.maxWidth;
-          return GestureDetector(
+          return Listener(
+          onPointerDown: (event) {
+            traceReaderInput('down', event.timeStamp);
+          },
+          onPointerMove: (event) {
+            if (event.delta.dy != 0) _openingAnchorActive = false;
+          },
+          onPointerUp: (event) => traceReaderInput('up', event.timeStamp),
+          onPointerCancel: (event) => traceReaderInput('cancel', event.timeStamp),
+          child: GestureDetector(
           behavior: HitTestBehavior.translucent,
           onTapUp: (details) => _onCenterTap(details, constraints.biggest),
           child: FutureBuilder<List<PageImage>>(
@@ -1326,18 +1521,29 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
                   label: const Text('Повторить загрузку')),
               ])));
           }
-          final initialIndex = _resumePage.clamp(0, pages.length - 1).toInt();
           return NotificationListener<ScrollNotification>(
             onNotification: (notice) {
-              if (notice is ScrollStartNotification) _scrollMoving = true;
+              if (notice is ScrollStartNotification) {
+                traceReaderInput(notice.dragDetails == null
+                    ? 'scrollStart' : 'dragStart');
+                _scrollMoving = true;
+                _saveTimer?.cancel();
+              }
               if (notice is ScrollEndNotification) {
+                unawaited(_applyDiskSizes());
+                traceReaderInput('scrollEnd');
                 _scrollMoving = false;
                 _scheduleGeometryCommit();
+                _schedulePositionSave();
               }
               if (notice is ScrollUpdateNotification) {
                 final now = _motionClock.elapsedMicroseconds;
                 final delta = notice.scrollDelta ?? 0;
-                if (delta != 0) _forward = delta > 0;
+                if (delta != 0) { _motionUpdates++; _frameMetrics?.motion(); }
+                if (delta != 0) {
+                  _openingAnchorActive = false;
+                  _forward = delta > 0;
+                }
                 if (now > _lastMotionUs && _lastMotionUs > 0) {
                   _velocity = .7 * _velocity + .3 * delta * 1000000 / (now - _lastMotionUs);
                 }
@@ -1376,7 +1582,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
             itemPositionsListener: _positions,
             itemScrollController: _itemScroll,
             scrollOffsetController: _scrollOffset,
-            initialScrollIndex: initialIndex,
+            initialScrollIndex: _initialPage,
             itemCount: _itemCount,
             itemBuilder: (context, index) {
               final heading = _headerChapterAt(index);
@@ -1479,7 +1685,7 @@ class _ReaderPageState extends State<ReaderPage> with WidgetsBindingObserver {
           )));
         },
       ),
-        ); })),
+        )); })),
         if (_controlsVisible)
           Positioned(top: 0, left: 0, right: 0,
             height: kToolbarHeight + MediaQuery.paddingOf(context).top,

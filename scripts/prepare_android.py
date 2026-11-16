@@ -10,7 +10,10 @@ if not manifest.exists() or not gradle.exists():
     raise SystemExit('First run flutter create --project-name senreader --org app.senreader --platforms android .')
 
 body = manifest.read_text(encoding='utf-8')
-for permission in ('INTERNET', 'POST_NOTIFICATIONS'):
+# REQUEST_IGNORE_BATTERY_OPTIMIZATIONS: the settings tile asks Android to
+# exempt background chapter checks (system dialog, owner's explicit tap).
+for permission in ('INTERNET', 'POST_NOTIFICATIONS',
+                   'REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'):
     line = '<uses-permission android:name="android.permission.' + permission + '" />'
     if line not in body:
         body = body.replace('<application', '    ' + line + '\n    <application', 1)
@@ -49,6 +52,15 @@ for source, destination in copies.items():
     target = res / destination
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(assets / source, target)
+
+
+# Notification icon is resolved by name from Dart, invisible to R8's resource
+# reachability analysis. Preserve it in every generated release wrapper.
+keep = res / 'raw' / 'senreader_notification_keep.xml'
+keep.parent.mkdir(parents=True, exist_ok=True)
+keep.write_text('<resources xmlns:tools="http://schemas.android.com/tools" '
+                'tools:keep="@drawable/senreader_launcher_monochrome" />',
+                encoding='utf-8')
 
 
 # flutter_local_notifications 22 requires Java API desugaring even for
@@ -91,4 +103,18 @@ android {
     build = build.replace('signingConfig = signingConfigs.getByName("debug")',
                           'signingConfig = signingConfigs.getByName("senreaderStable")', 1)
 gradle.write_text(build, encoding='utf-8')
+
+# Root gradle.properties: the workmanager plugin declares the dataSync
+# foreground-service type only with this opt-in; file_picker 11 on AGP 9
+# compiles its Kotlin only with built-in Kotlin enabled.
+properties = Path('android/gradle.properties')
+props = properties.read_text(encoding='utf-8') if properties.exists() else ''
+for key, value in (('workmanager.enableDataSyncForegroundService', 'true'),
+                   ('android.builtInKotlin', 'true')):
+    pattern = re.compile(r'^' + re.escape(key) + r'=.*$', re.MULTILINE)
+    if pattern.search(props):
+        props = pattern.sub(key + '=' + value, props)
+    else:
+        props = props.rstrip('\n') + ('\n' if props else '') + key + '=' + value + '\n'
+properties.write_text(props, encoding='utf-8')
 print('Android manifest and Gradle prepared for networking and notifications')

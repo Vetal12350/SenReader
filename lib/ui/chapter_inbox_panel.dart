@@ -2,12 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../core/chapter_identity.dart';
 import '../data/catalog_repository.dart';
-import '../data/chapter_checker.dart';
+import '../data/chapter_scan_runner.dart';
 import '../data/chapter_inbox_store.dart';
 import '../data/chapter_alert_controller.dart';
 import '../data/library_store.dart';
-import 'reader_page.dart';
-import 'chapter_inbox_grouping.dart';
+import 'notification_navigation.dart';
 import 'widgets.dart';
 
 class ChapterInboxPanel extends StatefulWidget {
@@ -78,6 +77,8 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
         for (var i = 0; i < next.length; i++) {
           if (next[i].key != entries[i].key ||
               next[i].hiddenAt != entries[i].hiddenAt ||
+              next[i].readAt != entries[i].readAt ||
+              next[i].deletedAt != entries[i].deletedAt ||
               next[i].chapterName != entries[i].chapterName) {
             changed = true;
             break;
@@ -104,15 +105,15 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     if (checking) return;
     setState(() { checking = true; error = null; });
     try {
-      await widget.library.load();
-      final report = await ChapterChecker(repository: widget.repository,
-        library: widget.library,
-        systemNotificationsEnabled: await widget.alerts.preferences.systemNotificationsEnabled())
-          .check(diagnostics: true);
+      final report = await ChapterScanRunner(repository: widget.repository,
+        library: widget.library, preferences: widget.alerts.preferences)
+          .checkManual(diagnostics: true);
       if (mounted) setState(() {
         lastScanSummary = 'Проверено книг: ${report.checkedTitles}, '
+            'обновлено: ${report.updatedTitles}, '
             'новых глав: ${report.discoveries.length}, '
-            'предупреждений: ${report.warnings.length}';
+            'предупреждений: ${report.warnings.length}'
+            '${report.skippedSources > 0 ? ', уже проверяются: ${report.skippedSources}' : ''}';
         lastScanDetails = [...report.diagnostics, ...report.warnings];
       });
       await _refresh();
@@ -123,72 +124,14 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
     }
   }
 
-  Future<void> _open(InboxEntry entry) async {
-    final profile = _displayedProfile;
-    await widget.library.load();
-    if (profile != widget.library.profileId) return;
-    final saved = widget.library.items.where((x) => x.key == entry.bookKey).firstOrNull;
-    if (saved == null || !saved.entries.containsKey(entry.source)) return;
-    final source = widget.repository.sources[entry.source];
-    final manga = saved.entries[entry.source];
-    if (source == null || manga == null) return;
-    try {
-      final detail = await source.detail(manga);
-      if (profile != widget.library.profileId) return;
-      final target = detail.chapters.where((x) => x.id == entry.chapterId).firstOrNull;
-      if (!mounted) return;
-      if (target == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Глава больше недоступна')));
-        return;
-      }
-      await Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
-        book: saved.toUnified(), chapter: target, sourceKey: entry.source,
-        repository: widget.repository, library: widget.library,
-        chapters: detail.chapters,
-      )));
-      await _refresh();
-    } catch (_) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Не удалось открыть главу')));
-    }
-  }
-
-  /// Choosing a chapter avoids silently skipping older unread updates.
-  Future<void> _openGroup(InboxChapterGroup group) async {
-    if (group.entries.length == 1) {
-      await _open(group.latest);
-      return;
-    }
-    final displayedProfile = _displayedProfile;
-    final chapters = group.entries.reversed.toList();
-    final selected = await showModalBottomSheet<InboxEntry>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(child: SizedBox(
-        height: (MediaQuery.sizeOf(sheetContext).height * 0.6)
-            .clamp(180.0, 400.0).toDouble(),
-        child: Column(children: [
-          Padding(padding: const EdgeInsets.all(16),
-            child: Text('Выбери главу',
-              style: Theme.of(sheetContext).textTheme.titleMedium)),
-          Expanded(child: ListView.builder(
-            itemCount: chapters.length,
-            itemBuilder: (context, index) {
-              final chapter = chapters[index];
-              return ListTile(
-                title: Text(displayChapterName(chapter.chapterName)),
-                onTap: () => Navigator.pop(sheetContext, chapter),
-              );
-            },
-          )),
-        ]),
-      )),
-    );
-    if (selected != null && mounted && _displayedProfile == displayedProfile &&
-        widget.library.profileId == displayedProfile) {
-      await _open(selected);
-    }
+  Future<void> _open(InboxEntry entry, {bool chapter = true}) async {
+    await openChapterNotification(context, fields: {
+      'book': entry.bookKey, 'source': entry.source, 'chapter': entry.chapterId,
+      if (entry.sourceId.isNotEmpty) 'titleId': entry.sourceId,
+      'profile': _displayedProfile ?? widget.library.profileId,
+      'action': chapter ? 'chapter' : 'title',
+    }, library: widget.library, repository: widget.repository, alerts: widget.alerts);
+    await _refresh();
   }
 
   static String _dateLabel(int millis) {
@@ -198,11 +141,8 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
   }
 
   @override Widget build(BuildContext context) {
-    final activeGroups = groupInboxChapters(entries, hidden: false);
-    final hiddenGroups = groupInboxChapters(entries, hidden: true);
-    final visible = hidden ? hiddenGroups : activeGroups;
-    final activeCount = activeGroups.length;
-    final hiddenCount = hiddenGroups.length;
+    final visible = entries.where((e) => !e.deleted && !e.read && e.hidden == hidden)
+      .toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     final theme = Theme.of(context);
     return Column(children: [
       Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
@@ -223,8 +163,8 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
           const SizedBox(height: 14),
           SizedBox(width: double.infinity, child: SegmentedButton<bool>(
             selected: {hidden}, segments: [
-              ButtonSegment(value: false, label: Text('Новые ($activeCount)')),
-              ButtonSegment(value: true, label: Text('Скрытые ($hiddenCount)')),
+              ButtonSegment(value: false, label: Text('Новые')),
+              ButtonSegment(value: true, label: Text('Скрытые')),
             ], onSelectionChanged: (v) => setState(() => hidden = v.first))),
         ])),
       if (error != null)
@@ -275,42 +215,61 @@ class _ChapterInboxPanelState extends State<ChapterInboxPanel> {
           itemCount: visible.length,
           separatorBuilder: (_, __) => const SizedBox(height: 5),
           itemBuilder: (context, index) {
-            final group = visible[index];
-            final entry = group.latest;
+            final entry = visible[index];
+            final chapter = displayChapterName(entry.chapterName);
+            final button = chapter.startsWith('Глава ')
+                ? 'К главе ${chapter.substring(6)}' : 'К главе';
             return Card(clipBehavior: Clip.antiAlias,
-              child: InkWell(onTap: () => _openGroup(group),
-                child: Padding(padding: const EdgeInsets.all(10),
-                  child: Row(children: [
+              child: InkWell(onTap: () => _open(entry, chapter: false),
+                child: Padding(padding: const EdgeInsets.all(12),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     ClipRRect(borderRadius: BorderRadius.circular(9),
-                      child: CoverImage(entry.coverUrl, width: 58, height: 78)),
+                      child: CoverImage(entry.coverUrl, width: 48, height: 66)),
                     const SizedBox(width: 12),
-                    Expanded(child: Column(crossAxisAlignment:
-                        CrossAxisAlignment.start, children: [
-                      Text(entry.title, maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 5),
-                      Text(group.chapterLabel,
-                        maxLines: 2, overflow: TextOverflow.ellipsis),
-                      const SizedBox(height: 7),
-                      Text(_dateLabel(group.newestAt),
-                        style: theme.textTheme.labelSmall),
-                    ])),
-                    IconButton(
-                      tooltip: hidden ? 'Вернуть в новые' : 'Скрыть обновление',
-                      icon: Icon(hidden ? Icons.unarchive_outlined :
-                        Icons.archive_outlined),
-                      onPressed: () async {
+                    Expanded(child: Text(entry.title, maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.w700))),
+                    PopupMenuButton<String>(
+                      tooltip: 'Действия с уведомлением',
+                      icon: const Icon(Icons.more_horiz),
+                      itemBuilder: (_) => [
+                        PopupMenuItem(value: 'visibility', child: Text(hidden
+                          ? 'Вернуть в новые' : 'Скрыть уведомление')),
+                        const PopupMenuItem(value: 'delete', child: Text('Удалить уведомление')),
+                      ],
+                      onSelected: (action) async {
                         final store = _store;
                         _revision++;
-                        await store.setEntriesHidden(
-                          group.entries.map((chapter) => chapter.key),
-                          hidden: !hidden,
-                        );
+                        if (action == 'delete') {
+                          await store.deleteEntry(entry.key);
+                        } else if (hidden) {
+                          await store.restoreEntry(entry.key);
+                        } else {
+                          await store.hideEntry(entry.key);
+                        }
                         await _refresh();
-                      }),
+                      },
+                    ),
                   ]),
-                )));
+                  const SizedBox(height: 10),
+                  const Text('Вышла новая глава'),
+                  const SizedBox(height: 4),
+                  Text(chapter),
+                  const SizedBox(height: 8),
+                  Row(children: [
+                    Flexible(child: FilledButton(
+                      style: FilledButton.styleFrom(backgroundColor: Colors.blue.shade700,
+                        foregroundColor: Colors.white),
+                      onPressed: () => _open(entry),
+                      child: Text(button, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    )),
+                    const SizedBox(width: 12),
+                    const Spacer(),
+                    Text(_dateLabel(entry.createdAt), style: theme.textTheme.labelSmall),
+                  ]),
+                ]),
+              )));
           })),
     ]);
   }

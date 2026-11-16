@@ -19,24 +19,38 @@ class ChapterNotificationService {
     importance: Importance.defaultImportance,
   );
 
+  static const readChapterAction = 'read_chapter';
+
+  static String? routePayload(String? payload, String? actionId) {
+    final fields = decodePayload(payload);
+    if (fields == null) return null;
+    fields['action'] = actionId == readChapterAction ? 'chapter' : 'title';
+    return jsonEncode(fields);
+  }
+
   final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
+  bool _launchInspected = false;
   final ValueNotifier<String?> openedPayload = ValueNotifier<String?>(null);
 
   Future<void> initialize({bool captureTaps = true}) async {
     await _plugin.initialize(
       settings: const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        android: AndroidInitializationSettings('senreader_launcher_monochrome'),
       ),
-      onDidReceiveNotificationResponse: captureTaps
-          ? (response) => openedPayload.value = response.payload : null,
+      // Android may run WorkManager on the Activity's engine. Reinitializing
+      // delivery must retain its tap handler on that engine as well.
+      onDidReceiveNotificationResponse: (response) =>
+          openedPayload.value = routePayload(response.payload, response.actionId),
     );
     await _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>()?.createNotificationChannel(channel);
 
-    if (captureTaps) {
+    if (captureTaps && !_launchInspected) {
+      _launchInspected = true;
       final launch = await _plugin.getNotificationAppLaunchDetails();
       if (launch?.didNotificationLaunchApp == true) {
-        openedPayload.value = launch?.notificationResponse?.payload;
+        openedPayload.value = routePayload(launch?.notificationResponse?.payload,
+          launch?.notificationResponse?.actionId);
       }
     }
   }
@@ -45,6 +59,14 @@ class ChapterNotificationService {
     final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     return await android?.areNotificationsEnabled() ?? false;
+  }
+
+  Future<bool> channelEnabled() async {
+    final android = _plugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    final channels = await android?.getNotificationChannels();
+    return channels?.every((item) =>
+        item.id != channel.id || item.importance != Importance.none) ?? true;
   }
 
   Future<bool> askPermission() async {
@@ -57,6 +79,7 @@ class ChapterNotificationService {
     'book': normalizedTitle(discovery.book.title),
     'source': discovery.sourceKey,
     'chapter': discovery.chapter.id,
+    'titleId': discovery.book.entries[discovery.sourceKey]!.id,
     'canonical': discovery.canonicalKey,
     if (discovery.profileId != null) 'profile': discovery.profileId,
   });
@@ -65,14 +88,22 @@ class ChapterNotificationService {
     if (payload == null || payload.length > 4096) return null;
     try {
       final raw = jsonDecode(payload);
-      if (raw is! Map || (raw.length != 4 && raw.length != 5)) return null;
+      if (raw is! Map || raw.keys.any((key) =>
+          !const {'book', 'source', 'chapter', 'canonical', 'profile', 'titleId', 'action'}.contains(key))) return null;
       final fields = <String, String>{};
       for (final key in ['book', 'source', 'chapter', 'canonical']) {
         final value = raw[key];
         if (value is! String || value.isEmpty || value.length > 512) return null;
         fields[key] = value;
       }
-      if (raw.length == 5) {
+      for (final key in ['titleId', 'action']) {
+        if (!raw.containsKey(key)) continue;
+        final value = raw[key];
+        if (value is! String || value.isEmpty || value.length > 512) return null;
+        if (key == 'action' && value != 'title' && value != 'chapter') return null;
+        fields[key] = value;
+      }
+      if (raw.containsKey('profile')) {
         final profile = raw['profile'];
         if (profile is! String ||
             (profile.isNotEmpty &&
@@ -87,11 +118,17 @@ class ChapterNotificationService {
     }
   }
 
-  /// Stable positive notification ID for this title+chapter across reboots.
-  static int notificationId(ChapterDiscovery discovery) {
-    final input = (discovery.profileId?.isNotEmpty == true
-        ? '${discovery.profileId}:' : '') +
-        normalizedTitle(discovery.book.title) + ':' + discovery.canonicalKey;
+  /// One stable Android ID per source/title/chapter in this profile.
+  static int notificationId(ChapterDiscovery discovery) => _hash(
+      jsonEncode([discovery.profileId ?? '', discovery.sourceKey,
+        discovery.book.entries[discovery.sourceKey]?.id ?? normalizedTitle(discovery.book.title),
+        discovery.chapter.id]));
+
+  static int legacyNotificationId(ChapterDiscovery discovery) => _hash(
+      (discovery.profileId?.isNotEmpty == true ? '${discovery.profileId}:' : '') +
+      normalizedTitle(discovery.book.title) + ':' + discovery.canonicalKey);
+
+  static int _hash(String input) {
     var value = 0x811c9dc5;
     for (final c in input.codeUnits) {
       value = ((value ^ c) * 0x01000193) & 0xffffffff;
@@ -112,7 +149,9 @@ class ChapterNotificationService {
     var canPostSystemNotification = false;
     if (await prefs.systemNotificationsEnabled()) {
       try {
-        canPostSystemNotification = await (permissionCheck ?? hasPermission)();
+        canPostSystemNotification = permissionCheck != null
+            ? await permissionCheck()
+            : await hasPermission() && await channelEnabled();
       } catch (_) {
         // Plugin/permission errors must not block internal updates.
       }
@@ -149,10 +188,10 @@ class ChapterNotificationService {
         ? await activeNotificationIds() : sendNotification != null
             ? <int>{} : await _activeIds();
     var posted = 0;
+    final pending = <(InboxEntry, ChapterDiscovery)>[];
     // Discoveries may be empty after restart: the inbox is the durable outbox.
-    for (final entry in await inbox.pendingSystemNotifications()) {
-      if (entry.hidden) continue;
-      if (!await stillActive()) break;
+    for (final entry in await inbox.pendingSystemNotifications(limit: null)) {
+      if (entry.hidden || entry.read || entry.deleted) continue;
       final saved = books[entry.bookKey];
       if (saved == null || saved.status != 'reading' ||
           !saved.entries.containsKey(entry.source) ||
@@ -161,28 +200,49 @@ class ChapterNotificationService {
         continue;
       }
       final chapter = Chapter(id: entry.chapterId, name: entry.chapterName);
-      if (library.isChapterRead(saved.toUnified(), chapter, entry.source)) {
-        await inbox.hideChapter(entry.bookKey, chapter, entry.source);
-        continue;
-      }
-      final token = await inbox.beginSystemDelivery(entry);
-      if (token == null) continue;
       final release = ChapterDiscovery(book: saved.toUnified(), sourceKey: entry.source,
           chapter: chapter, canonicalKey: canonicalChapterKey(chapter) ?? entry.chapterId,
           profileId: profile);
-      var delivered = false;
+      if (active.contains(legacyNotificationId(release))) {
+        if (!await stillActive()) return posted;
+        final token = await inbox.beginSystemDelivery(entry);
+        if (token != null) await inbox.finishSystemDelivery(entry, token, delivered: true);
+        continue;
+      }
+      pending.add((entry, release));
+    }
+    for (final (entry, release) in pending.take(10)) {
+      if (!await stillActive()) break;
+      final token = await inbox.beginSystemDelivery(entry);
+      if (token == null) continue;
+      final claimed = [(entry, token)];
+      var acknowledged = false;
       try {
-        if (!await stillActive() || !await inbox.systemDeliveryCurrent(entry, token)) continue;
-        if (!active.contains(notificationId(release))) {
+        if (!await stillActive()) continue;
+        // Commit before crossing into Android. A killed process can miss an OS
+        // alert in this window, but it cannot replay an alert already shown.
+        acknowledged = await inbox.acknowledgeSystemBatch(claimed);
+        if (!acknowledged) continue;
+        try {
+          if (!await stillActive()) {
+            for (final (entry, token) in claimed) {
+              await inbox.retryFailedSystemDelivery(entry, token);
+            }
+            break;
+          }
           await (sendNotification ?? _show)(release);
-          active.add(notificationId(release));
           posted++;
+        } catch (_) {
+          for (final (entry, token) in claimed) {
+            await inbox.retryFailedSystemDelivery(entry, token);
+          }
         }
-        delivered = true;
-      } catch (_) {
-        // Keep retryable on platform errors; inbox visibility is independent.
       } finally {
-        await inbox.finishSystemDelivery(entry, token, delivered: delivered);
+        if (!acknowledged) {
+          for (final (entry, token) in claimed) {
+            await inbox.finishSystemDelivery(entry, token, delivered: false);
+          }
+        }
       }
     }
     return posted;
@@ -203,8 +263,9 @@ class ChapterNotificationService {
               'senreader_new_chapters', 'Новые главы',
               channelDescription: 'Новые доступные главы манги и манхвы из избранного',
               importance: Importance.defaultImportance,
-              onlyAlertOnce: true,
               priority: Priority.defaultPriority,
+              actions: [AndroidNotificationAction(readChapterAction, 'Читать главу',
+                showsUserInterface: true)],
             ),
           ),
           payload: encodePayload(release),

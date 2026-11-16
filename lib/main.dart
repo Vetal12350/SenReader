@@ -10,6 +10,7 @@ import 'data/reading_suggestions.dart';
 import 'data/chapter_notification_service.dart';
 import 'data/chapter_inbox_store.dart';
 import 'ui/chapter_inbox_panel.dart';
+import 'ui/notification_navigation.dart';
 import 'data/chapter_background_scheduler.dart';
 import 'ui/detail_page.dart';
 import 'ui/reader_page.dart';
@@ -20,6 +21,7 @@ import 'ui/settings_page.dart';
 import 'data/theme_controller.dart';
 import 'data/firebase_account_service.dart';
 import 'ui/app_theme.dart';
+import 'data/reader_activity.dart';
 
 /// Reader route destinations, separate from saved library state.
 final ValueNotifier<int> mainTabRequest = ValueNotifier<int>(0);
@@ -136,8 +138,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   /// Re-read local results while the user watches Home or New Chapters.
   /// This performs no network requests and does not start a new scan.
   Future<void> _pollChapterInbox() async {
+    // Home stays mounted under the reader route. Its 20 s SQLite reload and
+    // full-screen setState measured as 15-42 ms main-thread frames while
+    // reading; nothing of it is visible then. Catch up when the reader closes.
     if (!mounted || !_isInForeground || _inboxPollInFlight ||
-        (tab != 0 && tab != 3)) return;
+        ReaderActivity.isOpen || (tab != 0 && tab != 3)) return;
     _inboxPollInFlight = true;
     try {
       await _refreshInboxCount();
@@ -152,7 +157,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     final profile = widget.library.profileId;
     final entries = await ChapterInboxStore(profileId: profile).load();
     if (!mounted || widget.library.profileId != profile) return;
-    final count = entries.where((e) => !e.hidden).length;
+    final count = entries.where((e) => !e.hidden && !e.read && !e.deleted).map((e) => e.bookKey).toSet().length;
     if (count != _newUpdateCount) {
       setState(() => _newUpdateCount = count);
     }
@@ -231,6 +236,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     unawaited(_refreshInboxCount());
     _inboxRefreshTimer = Timer.periodic(const Duration(seconds: 20),
         (_) => unawaited(_pollChapterInbox()));
+    ReaderActivity.open.addListener(_onReaderActivity);
     ChapterNotificationService.instance.openedPayload.addListener(_onNotificationTap);
     WidgetsBinding.instance.addPostFrameCallback((_) => _onNotificationTap());
   }
@@ -244,7 +250,12 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     }
   }
 
+  void _onReaderActivity() {
+    if (!ReaderActivity.isOpen) unawaited(_pollChapterInbox());
+  }
+
   @override void dispose() {
+    ReaderActivity.open.removeListener(_onReaderActivity);
     WidgetsBinding.instance.removeObserver(this);
     debounce?.cancel();
     _inboxRefreshTimer?.cancel();
@@ -717,7 +728,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
 
   Future<void> _resume(SavedBook saved, Chapter? newChapter) async {
     await widget.library.load();
-    final current = widget.library.get(saved.toUnified());
+    final current = recentReadingBooks(widget.library.items)
+      .where((book) => book.key == saved.key).firstOrNull;
     if (current == null || !mounted) return;
     saved = current;
     final book = saved.toUnified();
@@ -730,8 +742,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     try {
       final detail = await source.detail(entry);
       // Resume persisted progress first; do not advance just because a new chapter exists.
-      final target = chapterToResume(saved, detail.chapters,
-        nextUnread: newChapter);
+      final target = detail.chapters.where((chapter) => saved.lastChapterId.isNotEmpty
+        ? chapter.id == saved.lastChapterId : chapter.name == saved.lastChapter).firstOrNull;
       if (!mounted) return;
       if (target == null) {
         _open(book);
@@ -751,14 +763,11 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
   Widget _continueReading() => AnimatedBuilder(
     animation: widget.library,
     builder: (context, _) {
-      final saved = widget.library.items
-          .where((item) => showContinueCard(item,
-              newlyAvailable: _newChapters[item.key])).toList()
-        ..sort((a, b) => b.lastUpdatedAt.compareTo(a.lastUpdatedAt));
+      final saved = recentReadingBooks(widget.library.items);
       if (saved.isEmpty) return const SizedBox.shrink();
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const SizedBox(height: 28),
-        SectionTitle('Продолжить чтение',
+        SectionTitle('Читаемое сейчас',
           subtitle: 'Вернуться к сохранённой странице'),
         SizedBox(height: 186, child: ListView.separated(
           scrollDirection: Axis.horizontal,
@@ -792,9 +801,7 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
                         overflow: TextOverflow.ellipsis, softWrap: true,
                         style: const TextStyle(fontWeight: FontWeight.w700)),
                       const SizedBox(height: 7),
-                      Text((_newChapters.containsKey(item.key) && !shouldResumeCurrentChapter(item)
-                             ? 'Новая: ${displayChapterName(_newChapters[item.key]!.name)}'
-                             : 'Сохранено: ${displayChapterName(item.lastChapter)}'),
+                      Text('Сохранено: ${displayChapterName(item.lastChapter)}',
                         maxLines: 2, overflow: TextOverflow.ellipsis,
                         style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 11)),
                       if (item.lastPageCount > 0) ...[
@@ -833,48 +840,8 @@ class _MainShellState extends State<MainShell> with WidgetsBindingObserver {
     state.value = null; // Never re-open on UI rebuild.
     final info = ChapterNotificationService.decodePayload(payload);
     if (info == null) return;
-    await widget.library.load();
-    // Legacy payloads have no provable UID and are guest-only.
-    final profile = info['profile'] ?? '';
-    if (!mounted || widget.library.profileId != profile) return;
-    SavedBook? saved;
-    for (final book in widget.library.items) {
-      if (book.key == info['book']) { saved = book; break; }
-    }
-    if (saved == null) return;
-    final sourceKey = info['source']!;
-    if (!saved.entries.containsKey(sourceKey)) return;
-    final entry = saved.entries[sourceKey];
-    final source = widget.repository.sources[sourceKey];
-    if (entry == null || source == null) return;
-    try {
-      final detail = await source.detail(entry);
-      await widget.library.load();
-      if (widget.library.profileId != profile) return;
-      if (!(widget.library.get(saved.toUnified())?.entries.containsKey(sourceKey) ?? false)) return;
-      Chapter? matched;
-      for (final chapter in detail.chapters) {
-        if (chapter.id == info['chapter'] &&
-            canonicalChapterKey(chapter) == info['canonical']) {
-          matched = chapter;
-          break;
-        }
-      }
-      if (!mounted) return;
-      if (matched == null) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Глава больше недоступна. Попробуй другой источник.')));
-        return;
-      }
-      Navigator.push(context, MaterialPageRoute(builder: (_) => ReaderPage(
-        book: saved!.toUnified(), chapter: matched!,
-        sourceKey: sourceKey, repository: widget.repository, library: widget.library, chapters: detail.chapters,
-      )));
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('Не удалось открыть главу. Проверь соединение или доступ.')));
-    }
+    await openChapterNotification(context, fields: info, library: widget.library,
+      repository: widget.repository, alerts: alerts);
   }
 
   @override Widget build(BuildContext context) {

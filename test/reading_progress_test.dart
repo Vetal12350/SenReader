@@ -47,6 +47,26 @@ void main() {
     expect(restored.get(book)!.lastChapterId, chapter.id);
   });
 
+  test('progress save keeps history in canonical order for cloud comparison', () async {
+    const history = ['v1:c2', 'v1:c10', 'v1:c1'];
+    const ordered = ['v1:c1', 'v1:c10', 'v1:c2'];
+    final saved = SavedBook(title: book.title, entries: book.entries).toJson()
+      ..['seenChapterKeys'] = history
+      ..['sourceSeenChapterKeys'] = {'readmanga': history};
+    SharedPreferences.setMockInitialValues({
+      LibraryStore.storageKey: jsonEncode([saved]),
+    });
+    final library = LibraryStore();
+    await library.savePosition(book, chapter, 'readmanga',
+      pageIndex: 4, pageCount: 10);
+
+    final prefs = await SharedPreferences.getInstance();
+    final stored = (jsonDecode(prefs.getString(LibraryStore.storageKey)!) as List).single;
+    expect(stored['seenChapterKeys'], ordered);
+    expect(stored['sourceSeenChapterKeys']['readmanga'], ordered);
+    expect(stored['lastPageIndex'], 4);
+  });
+
   test('existing v1 records load safely and remain intact', () async {
     const legacy = '[{"title":"Test series","entries":{'
       '"readmanga":{"source":"readmanga","id":"/test",'

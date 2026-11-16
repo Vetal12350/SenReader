@@ -10,7 +10,7 @@ class ChapterAlertPreferences {
   static const intervalKey = 'senreader.alerts.interval_minutes.v1';
   static const offerShownKey = 'senreader.alerts.offer_shown.v1';
   static const availableIntervals = <int>[15];
-  static const defaultIntervalMinutes = 15;
+  static const defaultIntervalMinutes = 60;
   SharedPreferencesAsync? _cachedPrefs;
   SharedPreferencesAsync get _prefs => _cachedPrefs ??= SharedPreferencesAsync();
 

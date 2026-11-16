@@ -11,6 +11,7 @@ import 'package:senreader/data/chapter_checker.dart';
 import 'package:senreader/data/chapter_inbox_store.dart';
 import 'package:senreader/data/chapter_notification_service.dart';
 import 'package:senreader/data/library_store.dart';
+import 'package:senreader/data/reader_activity.dart';
 import 'package:senreader/main.dart';
 import 'chapter_alert_opt_in_test.dart' show MemoryAlertPreferences;
 import 'chapter_checker_test.dart' show FakeSource, makeLibrary;
@@ -130,10 +131,10 @@ void main() {
     });
   }
 
-  test('first scan leaves excess recent releases retryable beyond 36 hours', () async {
+  test('first scan and later reorder keep all initial releases silent', () async {
     final source = FakeSource('senkuro')..chapters = [
       const Chapter(id: '1', name: 'Глава 1'),
-      for (var i = 2; i <= 6; i++)
+      for (var i = 6; i >= 2; i--)
         Chapter(id: '$i', name: 'Глава $i', publishedAt: DateTime.now()
             .subtract(const Duration(hours: 1))),
     ];
@@ -142,23 +143,27 @@ void main() {
         source.chapters.first, source.key);
     final checker = ChapterChecker(repository: CatalogRepository(
         sources: {source.key: source}), library: library);
-    expect((await checker.check()).discoveries.length, 2);
-    expect(library.items.single.seenChapterKeys,
-        isNot(contains('v0:c2')));
-    // A delayed next run must not rely on the 36-hour legacy recovery window.
+    expect((await checker.check()).discoveries, isEmpty);
+    expect(library.items.single.seenChapterKeys, contains('v0:c2'));
+    // Reordering and changing source dates do not resurrect old releases.
     source.chapters = [
       source.chapters.first,
       for (var i = 2; i <= 6; i++)
         Chapter(id: '$i', name: 'Глава $i', publishedAt: DateTime.now()
             .subtract(const Duration(days: 3))),
     ];
-    expect((await checker.check()).discoveries.length, 3);
-    expect((await ChapterInboxStore().load()).length, 5);
+    expect((await checker.check()).discoveries, isEmpty);
+    expect(await ChapterInboxStore().load(), isEmpty);
   });
 
-  testWidgets('open Home polls new SQLite rows and removes archived suggestions',
+  testWidgets('Читаемое сейчас opens the saved page even when a newer chapter is in the inbox',
       (tester) async {
-    final source = FakeSource('readmanga');
+    // Owner decision (2026-11-15): the card says "Вернуться к сохранённой
+    // странице", so a new unread chapter must neither relabel nor redirect it.
+    final source = FakeSource('readmanga')..chapters = [
+      const Chapter(id: '2', name: 'Глава 2'),
+      const Chapter(id: '1', name: 'Глава 1'),
+    ];
     final library = await makeLibrary([source]);
     await library.savePosition(library.items.single.toUnified(),
         const Chapter(id: '1', name: 'Глава 1'), source.key,
@@ -170,16 +175,39 @@ void main() {
           preferences: MemoryAlertPreferences()..shown = true),
     )));
     await tester.pumpAndSettle();
-    final inbox = ChapterInboxStore(profileId: '');
-    await inbox.add('example', 'Example', '', source.key,
+    await ChapterInboxStore(profileId: '').add('example', 'Example', '', source.key,
         const Chapter(id: '2', name: 'Глава 2'));
-    await tester.pump(const Duration(seconds: 21));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Новая:'), findsOneWidget);
-    await inbox.hideEntry((await inbox.load()).single.key);
-    await tester.pump(const Duration(seconds: 21));
+    await tester.pump(const Duration(seconds: 21)); // Home inbox poll
     await tester.pumpAndSettle();
     expect(find.textContaining('Новая:'), findsNothing);
+    await tester.tap(find.textContaining('Сохранено:'));
+    await tester.pumpAndSettle();
+    final reader = tester.widget<ReaderPage>(find.byType(ReaderPage));
+    expect(reader.chapter.id, '1');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('Home does not poll the inbox while a reader is open, catches up after', (tester) async {
+    final source = FakeSource('readmanga');
+    final library = await makeLibrary([source]);
+    await tester.pumpWidget(MaterialApp(home: MainShell(
+      library: library,
+      repository: CatalogRepository(sources: {source.key: source}),
+      alerts: ChapterAlertController(
+          preferences: MemoryAlertPreferences()..shown = true),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.text('1'), findsNothing);
+    ReaderActivity.enter(); // a chapter is open on top of Home
+    addTearDown(() { if (ReaderActivity.isOpen) ReaderActivity.leave(); });
+    await ChapterInboxStore(profileId: '').add('example', 'Example', '', source.key,
+        const Chapter(id: '2', name: 'Глава 2'));
+    await tester.pump(const Duration(seconds: 41)); // two 20 s poll ticks
+    await tester.pumpAndSettle();
+    expect(find.text('1'), findsNothing, reason: 'no Home SQLite reload/rebuild while reading');
+    ReaderActivity.leave();
+    await tester.pumpAndSettle();
+    expect(find.text('1'), findsOneWidget, reason: 'badge catches up when the reader closes');
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

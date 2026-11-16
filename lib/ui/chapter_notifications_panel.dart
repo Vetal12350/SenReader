@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/chapter_alert_controller.dart';
 import '../data/chapter_scan_schedule.dart';
 import '../data/chapter_scan_runner.dart';
+import 'battery_optimization_tile.dart';
 
 class ChapterNotificationsPanel extends StatefulWidget {
   const ChapterNotificationsPanel({super.key, required this.alerts});
@@ -126,11 +127,12 @@ class _ChapterNotificationsPanelState extends State<ChapterNotificationsPanel> {
             value: systemEnabled,
             onChanged: systemLoading ? null : _toggleSystem,
           ),
+          if (enabled) const BatteryOptimizationTile(),
           Text(
-            'Проверки раз в 15 минут — по возможности Android: Doze и экономия батареи '
-            'могут задерживать их. Фоновая задача требует сети и достаточного заряда. '
-            'За один запуск очередь обрабатывается до 2 минут; '
-            'при большой библиотеке очередь занимает несколько запусков. '
+            'Проверки примерно раз в час — по возможности Android: Doze и экономия '
+            'батареи могут задерживать их. Фоновая задача требует сети и на время '
+            'проверки показывает уведомление «Проверка новых глав». За один запуск '
+            'очередь обрабатывается до 6 минут; пока открыта глава, проверка ждёт. '
             'Только книги со статусом «Читаю» проверяются не чаще '
             'раза в 30 минут после успешной проверки. «В планах» и «Прочитано» '
             'не проверяются даже при ручном обновлении уведомлений. '
@@ -189,9 +191,11 @@ class ChapterScanDiagnostics extends StatelessWidget {
     final delivery = switch (run.systemDelivery) {
       'disabled' => 'Системные уведомления выключены.',
       'permission_denied' => 'Нет разрешения Android; внутренний inbox сохранён.',
+      'channel_disabled' => 'Канал «Новые главы» выключен в Android. Записи сохранены в ленте.',
       'error' => 'Ошибка доставки Android; ожидающие уведомления сохраняются для повтора.',
       'pending' => 'Доставка Android ещё не подтверждена; внутренний inbox сохранён.',
       'processed' => 'Доставка Android обработана, отправлено: ${run.postedNotifications}.',
+      'nothing_posted' => 'Системных уведомлений не отправлено.',
       'attempted' => 'Выполнена попытка доставки Android.',
       _ => '',
     };
@@ -201,7 +205,8 @@ class ChapterScanDiagnostics extends StatelessWidget {
       '${run.outcome == 'running' && run.availableSources == 0 ? 'Подготовка списка источников. ' : 'Доступно пар «книга × источник»: ${run.availableSources}. '}'
       'Источников проверено: ${run.checkedSources}, успешно: ${run.successfulSources}, '
       'с ошибкой: ${run.failedSources}, отложено: ${run.skippedSources}, '
-      'найдено глав: ${run.foundChapters}. Предупреждений: ${run.warnings}. '
+      'обновлено произведений: ${run.updatedTitles}, новых глав: ${run.foundChapters}. '
+      'Предупреждений: ${run.warnings}. '
       '${skips.isEmpty ? '' : 'Причины ожидания: $skips. '}'
       '${chapters.isEmpty ? '' : 'Обработка глав: $chapters. '}'
       '${run.nextEligibleAt == null ? '' : 'Не ранее: ${date(run.nextEligibleAt!)}. Это нижняя граница очереди, а не точное время запуска Android. '}'

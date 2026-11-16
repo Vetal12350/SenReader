@@ -44,66 +44,22 @@ void main() {
       library: library, repository: CatalogRepository(sources: {}),
       alerts: ChapterAlertController(), inboxStore: inbox))));
     await tester.pumpAndSettle();
-    expect(find.text('Новые (1)'), findsOneWidget);
+    expect(find.text('Новые'), findsOneWidget);
+    expect(find.text('Глава 2'), findsOneWidget);
     final pending = Completer<void>();
     inbox.pause = pending;
     await tester.pump(const Duration(seconds: 8));
-    await tester.tap(find.byTooltip('Скрыть обновление'));
+    await tester.tap(find.byTooltip('Действия с уведомлением'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Скрыть уведомление'));
     await tester.pump();
     inbox.pause = null;
     pending.complete();
     await tester.pumpAndSettle();
-    expect(find.text('Новые (0)'), findsOneWidget);
+    expect(find.text('Новые'), findsOneWidget);
+    expect(find.text('Глава 2'), findsNothing);
     await tester.pumpWidget(const SizedBox());
   });
-  testWidgets('multiple chapter updates display as one card without source', (tester) async {
-    final inbox = PausedInbox();
-    inbox.rows = [
-      const InboxEntry(key: 'example|readmanga|v0:c178',
-        bookKey: 'example', title: 'Незначительный персонаж',
-        coverUrl: '', source: 'readmanga', chapterId: '178',
-        chapterName: 'Глава 178', createdAt: 200),
-      const InboxEntry(key: 'example|readmanga|v0:c177',
-        bookKey: 'example', title: 'Незначительный персонаж',
-        coverUrl: '', source: 'readmanga', chapterId: '177',
-        chapterName: 'Глава 177', createdAt: 100),
-    ];
-    final library = LibraryStore();
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: ChapterInboxPanel(
-      library: library, repository: CatalogRepository(sources: {}),
-      alerts: ChapterAlertController(), inboxStore: inbox))));
-    await tester.pumpAndSettle();
-    expect(find.text('Новые (1)'), findsOneWidget);
-    expect(find.text('Главы 177–178'), findsOneWidget);
-    expect(find.text('ReadManga'), findsNothing);
-    expect(find.byTooltip('Скрыть обновление'), findsOneWidget);
-
-    // Group selection must allow reading chapter 177 first, not silently 178.
-    await tester.tap(find.text('Главы 177–178'));
-    await tester.pumpAndSettle();
-    expect(find.text('Выбери главу'), findsOneWidget);
-    expect(find.text('Глава 177'), findsOneWidget);
-    expect(find.text('Глава 178'), findsOneWidget);
-    await tester.tap(find.text('Глава 177'));
-    await tester.pumpAndSettle();
-    expect(find.text('Выбери главу'), findsNothing);
-
-    await tester.tap(find.byTooltip('Скрыть обновление'));
-    await tester.pumpAndSettle();
-    expect(inbox.rows.where((e) => e.hidden).length, 2);
-    expect(find.text('Новые (0)'), findsOneWidget);
-    expect(find.text('Скрытые (1)'), findsOneWidget);
-
-    await tester.tap(find.text('Скрытые (1)'));
-    await tester.pumpAndSettle();
-    expect(find.text('Главы 177–178'), findsOneWidget);
-    await tester.tap(find.byTooltip('Вернуть в новые'));
-    await tester.pumpAndSettle();
-    expect(inbox.rows.where((e) => !e.hidden).length, 2);
-    expect(find.text('Новые (1)'), findsOneWidget);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
-
   test('bulk archive and restore only change selected chapters in one profile', () async {
     await makeLibrary([FakeSource('senkuro')]);
     final a = ChapterInboxStore(profileId: 'uid-a');
@@ -140,6 +96,35 @@ void main() {
       preferences: InAppOnlyPreferences(), permissionCheck: () async => true,
       sendNotification: (_) async { sends++; }), 0);
     expect(sends, 1);
+  });
+
+  test('three new chapters of one title and one of another post four alerts', () async {
+    final source = FakeSource('senkuro')
+      ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final library = await makeLibrary([source]);
+    final repo = CatalogRepository(sources: {source.key: source});
+    final checker = ChapterChecker(repository: repo, library: library,
+        systemNotificationsEnabled: true);
+    expect((await checker.check()).updatedTitles, 0);
+    source.chapters = [for (var i = 1; i <= 4; i++) Chapter(id: '$i', name: 'Глава $i')];
+    final report = await checker.check();
+    expect(report.updatedTitles, 1);
+    expect(report.discoveries.length, 3);
+    final other = UnifiedManga(title: 'Other', entries: {
+      'senkuro': const MangaEntry(source: 'senkuro', id: '2', title: 'Other'),
+    });
+    await library.setStatus(other, 'reading');
+    await ChapterInboxStore().add('other', 'Other', '', 'senkuro', chapter,
+      sourceId: '2', systemPending: true);
+    final sent = <ChapterDiscovery>[];
+    Future<int> drain() => ChapterNotificationService.instance.postNewChapters(const [],
+      preferences: InAppOnlyPreferences(), permissionCheck: () async => true,
+      sendNotification: (batch) async { sent.add(batch); });
+    expect(await drain(), 4);
+    expect(sent.map((d) => d.chapterCount), everyElement(1));
+    expect(sent.where((d) => d.book.title == 'Example').map((d) => d.chapter.id).toSet(), {'2', '3', '4'});
+    expect(await drain(), 0);
+    expect((await checker.check()).updatedTitles, 0);
   });
   test('failed platform show must remain retryable without losing the inbox', () async {
     final library = await makeLibrary([FakeSource('senkuro')]);
@@ -197,7 +182,7 @@ void main() {
     var calls = 0;
     await ChapterNotificationService.instance.postNewChapters([],
       preferences: InAppOnlyPreferences(), permissionCheck: () async => true,
-      activeNotificationIds: () async => {ChapterNotificationService.notificationId(release)},
+      activeNotificationIds: () async => {ChapterNotificationService.legacyNotificationId(release)},
       sendNotification: (_) async { calls++; });
     expect(calls, 0);
     expect(await store.beginSystemDelivery(entry), isNull);
@@ -242,7 +227,7 @@ void main() {
     expect(await store.beginSystemDelivery(sample), isNull);
     expect(await ChapterInboxStore(profileId: 'b').beginSystemDelivery(sample), isNull);
     final upgraded = await openDatabase(ChapterInboxStore.databasePathOverride!);
-    expect(await upgraded.getVersion(), 4);
+    expect(await upgraded.getVersion(), 5);
     await upgraded.close();
     await databaseFactory.deleteDatabase(ChapterInboxStore.databasePathOverride!);
     ChapterInboxStore.databasePathOverride = original;

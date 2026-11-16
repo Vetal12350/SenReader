@@ -123,26 +123,37 @@ void main() {
     expect((await db.query('jobs')).single['lease'], leased['lease']);
   });
 
-  test('a running baseline reports its durable release before its second pages request ends', () async {
+  test('a running scan reports its durable discovery before its second pages request ends', () async {
+    // Since 370 the first full list of a source is a silent baseline
+    // (docs/reading_and_alerts.md). Establish it, then publish two chapters.
     final date = DateTime.now().subtract(const Duration(hours: 1));
-    final source = ControlledSource('senkuro')..chapters = [
+    final source = ControlledSource('senkuro')
+      ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final library = await makeLibrary([source]);
+    final repo = CatalogRepository(sources: {source.key: source});
+    await ChapterChecker(repository: repo, library: library).check();
+    expect(await ChapterInboxStore(profileId: '').load(), isEmpty);
+    source.chapters.insertAll(0, [
       Chapter(id: '3', name: 'Глава 3', publishedAt: date),
       Chapter(id: '2', name: 'Глава 2', publishedAt: date),
-      const Chapter(id: '1', name: 'Глава 1'),
-    ];
-    final library = await makeLibrary([source]);
-    await library.markRead(library.items.single.toUnified(), source.chapters.last, source.key);
+    ]);
+    await (await ChapterScanQueue().database()).update('jobs', {'due': 0});
     final second = Completer<List<PageImage>>();
     final started = Completer<void>();
+    var firstPages = '';
     source.onPages = (chapter) {
-      if (chapter.id == '2') { started.complete(); return second.future; }
-      return Future.value([const PageImage('https://cdn.example.com/3.jpg')]);
+      if (firstPages.isEmpty) {
+        firstPages = chapter.id;
+        return Future.value([PageImage('https://cdn.example.com/${chapter.id}.jpg')]);
+      }
+      if (!started.isCompleted) started.complete();
+      return second.future;
     };
     final run = ChapterScanRunner(preferences: MemoryAlertPreferences()..on = true,
-      library: library, repository: CatalogRepository(sources: {source.key: source})).run(origin: 'app');
+      library: library, repository: repo).run(origin: 'app');
     await started.future;
     final snapshot = (await ChapterScanScheduleStore().lastRun('', appOnly: true))!;
-    second.complete([const PageImage('https://cdn.example.com/2.jpg')]);
+    second.complete([const PageImage('https://cdn.example.com/late.jpg')]);
     expect(await run, isTrue);
     expect(snapshot.outcome, 'running');
     expect(snapshot.foundChapters, 1);
@@ -151,7 +162,7 @@ void main() {
     expect((await ChapterScanScheduleStore().lastRun('', appOnly: true))!.foundChapters, 2);
   });
 
-  test('queue v1 upgrade preserves existing jobs, fencing and provider cooldown; inbox remains v4', () async {
+  test('queue v1 upgrade preserves existing jobs, fencing and provider cooldown; inbox stays at v5', () async {
     final original = ChapterInboxStore.databasePathOverride!;
     final path = '$original.migration.queue';
     final legacy = await openDatabase(path, version: 1, onCreate: (db, _) async {
@@ -178,7 +189,8 @@ void main() {
       expect(await upgraded.query('scan_runs'), isEmpty);
       await upgraded.close();
     } finally { ChapterInboxStore.databasePathOverride = original; }
-    expect(await (await openDatabase(original)).getVersion(), 4);
+    // 370 raised the inbox schema to v5 (chapter keys); queue upgrades must not touch it.
+    expect(await (await openDatabase(original)).getVersion(), 5);
   });
 
   test('legacy diagnostic survives upgrade without changing library or inventing an end time', () async {
