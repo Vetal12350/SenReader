@@ -1,7 +1,7 @@
 # SenReader — instructions for Codex Cloud and other coding agents
 
 ## Project and owner requirements
-- This is a **personal, private, local-first Android manga/manhwa reader**, not a social platform.
+- This is a **personal, local-first Android manga/manhwa reader**, published openly (public repository, public APK) for others to use; it is not a social platform.
 - Tech: Flutter/Dart; Android APK is built and tested in GitHub Actions.
 - Public sources currently supported: Senkuro and ReadManga. ReManga was removed; keep historical bookmarks/backup entries intact and offer explicit source replacement. Preserve strict separation of source adapters.
 - **Do not** add community profiles, social activity, comments, friends, Shikimori or MyAnimeList integration. Do not introduce a server or account requirement without an explicit new user request.
@@ -28,7 +28,7 @@
 3. For development in an initialized Codex Cloud environment, run `bash scripts/codex_cloud_test.sh` (installs Flutter stable if needed, runs `flutter pub get` and `flutter test`). Flutter/Android SDK are **not** required on the user's PC.
 4. The canonical end-to-end Android check is `.github/workflows/android-apk.yml`: GitHub Actions builds the APK after tests, no local machine involved.
 5. Open a pull request; report test evidence, known limitations, and data-migration risks. Only merge after successful CI and review/approval in the current task.
-6. `main` CI publishes a private direct APK to the `qa-latest` GitHub Release after success. Do not pretend the URL is public; the owner must be signed in to GitHub.
+6. `main` CI publishes the signed APK to the `qa-latest` GitHub Release after success; since the repository is public, this release is what users download. Treat every `main` merge as a user-facing release.
 7. After a change, keep README/docs consistent and avoid changing the Android signing/package identity inadvertently.
 
 ## Important files and backlog
