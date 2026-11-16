@@ -25,6 +25,9 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          # Pinned: 3.50's Android template breaks file_picker/permission
+          # handling on AGP 9; 3.47.9 is the verified release toolchain.
+          flutter-version: 3.47.9
           cache: true
       - name: Verify protected signing wrapper preparation
         run: python3 scripts/test_prepare_android.py
@@ -117,6 +120,9 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          # Pinned: 3.50's Android template breaks file_picker/permission
+          # handling on AGP 9; 3.47.9 is the verified release toolchain.
+          flutter-version: 3.47.9
           cache: true
       - name: Generate Android wrapper
         run: |
