@@ -2,7 +2,8 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    # main = public release (qa-latest); beta = owner test builds (beta-latest)
+    branches: [main, beta]
   pull_request:
     branches: [main]
 
@@ -102,11 +103,11 @@ jobs:
           fi
       - name: Build debug APK
         run: flutter build apk --debug --dart-define-from-file=firebase-build-flags.json
-  # This job is main-only, after successful read-only test/build verification.
+  # main and beta only, after successful read-only test/build verification.
   # No Actions artifacts: publish a signed APK directly to GitHub Releases,
   # even when the temporary Actions artifact storage quota is exhausted.
   publish-direct-apk:
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta') && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -179,7 +180,9 @@ jobs:
             exit 1
           fi
       - name: Build signed release APK
-        run: flutter build apk --release --build-number "$GITHUB_RUN_NUMBER" --dart-define-from-file=firebase-build-flags.json
+        # +1000 keeps CI versionCodes above all earlier local builds (≤ 999),
+        # so every signed CI APK installs over the previous one.
+        run: flutter build apk --release --build-number "$((GITHUB_RUN_NUMBER + 1000))" --dart-define-from-file=firebase-build-flags.json
       - name: Publish signed APK directly (without Actions artifacts)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -188,14 +191,21 @@ jobs:
         run: |
           set -euo pipefail
           test -s build/app/outputs/flutter-apk/app-release.apk
-          cp build/app/outputs/flutter-apk/app-release.apk SenReader-latest.apk
-          if ! gh release view qa-latest >/dev/null 2>&1; then
-            gh release create qa-latest --target "$GITHUB_SHA" \
-              --title "SenReader Android QA (подписанная сборка)" \
-              --notes "Подписанная сборка: $GITHUB_SHA. Устанавливайте поверх ранее подписанного APK. Перед обновлением сохраните резервную копию." \
-              --prerelease
+          version="$((GITHUB_RUN_NUMBER + 1000))"
+          if [[ "$GITHUB_REF" == refs/heads/beta ]]; then
+            tag=beta-latest
+            file=SenReader-beta.apk
+            title="SenReader — бета для проверки"
+            notes="Тестовая сборка ветки beta, версия $version, commit $GITHUB_SHA. Может быть нестабильной. Ставьте поверх установленной версии; перед обновлением сохраните резервную копию библиотеки."
+          else
+            tag=qa-latest
+            file=SenReader-latest.apk
+            title="SenReader — последняя версия"
+            notes="Подписанная сборка main, версия $version, commit $GITHUB_SHA. Скачайте SenReader-latest.apk и установите поверх предыдущей версии. Не удаляйте установленную версию: вместе с ней удалятся закладки и прогресс."
           fi
-          gh release upload qa-latest SenReader-latest.apk --clobber
-          gh release edit qa-latest \
-            --title "SenReader Android QA (подписанная сборка)" \
-            --notes "Подписанная сборка main, commit: $GITHUB_SHA. Скачайте SenReader-latest.apk; при ошибке несовместимости подписи не удаляйте установленную версию без резервной копии."
+          cp build/app/outputs/flutter-apk/app-release.apk "$file"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes "$notes" --prerelease
+          fi
+          gh release upload "$tag" "$file" --clobber
+          gh release edit "$tag" --title "$title" --notes "$notes"

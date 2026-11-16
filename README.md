@@ -33,7 +33,7 @@
 
 ## Установка
 
-1. Скачайте файл **`SenReader-*.apk`** из раздела [**Releases**](../../releases).
+1. Скачайте **`SenReader-latest.apk`** из релиза [**«SenReader — последняя версия»**](../../releases/tag/qa-latest).
 2. Откройте его на телефоне и разрешите установку из этого источника, если Android спросит.
 3. Готово: откройте SenReader и найдите первую мангу через поиск.
 
@@ -113,8 +113,9 @@ flutter build apk --release
 | `test/` | более 470 автоматических тестов |
 | `docs/` | архитектурные заметки и разборы |
 
-Сборка и тесты выполняются в GitHub Actions (`.github/workflows/android-apk.yml`).
-Правила для ИИ-ассистентов — в [AGENTS.md](AGENTS.md).
+Сборка и тесты выполняются в GitHub Actions (`.github/workflows/android-apk.yml`):
+`main` публикует релиз `qa-latest`, ветка `beta` — тестовую сборку `beta-latest`.
+Правила для ИИ-ассистентов — в [AGENTS.md](AGENTS.md) и [CLAUDE.md](CLAUDE.md).
 
 </details>
 
