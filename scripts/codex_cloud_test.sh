@@ -12,8 +12,9 @@ else
   if [[ ! -x "$flutter_bin" ]]; then
     command -v git >/dev/null || { echo "git is required to bootstrap Flutter." >&2; exit 1; }
     mkdir -p "$(dirname "$flutter_dir")"
-    echo "Installing Flutter stable for Cloud tests in $flutter_dir"
-    git clone --depth 1 --branch stable https://github.com/flutter/flutter.git "$flutter_dir"
+    # Same toolchain as the release CI (see .github/workflows/android-apk.yml).
+    echo "Installing Flutter 3.47.9 for Cloud tests in $flutter_dir"
+    git clone --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git "$flutter_dir"
   fi
 fi
 
