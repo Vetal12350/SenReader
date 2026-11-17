@@ -5,6 +5,23 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:senreader/data/chapter_scan_trace.dart';
 
 void main() {
+  test('page/image HTTP status is logged as a fixed label, never the message', () async {
+    final samples = <Object, String>{
+      SourceException('HTTP 404. Сайт или зеркало недоступны. https://secret.example/x'): 'page_404',
+      SourceException('ReadManga: изображение недоступно (HTTP 403).'): 'image_403',
+      SourceException('Нет соединения с ReadManga (secret)'): 'network',
+      const SocketException('secret'): 'network',
+    };
+    for (final item in samples.entries) {
+      final lines = <String>[];
+      final trace = ChapterScanTrace(output: lines.add);
+      await expectLater(trace.run('manual', () => ChapterScanTrace.stage<void>(
+        'source_pages', () async => throw item.key)), throwsA(same(item.key)));
+      expect(lines.any((line) => line.endsWith('stage=source_pages_detail state=${item.value}')), true);
+      expect(lines.join(), isNot(contains('secret')));
+    }
+  });
+
   test('safe source categories retain exception and never print payload', () async {
     final samples = <Object, String>{
       TimeoutException('secret URL'): 'timeout',

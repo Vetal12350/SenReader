@@ -34,6 +34,8 @@ class ChapterScanTrace {
       event(stage, error is TimeoutException ? 'timeout' : 'error');
       if (stage == 'source_pages') {
         event('source_pages_category', errorCategory(error));
+        final detail = errorDetail(error);
+        if (detail.isNotEmpty) event('source_pages_detail', detail);
       }
       rethrow;
     } finally {
@@ -51,6 +53,22 @@ class ChapterScanTrace {
 
   /// Inspect only known error types; output is always a fixed allowlisted code.
   /// Source adapters may wrap causes; unmatched messages remain unknown.
+  /// Which request failed and its HTTP status, e.g. `page_404`, `image_403`,
+  /// `network`. Only a fixed label and a 3-digit code: never URLs or text.
+  static String errorDetail(Object error) {
+    if (error is SocketException || error is HttpException ||
+        error is HandshakeException) {
+      return 'network';
+    }
+    if (error is! SourceException) return '';
+    final text = error.message.toLowerCase();
+    final code = RegExp(r'http\s+(\d{3})').firstMatch(text)?.group(1);
+    final kind = text.contains('изображен') ? 'image' : 'page';
+    if (code != null) return '${kind}_$code';
+    if (text.contains('нет соединения')) return 'network';
+    return '';
+  }
+
   static String errorCategory(Object error) {
     if (error is TimeoutException) return 'timeout';
     if (error is HttpException || error is SocketException || error is HandshakeException) {

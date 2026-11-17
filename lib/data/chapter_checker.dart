@@ -3,6 +3,7 @@ import 'chapter_scan_trace.dart';
 import '../core/source.dart';
 import 'senkuro_request_gate.dart';
 import 'chapter_scan_queue.dart';
+import 'unavailable_chapters.dart';
 import 'local_source_gate.dart';
 import '../core/chapter_identity.dart';
 import '../core/models.dart';
@@ -51,8 +52,11 @@ class ChapterChecker {
     this.afterInboxCommit, this.elapsed, this.afterPair,
     this.onProgress, this.onDiscovery,
     this.sourceSlice = const Duration(seconds: 45),
-    this.systemNotificationsEnabled = false});
+    this.systemNotificationsEnabled = false, UnavailableChapters? unavailable})
+      : unavailable = unavailable ?? UnavailableChapters();
   final bool systemNotificationsEnabled;
+  /// Backoff for chapters the source lists but does not serve (404 etc.).
+  final UnavailableChapters unavailable;
   final Duration sourceSlice;
   final Duration Function()? elapsed;
   final Future<void> Function()? afterPair;
@@ -276,6 +280,8 @@ class ChapterChecker {
             continue;
           }
           final knownKeys = <String>{};
+          final pair = UnavailableChapters.pairKey(saved.key, sourceKey, entry.id);
+          final paused = await unavailable.blocked(scanProfile, pair);
           for (final chapter in chapters.entries) {
             current = library.get(book);
             if (current == null) break;
@@ -289,6 +295,11 @@ class ChapterChecker {
               note('read');
             } else if (seenId || _seenAtSource(current, sourceKey, chapter.key)) {
               note('seen');
+            } else if (paused.contains(chapter.key)) {
+              // Listed but not served on a recent check: no request until
+              // its backoff expires. Stays unseen, so it is found later.
+              note('unavailable_paused');
+              continue;
             } else {
               try {
                 final pages = await ChapterScanTrace.stage('source_pages',
@@ -305,7 +316,15 @@ class ChapterChecker {
                 }
                 // Keep each verified release if the worker later runs out of time.
                 await checkpoint(book, sourceKey, chapter.value, chapter.key);
+                await unavailable.clear(scanProfile, pair, chapter.key);
               } catch (error) {
+                if (UnavailableChapters.isPersistent(error)) {
+                  // Not a source failure: the site lists a chapter it does not
+                  // serve. Pause re-checks instead of retrying every run.
+                  note('unavailable');
+                  await unavailable.recordMiss(scanProfile, pair, chapter.key);
+                  continue;
+                }
                 failed(error);
                 warnings.add(saved.title + ': глава временно недоступна');
                 continue;
@@ -418,7 +437,7 @@ class ChapterChecker {
         final slice = remaining < sourceSlice ? remaining : sourceSlice;
         final pairWatch = Stopwatch()..start();
         final child = ChapterChecker(repository: repository, library: library,
-          systemNotificationsEnabled: systemNotificationsEnabled,
+          systemNotificationsEnabled: systemNotificationsEnabled, unavailable: unavailable,
           afterInboxCommit: afterInboxCommit, onDiscovery: (discovery) async {
             if (!pairOpen) return;
             found[(normalizedTitle(discovery.book.title), discovery.canonicalKey)] = discovery;
