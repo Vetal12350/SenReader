@@ -87,12 +87,15 @@ class ChapterScanQueue {
           row['sourceId'] as String), token);
     });
   }
+  /// [successDelay]: when the title's release rhythm says the next chapter
+  /// is not due soon, a successful check may be followed by a longer pause.
   Future<void> finish(String profile, ScanLease lease, int now,
-      {required bool success}) async {
+      {required bool success, Duration? successDelay}) async {
     final db = await database();
+    final delay = success ? (successDelay?.inMilliseconds ?? 1800000) : 300000;
     await db.rawUpdate('UPDATE jobs SET lease = 0, due = MAX(due, ?) '
       'WHERE profile = ? AND key = ? AND token = ?',
-      [now + (success ? 1800000 : 300000), profile, lease.job.key, lease.token]);
+      [now + delay, profile, lease.job.key, lease.token]);
   }
 
   /// Manual attempts and automatic work share one due time. Do not take an

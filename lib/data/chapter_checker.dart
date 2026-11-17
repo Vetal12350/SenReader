@@ -4,6 +4,7 @@ import '../core/source.dart';
 import 'senkuro_request_gate.dart';
 import 'chapter_scan_queue.dart';
 import 'unavailable_chapters.dart';
+import 'release_cadence.dart';
 import 'local_source_gate.dart';
 import '../core/chapter_identity.dart';
 import '../core/models.dart';
@@ -52,8 +53,11 @@ class ChapterChecker {
     this.afterInboxCommit, this.elapsed, this.afterPair,
     this.onProgress, this.onDiscovery,
     this.sourceSlice = const Duration(seconds: 45),
-    this.systemNotificationsEnabled = false, UnavailableChapters? unavailable})
+    this.systemNotificationsEnabled = false, UnavailableChapters? unavailable,
+    this.cadence = const ReleaseCadence()})
       : unavailable = unavailable ?? UnavailableChapters();
+  /// Next automatic check of a title from its release rhythm.
+  final ReleaseCadence cadence;
   final bool systemNotificationsEnabled;
   /// Backoff for chapters the source lists but does not serve (404 etc.).
   final UnavailableChapters unavailable;
@@ -365,6 +369,16 @@ class ChapterChecker {
         skippedSources: skippedSources, chapterDecisions: decisions, reason: library.profileId != scanProfile
             ? 'profile_changed' : failureReason);
   }
+  /// Source-backed publication dates of a saved title's chapters.
+  List<DateTime> _releaseDates(String bookKey, String source) {
+    final saved = library.items.where((b) => b.key == bookKey).firstOrNull;
+    if (saved == null) return const [];
+    final prefix = '$source|';
+    return [for (final entry in saved.sourceChapterDates.entries)
+      if (entry.key.startsWith(prefix) && entry.value > 0)
+        DateTime.fromMillisecondsSinceEpoch(entry.value)];
+  }
+
   /// A hanging request is not awaited while a reader is open: poll the
   /// (cheap, cached) stop signal and abandon the pair with a timeout. The
   /// abandoned future keeps running in its permanently expired zone.
@@ -484,8 +498,19 @@ class ChapterChecker {
         for (final entry in report.chapterDecisions.entries) {
           decisions.update(entry.key, (n) => n + entry.value, ifAbsent: () => entry.value);
         }
+        final finishedAt = DateTime.now();
+        Duration? successDelay;
+        if (success) {
+          successDelay = cadence.nextDelay(
+            _releaseDates(lease.job.book, source), finishedAt);
+          if (successDelay > cadence.baseDelay) {
+            decisions.update('cadence_paused', (n) => n + 1, ifAbsent: () => 1);
+          }
+          ChapterScanTrace.current?.event('cadence', '${successDelay.inMinutes}m');
+        }
         await ChapterScanTrace.stage('queue_finish', () => queue.finish(
-          profile, lease, DateTime.now().millisecondsSinceEpoch, success: success));
+          profile, lease, finishedAt.millisecondsSinceEpoch,
+          success: success, successDelay: successDelay));
         remainingJobs.remove(lease.job.key);
         await progress();
         await afterPair?.call();
