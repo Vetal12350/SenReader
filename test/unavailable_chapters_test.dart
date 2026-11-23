@@ -67,6 +67,27 @@ void main() {
     expect((await ChapterInboxStore(profileId: '').load()).single.chapterId, '2');
   });
 
+  test('a listed chapter with no pages is paused too', () async {
+    var now = DateTime(2026, 11, 23, 9);
+    final unavailable = UnavailableChapters(clock: () => now);
+    final source = ControlledSource('senkuro')
+      ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final library = await makeLibrary([source]);
+    final repo = CatalogRepository(sources: {source.key: source});
+    ChapterChecker checker() =>
+        ChapterChecker(repository: repo, library: library, unavailable: unavailable);
+    await checker().check();
+    source.chapters.add(const Chapter(id: '2', name: 'Глава 2'));
+    var pageRequests = 0;
+    source.onPages = (_) async { pageRequests++; return const <PageImage>[]; };
+    for (var i = 0; i < 2; i++) {
+      await (await ChapterScanQueue().database()).update('jobs', {'due': 0, 'lease': 0});
+      await checker().check(smartSchedule: true);
+      now = now.add(const Duration(hours: 1));
+    }
+    expect(pageRequests, 1, reason: 'empty chapter paused within the backoff');
+  });
+
   test('network errors are not paused', () async {
     final unavailable = UnavailableChapters();
     final source = ControlledSource('readmanga')

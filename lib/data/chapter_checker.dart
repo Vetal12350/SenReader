@@ -316,6 +316,8 @@ class ChapterChecker {
                   note('pages_unavailable');
                   warnings.add(saved.title + ': страницы главы пока недоступны');
                   if (failureReason.isEmpty) failureReason = 'pages_unavailable';
+                  // Listed without pages (e.g. Senkuro): same backoff as a 404.
+                  await unavailable.recordMiss(scanProfile, pair, chapter.key);
                   continue;
                 }
                 // Keep each verified release if the worker later runs out of time.
