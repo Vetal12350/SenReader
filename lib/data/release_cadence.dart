@@ -8,7 +8,7 @@
 class ReleaseCadence {
   const ReleaseCadence({
     this.baseDelay = const Duration(minutes: 30),
-    this.maxDelay = const Duration(hours: 12),
+    this.maxDelay = const Duration(hours: 3),
     this.minReleases = 4,
   });
 

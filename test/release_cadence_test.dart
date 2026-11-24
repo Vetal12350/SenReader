@@ -23,13 +23,13 @@ void main() {
 
   test('right after a release: long pause, bounded by the safety net', () {
     expect(cadence.nextDelay(weekly, DateTime.utc(2026, 11, 10, 12)),
-      const Duration(hours: 12));
+      const Duration(hours: 3));
   });
 
   test('pause ends when the release window opens (a day before)', () {
-    // Window opens 2026-11-15 00:00 UTC; 5 h before that → wait 5 h.
-    expect(cadence.nextDelay(weekly, DateTime.utc(2026, 11, 14, 19)),
-      const Duration(hours: 5));
+    // Window opens 2026-11-15 00:00 UTC; 2 h before that → wait 2 h.
+    expect(cadence.nextDelay(weekly, DateTime.utc(2026, 11, 14, 22)),
+      const Duration(hours: 2));
   });
 
   test('inside the release window: check every run', () {
@@ -43,7 +43,7 @@ void main() {
     expect(cadence.nextDelay(weekly, DateTime.utc(2026, 11, 19)),
       const Duration(hours: 3));
     expect(cadence.nextDelay(weekly, DateTime.utc(2026, 12, 10)),
-      const Duration(hours: 12));
+      const Duration(hours: 3));
   });
 
   test('unknown or irregular rhythm keeps the old 30 min interval', () {
@@ -74,7 +74,7 @@ void main() {
     expect(report.chapterDecisions['cadence_paused'], 1);
     final due = (await db.query('jobs')).single['due'] as int;
     final pause = Duration(milliseconds: due - now.millisecondsSinceEpoch);
-    expect(pause, greaterThan(const Duration(hours: 11)));
-    expect(pause, lessThan(const Duration(hours: 13)));
+    expect(pause, greaterThan(const Duration(hours: 2)));
+    expect(pause, lessThan(const Duration(hours: 4)));
   });
 }
