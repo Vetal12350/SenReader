@@ -22,6 +22,14 @@ void main() {
     }
   });
 
+  test('Senkuro 200-with-error answers get a fixed label, not their text', () {
+    expect(ChapterScanTrace.errorDetail(
+      SourceException('Senkuro GraphQL: secret chapter text')), 'graphql_error');
+    expect(ChapterScanTrace.errorDetail(
+      SourceException('Некорректный ответ Senkuro')), 'invalid_response');
+    expect(ChapterScanTrace.errorDetail(SourceException('что-то ещё')), '');
+  });
+
   test('safe source categories retain exception and never print payload', () async {
     final samples = <Object, String>{
       TimeoutException('secret URL'): 'timeout',

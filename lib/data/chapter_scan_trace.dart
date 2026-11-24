@@ -66,6 +66,9 @@ class ChapterScanTrace {
     final kind = text.contains('изображен') ? 'image' : 'page';
     if (code != null) return '${kind}_$code';
     if (text.contains('нет соединения')) return 'network';
+    // Senkuro answers 200 with errors or without the chapter: name which one.
+    if (text.startsWith('senkuro graphql')) return 'graphql_error';
+    if (text.startsWith('некорректный ответ')) return 'invalid_response';
     return '';
   }
 
