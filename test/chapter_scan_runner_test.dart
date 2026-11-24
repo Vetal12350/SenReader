@@ -127,6 +127,22 @@ void main() {
     });
   }
 
+  test('a failing preference read after the scan does not cancel delivery', () async {
+    // Device: an app run ended as scan_error at the post-scan preference read,
+    // so its discoveries were only notified on a later run.
+    final source = FakeSource('senkuro')
+      ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
+    final library = await makeLibrary([source]);
+    var delivered = 0;
+    final prefs = _FlakySystemPrefs()..on = true..systemOn = true;
+    final runner = ChapterScanRunner(preferences: prefs, library: library,
+      repository: CatalogRepository(sources: {source.key: source}),
+      deliver: (_) async { delivered++; });
+    expect(await runner.run(), isTrue);
+    expect(delivered, 1);
+    expect((await ChapterScanScheduleStore().lastRun(''))!.outcome, isNot('error'));
+  });
+
   test('A3: a foreground scan stops before the next title when a reader opens', () async {
     final source = FakeSource('senkuro')
       ..chapters = [const Chapter(id: '1', name: 'Глава 1')];
@@ -283,5 +299,14 @@ void main() {
       expect((await ChapterChecker(repository: repo, library: library)
         .check(smartSchedule: true)).checkedSources, 0);
     });
+  }
+}
+
+/// Only the first read of the system-notification flag succeeds.
+class _FlakySystemPrefs extends MemoryAlertPreferences {
+  var _reads = 0;
+  @override Future<bool> systemNotificationsEnabled() async {
+    if (_reads++ > 0) throw StateError('preferences unavailable');
+    return systemOn;
   }
 }

@@ -111,8 +111,10 @@ class ChapterScanRunner {
         await record('skipped', 'profile_changed');
         return true;
       }
+      // Read once: a late re-read failed on device and cancelled OS delivery.
+      final wantsSystem = await ChapterScanTrace.stage('preferences_system', preferences.systemNotificationsEnabled);
       final checker = ChapterChecker(repository: repository, library: library,
-        systemNotificationsEnabled: await ChapterScanTrace.stage('preferences_system', preferences.systemNotificationsEnabled),
+        systemNotificationsEnabled: wantsSystem,
         onProgress: (report) async {
           latest = report;
           await record('running', '');
@@ -130,7 +132,6 @@ class ChapterScanRunner {
       // turn successful discovery into a failed scan or prevent its summary.
       final outcome = latest.warnings.isNotEmpty ? 'partial' :
           latest.checkedSources == 0 ? 'skipped' : 'success';
-      final wantsSystem = await ChapterScanTrace.stage('preferences_system', preferences.systemNotificationsEnabled);
       systemDelivery = wantsSystem ? 'pending' : 'disabled';
       await record(outcome, latest.reason);
       if (wantsSystem) {
